@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read the board UART and serve a loopback-only, dependency-free dashboard.
 
-Run: python3 monitor/monitor.py [--serial /dev/cu.usbmodem...] [--port 8766]
+Run: python3 tools/serial-monitor/monitor.py [--serial /dev/cu.usbmodem...] [--port 8766]
 The monitor never contacts the Door API itself or replays an old log file.
 
 GET /api/state returns epoch-second timestamps (null means unobserved):
