@@ -160,7 +160,8 @@ deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_
 | プロジェクト | `tka_2601`（ref `bqdvxzvezecunnkbcyoy`、リージョン `ap-northeast-1`） |
 | URL | https://bqdvxzvezecunnkbcyoy.supabase.co |
 | 入っているもの | マイグレーション7つ、pg_cron の `push-retry`、Edge Function「device」と「push」、Edge のシークレット `PUSH_WEBHOOK_SECRET`、Vault の `push_function_url` と `push_webhook_secret` |
-| 入っていないもの | シード（グループ、住人、本体、デバイス鍵）、`EXPO_ACCESS_TOKEN` |
+| 入っていないもの | シード（グループ、住人、本体、デバイス鍵）。`EXPO_ACCESS_TOKEN` は設定しない（下を参照） |
+| 通知を送る Expo のプロジェクト | `@atsushihosaka/jphacks2026`（アプリの `extra.eas.projectId`） |
 
 アプリは publishable key（`sb_publishable_...`）を使う。secret key はダッシュボードの API Keys にあり、リポジトリにも本体にも入れない。Free プランのプロジェクトは、1週間使われないと一時停止する。
 
@@ -176,7 +177,7 @@ supabase functions deploy push device
 
 Webhook の合言葉はクラウド専用の値で、Edge のシークレットと Vault の両方に入れてある。変えるときは、`supabase secrets set PUSH_WEBHOOK_SECRET=...` と、Vault の `push_webhook_secret` の書き換えを両方行う。
 
-Expo のアクセストークンは https://expo.dev/settings/access-tokens で作り、`supabase/functions/.env` の `EXPO_ACCESS_TOKEN` に書いてから、その1つだけを設定する。`--env-file` でファイルごと入れると、クラウドの `PUSH_WEBHOOK_SECRET` がローカルの値で上書きされ、通知が届かなくなる。
+Expo の通知の Enhanced Security は有効にしないため、`EXPO_ACCESS_TOKEN` は設定せず、トークンなしで送る（2026-10-17 にユーザーが決定）。後で有効にするときは、https://expo.dev/settings/access-tokens でトークンを作り、`supabase/functions/.env` の `EXPO_ACCESS_TOKEN` に書いてから、その1つだけを設定する。`--env-file` でファイルごと入れると、クラウドの `PUSH_WEBHOOK_SECRET` がローカルの値で上書きされ、通知が届かなくなる。
 
 ```bash
 supabase secrets set --project-ref bqdvxzvezecunnkbcyoy "EXPO_ACCESS_TOKEN=$(grep '^EXPO_ACCESS_TOKEN=' supabase/functions/.env | cut -d= -f2-)"
