@@ -1,0 +1,10 @@
+# Documentation
+images
+
+# Exports, Project settings
+.mtbLaunchConfigs
+.settings
+.vscode
+
+# Independent audio firmware application
+Audio_Record
