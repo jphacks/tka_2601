@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f8f6" />
+    <title>玄関AI</title>
+    <link rel="stylesheet" href="/assets/app.css?v=4" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <a class="brand" href="/">玄関AI</a>
+        <span id="overall" class="status"><i></i><span>確認中</span></span>
+      </header>
+
+      <section class="conversation" aria-label="会話">
+        <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text">
+          <p id="empty" class="empty">通話を開始すると、ここに会話が表示されます。</p>
+        </div>
+      </section>
+
+      <section class="controls" aria-label="通話操作">
+        <form id="auth-form" class="rules">
+          <label for="api-key">居住者 API キー</label>
+          <input id="api-key" type="password" autocomplete="current-password" required />
+          <button id="authenticate" type="submit">認証</button>
+        </form>
+        <details class="rules">
+          <summary>お届け時の希望 <span>任意</span></summary>
+          <textarea id="house-rules" rows="2" maxlength="800" placeholder="例：宅配ボックスを優先してください。"></textarea>
+        </details>
+        <div class="call-row">
+          <span id="call-state" class="call-state">未接続</span>
+          <div class="buttons">
+            <button id="connect" class="primary" disabled>通話を開始</button>
+            <button id="disconnect" class="secondary" disabled>終了</button>
+          </div>
+        </div>
+        <p id="notice" class="notice" role="status" aria-live="polite">開始するとマイクが有効になります。</p>
+      </section>
+      <div id="remote-audio" hidden></div>
+      <footer>音声・会話は通話中のみ処理され、保存しません。</footer>
+    </main>
+    <script type="module" src="/assets/app.js?v=4"></script>
+  </body>
+</html>
