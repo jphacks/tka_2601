@@ -41,6 +41,10 @@ textarea:focus { outline: 2px solid #b6ddc8; border-color: #70b18e; }
 .test-toggle { display: flex; align-items: center; gap: 7px; margin-top: 9px; color: #536158; font-size: 11px; }
 .test-toggle input { accent-color: #287b57; }
 .test-panel textarea { border-color: #d4e0d7; }
+.admin-actions { display: flex; gap: 8px; margin-top: 12px; }
+.admin-actions button { min-height: 36px; padding: 0 12px; border: 0; border-radius: 8px; font-size: 12px; font-weight: 600; }
+.admin-actions button:first-child { color: #fff; background: #287b57; }
+.admin-actions .secondary { color: #47534d; background: #e9edea; }
 .preview { margin-top: 10px; }
 .preview summary { color: #65716b; cursor: pointer; font-size: 11px; }
 .preview pre { max-height: 180px; overflow: auto; margin: 8px 0 0; padding: 10px; border: 1px solid #e1e8e3; border-radius: 8px; background: white; color: #58635d; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }

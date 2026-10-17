@@ -32,8 +32,8 @@
         </details>
         <section id="test-panel" class="test-panel" hidden aria-label="開発テスト設定">
           <div class="test-heading">
-            <strong>開発テスト</strong>
-            <span>設定はこの会話だけに適用されます</span>
+            <strong>管理者設定</strong>
+            <span>モードと指示はWeb UIの次の通話に適用されます</span>
           </div>
           <label for="test-mode">応対モード</label>
           <select id="test-mode">
@@ -48,6 +48,10 @@
             <summary>適用される住人ルールを確認</summary>
             <pre id="rules-preview">設定を読み込んでいます…</pre>
           </details>
+          <div class="admin-actions">
+            <button id="save-admin-settings" type="button">設定を保存</button>
+            <button id="reset-admin-settings" type="button" class="secondary">初期化</button>
+          </div>
           <fieldset id="history-test" class="history-test" hidden>
             <label class="test-toggle"><input id="save-test-history" type="checkbox" /> このテスト会話の履歴をSupabaseに保存</label>
             <label for="test-device-key">テスト用デバイス鍵</label>

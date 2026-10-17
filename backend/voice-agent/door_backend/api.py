@@ -372,15 +372,14 @@ async def status() -> dict:
         **components,
         "ready": all(item["ready"] for item in components.values()),
         "test_environment": settings.environment == "development",
+        "admin_settings_available": True,
         "history_write_available": settings.environment == "development" and bool(settings.supabase_url),
     }
 
 
 @app.post("/api/test/rules")
 async def test_rules(body: ConnectRequest) -> dict[str, str]:
-    """Preview the server-generated mode rules for the development test UI."""
-    if settings.environment != "development":
-        raise HTTPException(status_code=404, detail="テスト設定は開発環境だけで使えます。")
+    """Preview the server-generated rules for an authenticated Web UI session."""
     if body.mode is None:
         raise HTTPException(status_code=422, detail="modeを指定してください。")
     rules = build_house_rules(
@@ -422,8 +421,6 @@ async def connect(body: ConnectRequest | None = None) -> ConnectResponse:
     room = f"door-{secrets.token_hex(5)}"
     identity = f"visitor-{secrets.token_hex(4)}"
     if body and body.mode is not None:
-        if settings.environment != "development":
-            raise HTTPException(status_code=404, detail="テスト設定は開発環境だけで使えます。")
         house_rules = build_house_rules(
             body.mode,
             HouseSettings(

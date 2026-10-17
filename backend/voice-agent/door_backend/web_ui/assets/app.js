@@ -46,11 +46,34 @@ async function refreshStatus() {
 }
 
 function configureTestPanel(status) {
-  const enabled = Boolean(status.test_environment);
+  const enabled = Boolean(status.admin_settings_available || status.test_environment);
   ui.testPanel.hidden = !enabled;
   ui.houseRulesPanel.hidden = enabled;
-  ui.historyTest.hidden = !(enabled && status.history_write_available);
-  if (enabled) previewTestRules();
+  ui.historyTest.hidden = !(status.test_environment && status.history_write_available);
+  if (enabled) {
+    restoreAdminSettings();
+    previewTestRules();
+  }
+}
+
+const ADMIN_SETTINGS_KEY = "door-admin-call-settings-v1";
+function restoreAdminSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ADMIN_SETTINGS_KEY) || "null");
+    if (!saved || !["normal", "omakase", "away"].includes(saved.mode)) return;
+    ui.mode.value = saved.mode;
+    ui.awayLeaveAtDoor.checked = saved.away_leave_at_door === true;
+    ui.extraInstructions.value = typeof saved.extra_instructions === "string"
+      ? saved.extra_instructions.slice(0, 350)
+      : "";
+  } catch {
+    localStorage.removeItem(ADMIN_SETTINGS_KEY);
+  }
+}
+function saveAdminSettings() {
+  localStorage.setItem(ADMIN_SETTINGS_KEY, JSON.stringify(testSettings()));
+  previewTestRules();
+  setNotice("管理者設定をこのブラウザーに保存しました。次の通話から適用します。");
 }
 
 function testSettings() {
@@ -353,6 +376,15 @@ for (const field of [ui.mode, ui.awayLeaveAtDoor, ui.extraInstructions]) {
   field.addEventListener("input", previewTestRules);
   field.addEventListener("change", previewTestRules);
 }
+$("save-admin-settings").addEventListener("click", saveAdminSettings);
+$("reset-admin-settings").addEventListener("click", () => {
+  localStorage.removeItem(ADMIN_SETTINGS_KEY);
+  ui.mode.value = "normal";
+  ui.awayLeaveAtDoor.checked = false;
+  ui.extraInstructions.value = "";
+  previewTestRules();
+  setNotice("管理者設定を初期状態に戻しました。");
+});
 ui.saveTestHistory.addEventListener("change", () => {
   ui.deviceKey.disabled = !ui.saveTestHistory.checked;
 });

@@ -37,6 +37,7 @@ def test_status_reports_individual_service_readiness(monkeypatch):
     assert not result["livekit"]["ready"]
     assert not result["ready"]
     assert result["test_environment"] == (api.settings.environment == "development")
+    assert result["admin_settings_available"] is True
 
 
 def test_local_root_serves_the_web_ui_in_development(monkeypatch):
@@ -49,6 +50,8 @@ def test_local_root_serves_the_web_ui_in_development(monkeypatch):
     assert 'id="test-panel"' in response.text
     assert script.status_code == stylesheet.status_code == 200
     assert "/api/test/rules" in script.text
+    assert 'id="save-admin-settings"' in response.text
+    assert 'id="reset-admin-settings"' in response.text
     assert "history-test" in stylesheet.text
 
 
@@ -82,8 +85,8 @@ def test_development_rules_preview_applies_selected_mode_and_settings(monkeypatc
     assert "犬がいるので、ドアから離れてください。" in result["house_rules"]
 
 
-def test_connect_dispatches_mode_specific_rules_in_development(monkeypatch):
-    monkeypatch.setattr(api, "settings", replace(api.settings, environment="development"))
+def test_connect_dispatches_admin_mode_rules_in_production(monkeypatch):
+    monkeypatch.setattr(api, "settings", replace(api.settings, environment="production"))
     dispatched = {}
 
     async def dispatch(room, rules):
@@ -104,11 +107,11 @@ def test_connect_dispatches_mode_specific_rules_in_development(monkeypatch):
     assert "呼び鈴を鳴らしたら少し待ってください。" in dispatched["rules"]
 
 
-def test_development_rules_preview_is_disabled_in_production(monkeypatch):
+def test_admin_rules_preview_is_available_in_production(monkeypatch):
     monkeypatch.setattr(api, "settings", replace(api.settings, environment="production"))
-    with pytest.raises(api.HTTPException) as error:
-        asyncio.run(api.test_rules(api.ConnectRequest(mode="normal")))
-    assert error.value.status_code == 404
+    result = asyncio.run(api.test_rules(api.ConnectRequest(mode="away")))
+    assert result["mode"] == "away"
+    assert "不在票を入れるよう頼む" in result["house_rules"]
 
 
 def test_development_visit_save_passes_test_device_key_and_transcript(monkeypatch):
