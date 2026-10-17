@@ -16,6 +16,9 @@
         "CFBundleLocalizations": [
           "ja"
         ]
+      },
+      "config": {
+        "usesNonExemptEncryption": false
       }
     },
     "android": {

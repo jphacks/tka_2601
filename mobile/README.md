@@ -29,7 +29,24 @@ npm install
 npx expo run:ios
 ```
 
-`.env` を書き換えたら Metro を起動し直す。
+`.env` を書き換えたら Metro を起動し直す。開発ビルド（expo-dev-client）なので、起動時に開発サーバーを選ぶ画面が出ることがある。
+
+## EAS のビルド
+
+`eas.json` のプロファイルは次の4つ。どれも Expo へのログイン（`npx eas-cli@latest login`）が要る。
+
+| プロファイル | 用途 |
+|---|---|
+| `development` | 実機用の開発ビルド。端末を `npx eas-cli@latest device:create` で登録してから作る |
+| `development-simulator` | シミュレータ用の開発ビルド |
+| `preview` | 実機に配る確認用のビルド（Metro なしで動く） |
+| `production` | App Store 向け。ビルド番号は EAS が上げる |
+
+`.env` は EAS に送られないので、Supabase の URL と publishable key は EAS の環境変数（development、preview、production）に入れる。
+
+```bash
+npx eas-cli@latest build --profile development-simulator --platform ios
+```
 
 ## 外部の設定
 
