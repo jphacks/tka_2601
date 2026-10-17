@@ -146,7 +146,7 @@ select is((select mode from public.devices where id = '22222222-0000-4000-8000-0
 select is((select mode from public.devices where id = '22222222-0000-4000-8000-00000000000b'),
   'normal', '住人 A は家 B のデバイスのモードを変えられない');
 
--- H3b: 住人は自分の家の来客を1件ずつ消せる。他は消せない --------------------------
+-- H3（他の家の来客を消す）と H3b（自分の家の来客を1件ずつ消す） ---------------------
 
 set local role anon;
 select throws_ok($$delete from public.visits$$, '42501', null, 'H3b anon は来客を消せない');
@@ -169,13 +169,13 @@ select is((select count(*)::int from public.visits where id = '33333333-0000-400
 select is((select count(*)::int from public.visits where id = '33333333-0000-4000-8000-0000000000a3'),
   1, 'H3b まとめて消そうとした来客は残る');
 select is((select count(*)::int from public.visits where id = '33333333-0000-4000-8000-0000000000b1'),
-  1, 'H3b 住人 A は家 B の来客を消せない');
+  1, 'H3 住人 A は家 B の来客を消せない');
 select is((select count(*)::int from public.visits where id = '33333333-0000-4000-8000-0000000000a1'),
   0, 'H3b 住人 A は自分の家の来客を1件消せる');
 select is((select count(*)::int from public.visit_messages where visit_id = '33333333-0000-4000-8000-0000000000a1'),
   0, 'H3b 来客を消すと発話も消える');
 select is((select count(*)::int from public.visit_messages where visit_id = '33333333-0000-4000-8000-0000000000b1'),
-  1, 'H3b 家 B の発話は残る');
+  1, 'H3 家 B の発話は残る');
 
 -- H4: 本体が同じ来客と発話を3回送っても記録は1件ずつ -----------------------------
 
