@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import math
+import re
 import struct
 import uuid
 
@@ -14,8 +15,13 @@ from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
 from .config import settings
 
 
-def _trim_delayed_audio_tail(pcm: bytes, sample_rate: int) -> bytes:
+def _trim_delayed_audio_tail(pcm: bytes, sample_rate: int, text: str = "") -> bytes:
     """Remove a late vocal tail when the TTS stream pauses for a long time."""
+    # This defect is a delayed vocal tail after a single closing sentence.
+    # Never trim across a sentence boundary, even if a two-sentence reply pauses
+    # longer than usual between its sentences.
+    if len(re.findall(r"[。！？!?]+", text)) > 1:
+        return pcm
     frame_samples = max(1, sample_rate // 50)  # 20 ms
     frame_bytes = frame_samples * 2
     complete_bytes = len(pcm) - len(pcm) % frame_bytes
@@ -29,7 +35,7 @@ def _trim_delayed_audio_tail(pcm: bytes, sample_rate: int) -> bytes:
     peak = max(levels, default=0.0)
     threshold = max(32.0, peak * 0.006)
     active = [level >= threshold for level in levels]
-    silence_frames = int(1.5 * sample_rate / frame_samples)
+    silence_frames = int(1.0 * sample_rate / frame_samples)
     last_active = max((index for index, is_active in enumerate(active) if is_active), default=-1)
 
     index = 0
@@ -141,7 +147,9 @@ class SpeechCppStream(tts.ChunkedStream):
                     raise APIError("Local speech service returned an unsupported content type")
                 pcm = b"".join(audio_parts)
                 if pcm:
-                    output_emitter.push(_trim_delayed_audio_tail(pcm, settings.tts_sample_rate))
+                    output_emitter.push(
+                        _trim_delayed_audio_tail(pcm, settings.tts_sample_rate, self.input_text)
+                    )
                 output_emitter.flush()
         except asyncio.TimeoutError as exc:
             raise APITimeoutError() from exc

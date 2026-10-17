@@ -111,3 +111,14 @@ def test_keep_audio_after_normal_pause():
     pcm = struct.pack(f"<{len(first + silence + second)}h", *(first + silence + second))
 
     assert speech_tts._trim_delayed_audio_tail(pcm, 24000) == pcm
+
+
+def test_keep_two_sentences_after_a_long_pause():
+    first = [5000] * (24000 // 2)
+    silence = [0] * (24000 * 14 // 10)
+    second = [4200] * (24000 * 3 // 4)
+    samples = first + silence + second
+    pcm = struct.pack(f"<{len(samples)}h", *samples)
+    text = "恐れ入りますが、こちらでお願いいたします。ご不明でしたらお知らせください。"
+
+    assert speech_tts._trim_delayed_audio_tail(pcm, 24000, text) == pcm

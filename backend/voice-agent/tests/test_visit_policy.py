@@ -32,7 +32,7 @@ def test_company_introduction_is_not_sales_until_the_offer_is_clear():
 def test_polite_farewell_is_acknowledged_as_departure():
     result = state("承知いたしました。また改めて伺わせていただきます。失礼いたします")
     assert result.closing
-    assert result.fallback() == "承知いたしました。失礼いたします。"
+    assert result.fallback() == "失礼いたします。"
 
 
 def test_correction_overrides_delivery_context():
@@ -51,14 +51,14 @@ def test_filler_and_incomplete_phrase_wait_for_more_audio():
 
 
 def test_completion_state_is_session_scoped_and_validated():
-    result = state("宅配便です", "そこに置きました", "写真も撮りました")
+    result = state("宅配便です", "そこに置きました", "写真も撮りました。これで大丈夫ですか?")
     assert result.placed and result.photographed
     assert result.validate("ありがとうございます。")
     assert not result.validate("解錠しました。")
 
 
 def test_completion_state_answers_follow_up_instead_of_forcing_thanks():
-    result = state("宅配便です", "そこに置きました", "写真も撮りました")
+    result = state("宅配便です", "そこに置きました", "写真も撮りました。これで大丈夫ですか?")
     assert result.validate("はい、大丈夫ですよ。")
     assert not result.validate("鍵を開けました。")
 
@@ -126,8 +126,8 @@ def test_farewell_must_end_reply_and_is_only_allowed_when_done():
     done = VisitState.from_messages(
         [("user", "失礼します")]
     )
-    assert not done.validate("承知しました。失礼いたします。ほかに何かありますか？")
-    assert done.trim_after_farewell("承知しました。失礼いたします。ほかに何かありますか？") == "承知しました。失礼いたします。"
+    assert not done.validate("失礼いたします。ほかに何かありますか？")
+    assert done.trim_after_farewell("失礼いたします。ほかに何かありますか？") == "失礼いたします。"
 
 
 def test_asr_placement_homophone_is_corrected_in_delivery_context():
@@ -201,3 +201,76 @@ def test_corrected_ack_after_goodbye_does_not_restart_conversation():
         ]
     )
     assert result.should_wait
+
+
+def test_payment_refusal_does_not_carry_over_to_circular_board():
+    result = VisitState.from_messages(
+        [
+            ("user", "NHKの集金なんですけど"),
+            ("assistant", "このインターホンではお支払いに対応できません。"),
+            ("user", "すいません、回覧版なんですけど"),
+            ("assistant", "回覧板はポストにお願いします。"),
+            ("user", "回覧板はどこに置けばいいですか?"),
+        ]
+    )
+    assert result.purpose == "circular_board"
+    assert result.deterministic_reply == "回覧板はポストに入れてください。入らない場合はお知らせください。"
+    assert result.validate(result.deterministic_reply)
+    assert "お支払い" not in result.fallback()
+
+
+def test_name_confirmation_after_reflection_does_not_restart_purpose_rejection():
+    result = VisitState.from_messages(
+        [
+            ("assistant", "大葉様ですね。どのようなご用件でしょうか。"),
+            ("user", "はい大場です"),
+        ]
+    )
+    assert result.name_confirmation
+    assert result.deterministic_reply == "失礼しました。お名前の確認ありがとうございます。"
+    assert result.validate(result.deterministic_reply)
+
+
+def test_explicit_name_correction_after_reflection_is_acknowledged():
+    result = VisitState.from_messages(
+        [
+            ("assistant", "大葉様ですね。どのようなご用件でしょうか。"),
+            ("user", "大葉じゃなくて大場です"),
+        ]
+    )
+    assert result.name_confirmation
+    assert result.deterministic_reply == "失礼しました。お名前の確認ありがとうございます。"
+
+
+def test_presence_question_never_discloses_resident_status():
+    result = state("今いらっしゃいますか")
+    assert result.deterministic_reply == "住人の在宅状況はお伝えできません。ご用件をお聞かせください。"
+    assert result.validate(result.deterministic_reply)
+    assert not result.validate("はい、在宅しています。")
+
+
+def test_unclear_follow_up_after_purpose_prompt_does_not_become_unsupported_refusal():
+    result = VisitState.from_messages(
+        [
+            ("assistant", "どのようなご用件でしょうか。"),
+            ("user", "ちょっと聞きたいことがあるんですけど"),
+        ]
+    )
+    assert result.fallback() == "承知しました。"
+    assert "対応できません" not in result.fallback()
+
+
+def test_circular_board_that_does_not_fit_prompts_for_placement():
+    result = VisitState.from_messages(
+        [("user", "回覧板です"), ("assistant", "回覧板はポストにお願いします。"), ("user", "ポストに入らないです")]
+    )
+    assert result.deterministic_reply == "ポストに入らない場合は、どちらに置けばよろしいでしょうか。"
+
+
+def test_circular_board_respects_an_explicit_resident_rule():
+    result = VisitState.from_messages(
+        [("user", "回覧板はどこに置けばいいですか?")],
+        "回覧板は玄関前に置いてください。",
+    )
+    assert result.deterministic_reply is None
+    assert result.validate("回覧板は玄関前に置いてください。")
