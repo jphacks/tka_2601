@@ -14,7 +14,25 @@ def test_delivery_only_uses_house_rules_for_confirmed_parcel():
 def test_payment_and_sales_reject_inappropriate_reply():
     assert state("集金に来ました").purpose == "payment"
     assert not state("集金に来ました").validate("宅配ボックスに入れてください。")
-    assert state("営業で来ました").fallback().startswith("申し訳ありません")
+    assert state("営業で来ました").fallback() == "恐れ入りますが、このインターホンでは対応できません。"
+
+
+def test_company_introduction_is_not_sales_until_the_offer_is_clear():
+    introduction = state("お世話になっております私株式会社ライフエーステックの大坂敏と申します")
+    assert introduction.purpose == "unknown"
+
+    offer = state(
+        "我々の企業では中高生向けのプログラミング教育を行っているんですけれども、"
+        "こちらのお宅のお子様にも教育を受けていただきたいと思いまして"
+    )
+    assert offer.purpose == "sales"
+    assert offer.fallback() == "恐れ入りますが、このインターホンでは対応できません。"
+
+
+def test_polite_farewell_is_acknowledged_as_departure():
+    result = state("承知いたしました。また改めて伺わせていただきます。失礼いたします")
+    assert result.closing
+    assert result.fallback() == "お気をつけてお帰りください。"
 
 
 def test_correction_overrides_delivery_context():
