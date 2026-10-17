@@ -24,10 +24,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#04346D"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.jphacks.tka2601"
@@ -45,7 +43,16 @@
           "cameraPermission": "家族の招待の QR コードを読み取るためにカメラを使います。"
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#04346D"
+        }
+      ]
     ],
     "scheme": "tka2601",
     "experiments": {

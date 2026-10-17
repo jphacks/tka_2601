@@ -1,4 +1,5 @@
 import { router, Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { View } from 'react-native';
@@ -8,6 +9,10 @@ import { AuthProvider, useAuth } from '../lib/auth';
 import { usePendingInvite } from '../lib/pendingInvite';
 import { usePushNotifications } from '../lib/push';
 import { colors } from '../theme';
+
+// ログイン状態と所属グループを読み終えるまで、起動画面を出したままにする
+SplashScreen.preventAutoHideAsync();
+SplashScreen.setOptions({ fade: true, duration: 300 });
 
 export default function RootLayout() {
   return (
@@ -34,6 +39,10 @@ function RootNavigator() {
       router.push({ pathname: '/join', params: { token: pendingInvite } });
     }
   }, [ready, signedIn, pendingInvite]);
+
+  useEffect(() => {
+    if (ready) SplashScreen.hideAsync();
+  }, [ready]);
 
   if (!ready) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 
