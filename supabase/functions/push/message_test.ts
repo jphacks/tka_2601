@@ -27,6 +27,11 @@ Deno.test("来客の作成で来客時の通知、終話への更新で対応後
   assertEquals(noticeKind({ ...payload("INSERT", visit, null), table: "devices" }), null);
 });
 
+Deno.test("終話済みの来客が初めて届いたときは対応後の通知だけを送る", () => {
+  assertEquals(noticeKind(payload("INSERT", { ...visit, status: "ended" }, null)), "ended");
+  assertEquals(noticeKind(payload("INSERT", { ...visit, status: "missed" }, null)), "chime");
+});
+
 Deno.test("来客時の通知は時刻（東京）とモードを載せる", () => {
   assertEquals(chimeNotice(visit), {
     kind: "chime",

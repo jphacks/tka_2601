@@ -64,10 +64,11 @@ const timeFormat = new Intl.DateTimeFormat("ja-JP", {
   minute: "2-digit",
 });
 
-// 送る通知の種類を決める。送らないときは null
+// 送る通知の種類を決める。送らないときは null。
+// 終話済みの来客が初めて届いたとき（回線断からの回復）は、対応後の通知だけを送る
 export function noticeKind(payload: WebhookPayload): Notice["kind"] | null {
   if (payload.table !== "visits") return null;
-  if (payload.type === "INSERT") return "chime";
+  if (payload.type === "INSERT") return payload.record.status === "ended" ? "ended" : "chime";
   if (
     payload.type === "UPDATE" &&
     payload.record.status === "ended" &&

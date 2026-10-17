@@ -68,7 +68,8 @@ export default {
     for (const ticket of tickets) {
       if (ticket.status === "error") console.error("Expo ticket error", ticket.message, ticket.details);
     }
-    return Response.json({ sent: tokens.length, tickets });
+    // 返事は Webhook の記録（net._http_response）に残り、試験で文面を確かめるのに使う
+    return Response.json({ sent: tokens.length, notice, tickets });
   }),
 };
 

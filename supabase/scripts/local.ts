@@ -35,6 +35,12 @@ export async function supabaseCli(args: string[]): Promise<string> {
   return new TextDecoder().decode(stdout);
 }
 
+// デバイス鍵の SHA-256（16 進）。Edge Function「device」と同じ計算
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // supabase status の API_URL、PUBLISHABLE_KEY、SECRET_KEY など
 export async function localStatus(): Promise<Record<string, string>> {
   return parseEnv(await supabaseCli(["status", "-o", "env"]));

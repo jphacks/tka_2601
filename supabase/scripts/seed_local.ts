@@ -1,12 +1,12 @@
-// ローカルの Supabase に、家1つ、住人1人、デバイス1台とデバイス用アカウントを入れる。
+// ローカルの Supabase に、家1つ、住人1人、デバイス1台とそのデバイス鍵を入れる。
 // あわせて、通知の Database Webhook が読む Vault の値をローカル用に設定する。
 //
 // 使い方（リポジトリの根から）:
 //   supabase start   # または supabase db reset
 //   deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_local.ts
 //
-// 資格情報は supabase/.env、Webhook の合言葉は supabase/functions/.env から読む（どちらもコミットしない）。
-// 何度実行しても同じ状態になる。
+// 住人の資格情報とデバイス鍵は supabase/.env、Webhook の合言葉は supabase/functions/.env から読む
+// （どちらもコミットしない）。DB にはデバイス鍵の SHA-256 だけを入れる。何度実行しても同じ状態になる。
 
 import { createClient } from "npm:@supabase/supabase-js@2.118.0";
 import {
@@ -15,6 +15,7 @@ import {
   localStatus,
   readEnvFile,
   required,
+  sha256Hex,
   supabaseCli,
   supabaseDir,
 } from "./local.ts";
@@ -57,13 +58,17 @@ async function check<T>(promise: PromiseLike<{ error: unknown; data: T }>): Prom
   return data;
 }
 
+// SQL の文字列に埋め込む値は英数字、_、-、:、/、. に限る
+function sqlSafe(value: string, name: string): string {
+  if (!/^[A-Za-z0-9_\-:/.]+$/.test(value)) {
+    throw new Error(`${name} は英数字、_、-、:、/、. だけにしてください`);
+  }
+  return value;
+}
+
 const residentId = await ensureUser(
   required(seedEnv, "SEED_RESIDENT_EMAIL", "supabase/.env"),
   required(seedEnv, "SEED_RESIDENT_PASSWORD", "supabase/.env"),
-);
-const deviceUserId = await ensureUser(
-  required(seedEnv, "SEED_DEVICE_EMAIL", "supabase/.env"),
-  required(seedEnv, "SEED_DEVICE_PASSWORD", "supabase/.env"),
 );
 
 await check(admin.from("households").upsert({ id: HOUSEHOLD_ID, name: "テストの家" }));
@@ -77,27 +82,26 @@ await check(
 // mode は既存の値を残すため、新しく作るときだけ入れる
 await check(
   admin.from("devices").upsert(
-    {
-      id: DEVICE_ID,
-      household_id: HOUSEHOLD_ID,
-      auth_user_id: deviceUserId,
-      name: "玄関の親機",
-      mode: "normal",
-    },
+    { id: DEVICE_ID, household_id: HOUSEHOLD_ID, name: "玄関の親機", mode: "normal" },
     { ignoreDuplicates: true },
   ),
 );
 
-// Webhook の送り先と合言葉を Vault に入れる
-const webhookSecret = required(functionsEnv, "PUSH_WEBHOOK_SECRET", "supabase/functions/.env");
-if (!/^[A-Za-z0-9_-]+$/.test(webhookSecret)) {
-  throw new Error("PUSH_WEBHOOK_SECRET は英数字、_、- だけにしてください");
-}
+// device_keys と Vault はどのロールにも Data API の権限がないため、SQL で入れる
+const deviceKey = required(seedEnv, "SEED_DEVICE_KEY", "supabase/.env");
+if (deviceKey.length < 32) throw new Error("SEED_DEVICE_KEY は 32 文字以上にしてください");
+const keyHash = await sha256Hex(deviceKey);
+const webhookSecret = sqlSafe(
+  required(functionsEnv, "PUSH_WEBHOOK_SECRET", "supabase/functions/.env"),
+  "PUSH_WEBHOOK_SECRET",
+);
 await supabaseCli([
   "db",
   "query",
   "--local",
   `do $$ begin
+     delete from public.device_keys where device_id = '${DEVICE_ID}';
+     insert into public.device_keys (key_hash, device_id) values ('${keyHash}', '${DEVICE_ID}');
      delete from vault.secrets where name in ('push_function_url', 'push_webhook_secret');
      perform vault.create_secret('${LOCAL_PUSH_FUNCTION_URL}', 'push_function_url');
      perform vault.create_secret('${webhookSecret}', 'push_webhook_secret');
@@ -106,4 +110,4 @@ await supabaseCli([
 
 console.log(`household ${HOUSEHOLD_ID}`);
 console.log(`resident  ${residentId}`);
-console.log(`device    ${DEVICE_ID} (auth user ${deviceUserId})`);
+console.log(`device    ${DEVICE_ID}`);
