@@ -74,8 +74,9 @@ async function device(
 const visitId = crypto.randomUUID();
 const missedId = crypto.randomUUID();
 const recoveredId = crypto.randomUUID();
+const concurrentId = crypto.randomUUID();
 const startedAt = new Date().toISOString();
-const createdVisits = [visitId, missedId, recoveredId];
+const createdVisits = [visitId, missedId, recoveredId, concurrentId];
 // グループとペアリングの試験で作るアカウントとグループ
 const tempUserIds: string[] = [];
 let tempHouseholdId: string | null = null;
@@ -135,6 +136,14 @@ try {
   const msgs = await resident.from("visit_messages").select("seq").eq("visit_id", visitId);
   check("H4 住人から見て発話は3件", msgs.data?.length === 3, msgs);
 
+  // 同じ来客の作成が重なっても、どれも成功して1件になる（PR #4 のレビュー）
+  const concurrent = await Promise.all(Array.from({ length: 6 }, () =>
+    device("PUT", `/visits/${concurrentId}`, { chimed_at: startedAt, mode: "normal", status: "ringing" })
+  ));
+  check("同じ来客の作成を6つ同時に送っても、すべて 200", concurrent.every((r) => r.status === 200), concurrent.map((r) => r.status));
+  const concurrentRows = await admin.from("visits").select("id").eq("id", concurrentId);
+  check("同時に送っても来客は1件", concurrentRows.data?.length === 1, concurrentRows);
+
   const stale = await device("PUT", `/visits/${visitId}`, { status: "ringing", chimed_at: startedAt, mode: "away" });
   check("遅れて届いた古い送信は状態を戻さない", stale.status === 200 && stale.json.status === "ended" && stale.json.applied === false, stale);
 
@@ -164,7 +173,7 @@ try {
   check("終話済みの来客が初めて届く", recovered.status === 200, recovered);
 
   // 通知: Webhook → Edge Function「push」 → Expo -------------------------------
-  // 来客の作成（ringing）2回、終話への更新1回、終話済みの来客の作成1回で、計4回呼ばれる
+  // 来客の作成（ringing）3回、終話への更新1回、終話済みの来客の作成1回で、計5回呼ばれる
   type HttpResponse = { status_code: number | null; content: string | null; error_msg: string | null };
   let responses: HttpResponse[] = [];
   for (let i = 0; i < 20; i++) {
@@ -172,10 +181,10 @@ try {
     responses = await sql<HttpResponse>(
       `select status_code, content, error_msg from net._http_response where created > '${startedAt}' order by id`,
     );
-    if (responses.length >= 4 && responses.every((r) => r.status_code !== null || r.error_msg)) break;
+    if (responses.length >= 5 && responses.every((r) => r.status_code !== null || r.error_msg)) break;
   }
   const bodies = responses.map((r) => JSON.parse(r.content ?? "null"));
-  check("Webhook は4回呼ばれ、push は毎回 200 を返す", responses.length === 4 && responses.every((r) => r.status_code === 200), responses);
+  check("Webhook は5回呼ばれ、push は毎回 200 を返す", responses.length === 5 && responses.every((r) => r.status_code === 200), responses);
   check(
     "Expo から毎回 ticket が返る",
     bodies.every((b) => b?.sent === 1 && b.tickets?.length === 1 && b.tickets[0].details?.error === "DeviceNotRegistered"),
@@ -183,7 +192,7 @@ try {
   );
   const notices = bodies.map((b) => b?.notice);
   console.log("       通知の文面:", JSON.stringify(notices));
-  check("来客時の通知が2回", notices.filter((n) => n?.kind === "chime").length === 2, notices);
+  check("来客時の通知が3回", notices.filter((n) => n?.kind === "chime").length === 3, notices);
   check(
     "対応後の通知に意図、会社名、対応、発話の抜粋が載る",
     notices.some((n) =>
