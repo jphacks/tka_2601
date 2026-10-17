@@ -36,6 +36,13 @@ def _positive_float(name: str, default: float) -> float:
     return parsed
 
 
+def _flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _required_secret(
     name: str, *, development_default: str | None = None, minimum_bytes: int = 32
 ) -> str:
@@ -82,6 +89,11 @@ class Settings:
 
     ollama_base_url: str = os.getenv("DOOR_OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/").removesuffix("/v1")
     llm_model: str = os.getenv("DOOR_LLM_MODEL", "gemma4:latest")
+    llm_timeout_seconds: float = _positive_float("DOOR_LLM_TIMEOUT_SECONDS", 30)
+    llm_max_tokens: int = _integer("DOOR_LLM_MAX_TOKENS", 96)
+    llm_keep_alive: str = os.getenv("DOOR_LLM_KEEP_ALIVE", "30m")
+    warmup_enabled: bool = _flag("DOOR_WARMUP", True)
+    warmup_timeout_seconds: float = _positive_float("DOOR_WARMUP_TIMEOUT_SECONDS", 90)
     asr_base_url: str = os.getenv("DOOR_ASR_BASE_URL", "http://127.0.0.1:18095").rstrip("/")
     asr_model: str = os.getenv("DOOR_ASR_API_MODEL", "kotoba-tech/kotoba-whisper-v2.1")
     tts_base_url: str = os.getenv("DOOR_TTS_BASE_URL", "http://127.0.0.1:18094").rstrip("/")
@@ -106,6 +118,18 @@ class Settings:
     max_api_request_bytes: int = _integer("DOOR_MAX_API_REQUEST_BYTES", 16384)
     turn_detector: str = os.getenv("DOOR_TURN_DETECTOR", "vad").lower()
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
+
+    # PSoC 6 relay (/api/relay)
+    relay_livekit_url: str = os.getenv(
+        "DOOR_RELAY_LIVEKIT_URL",
+        os.getenv("LIVEKIT_URL", "http://127.0.0.1:7880").replace("http", "ws", 1),
+    ).rstrip("/")
+    max_relay_sessions: int = _integer("DOOR_MAX_RELAY_SESSIONS", 4)
+    relay_start_timeout_seconds: float = _positive_float("DOOR_RELAY_START_TIMEOUT_SECONDS", 5.0)
+    relay_max_session_seconds: float = _positive_float("DOOR_RELAY_MAX_SESSION_SECONDS", 120.0)
+    supabase_url: str = os.getenv("DOOR_SUPABASE_URL", "").rstrip("/")
+    house_settings_timeout_seconds: float = _positive_float("DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS", 1.5)
+    visit_write_timeout_seconds: float = _positive_float("DOOR_VISIT_WRITE_TIMEOUT_SECONDS", 3.0)
 
 
 settings = Settings()
@@ -139,3 +163,12 @@ if settings.environment == "production":
         )
     if urlsplit(settings.livekit_ws_url).scheme != "wss":
         raise ValueError("Production LIVEKIT_WS_URL must use WSS")
+    relay_livekit_url = urlsplit(settings.relay_livekit_url)
+    if relay_livekit_url.scheme != "wss" and not (
+        local_livekit_http and relay_livekit_url.hostname == livekit_api_url.hostname
+    ):
+        raise ValueError(
+            "Production DOOR_RELAY_LIVEKIT_URL must use WSS or the same local host as LIVEKIT_URL"
+        )
+    if settings.supabase_url and urlsplit(settings.supabase_url).scheme != "https":
+        raise ValueError("Production DOOR_SUPABASE_URL must use HTTPS")
