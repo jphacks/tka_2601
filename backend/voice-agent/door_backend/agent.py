@@ -5,7 +5,6 @@ import json
 import logging
 import os
 
-import httpx
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import (
@@ -106,7 +105,7 @@ def _llm():
         # Ollama's OpenAI-compatible endpoint honors max_tokens. The SDK's
         # max_completion_tokens field is ignored by some Ollama releases.
         extra_body={"max_tokens": settings.llm_max_tokens, "keep_alive": settings.llm_keep_alive},
-        timeout=httpx.Timeout(settings.llm_timeout_seconds, connect=5),
+        timeout=settings.llm_timeout_seconds,
         max_retries=1,
     )
 
