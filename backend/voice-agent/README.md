@@ -47,6 +47,20 @@ uv run uvicorn door_backend.api:app --host 127.0.0.1 --port 8093
 
 APIサーバーとエージェントワーカーは別プロセスです。両方を起動してください。WebUIを開き、`.env` の `DOOR_API_KEY` を認証欄へ入力します。キーはブラウザーのメモリだけに保持し、HTMLやJavaScript、URL、ログには保存しません。API状態確認も含め、すべての `/api/*` はBearer認証が必要です。
 
+### CIとlabpcへの自動反映
+
+`.github/workflows/voice-agent-backend.yml` は対象ブランチへのpushとPull Requestでバックエンドのテストを実行します。labpcの `Door Voice Backend Auto Update` タスクは5分ごとにGitHubを確認し、対象PRが開いている間はその作業ブランチを、マージ後はリポジトリの既定ブランチを追跡します。`backend-tests` が成功したコミットだけを取得します。ローカルの`.env`を保ったままAPIとAgentを入れ替えて再起動し、更新失敗時は直前の配置に戻します。
+
+labpcにはGitHub Actionsの秘密情報やSSHキーを登録せず、公開GitHub APIからソースを取得します。labpcでこのバックエンドのディレクトリを開き、初回だけ次を実行してください。
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\install-auto-update.ps1
+```
+
+更新スクリプトは`deploy/windows/auto-update.ps1`です。デプロイ状態とエラーは `C:\Users\stu23-oba-shion\door-voice-deploy.log` に残り、音声や会話本文は記録しません。
+
+WebUI (`http://localhost:8093/`またはデプロイ先) では、認証後に「管理者設定」パネルが現れます。通常・おまかせ・外出中のモード、外出中の置き配許可、追加指示（350字まで）を設定し、「設定を保存」でこのブラウザーに保存できます。設定は次のWeb UI通話から適用され、この Web UI の通話に限られます。住人APIキーで保護され、家全体の Supabase 設定は変更しません。「適用される住人ルールを確認」で通話前に内容を確認できます。`DOOR_ENV=development`かつ`DOOR_SUPABASE_URL`設定時のみ、任意の「このテスト会話の履歴をSupabaseに保存」欄が表示されます。チェックを入れ、テスト用デバイス鍵を入力して通話を終了したときだけ文字起こしを保存します。対応する住人宅に実データが追加されるため、テスト用の鍵を使ってください。
+
 開発用LiveKitの公開ポートはホストのループバックだけにバインドされます。`.env` はGit管理外です。開発用のLiveKit `devkey` / `secret` はローカル開発に限って使います。
 
 ## API
@@ -104,6 +118,16 @@ PSoC 6用の中継です（`docs/spec.md` 5.4）。中継がPSoC 6の代わり�
 - `extra_instructions`（AIへの追加の指示）は、「1〜8とぶつかるときは1〜8を守る」という前置きを付けて規則の後ろに足します。全体が`DOOR_MAX_HOUSE_RULES_CHARS`（既定800字）を超える場合は、追加の指示の末尾を切ります。規則が最も長い`away`の置き配ありでは、追加の指示に使えるのは350字です。Supabaseの`devices.extra_instructions`も350字までに制限しているため、既定の設定では切られません。
 - 設定を読めない場合（`DOOR_SUPABASE_URL`が未設定、`DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS`以内に応答がない、200以外、形が違う）は、設定なしの規則で会話を続けます。
 
+会話が`ready`になった後、終了時に確定した訪問者・AIの文字起こしを1回だけSupabaseの`PUT /functions/v1/device/visits/{visit_id}`へ保存します。開始JSONの`visit_id`と`device_key`を使い、secret/service-role keyは使いません。保存に失敗しても会話には影響しません。音声は保存しません。書き込みのタイムアウトは`DOOR_VISIT_WRITE_TIMEOUT_SECONDS`（既定3秒）です。
+
+## 応答の速さ
+
+訪問者の発話終了から返答音声の再生開始までを短くするため、次を行う（`docs/spec.md` 2.2 の目標は3秒以内）。
+
+- 起動時にASR・LLM・TTSへ短い先読み要求を送り、モデルをメモリに載せる（`door_backend.warmup`）。APIサーバーは起動時、会話エージェントは会話の開始時に、挨拶の再生と並行して先読みする。これがないと、挨拶の後の最初の発話（「こんにちは、宅配便です」）でWhisperのモデル読み込みとOllamaの再読み込みを待つ。
+- 挨拶「はい、どちら様でしょうか」は`session.say`で固定再生し、LLMの往復をなくす。
+- LLMの`keep_alive`でOllamaのモデルを保持し、会話の合間の再読み込みを防ぐ。`max_tokens`で返答を短く保ち、`timeout`で固まった呼び出しを打ち切る。
+
 ## 設定
 
 `.env.example`を`.env`へコピーし、上のコマンドでランダムな32-byte `DOOR_API_KEY` を生成してください。`.env`を共有したり、キーをソースやブラウザーコードに埋め込んだりしないでください。LiveKit、Ollama、ASR、TTSのURLとモデル名も環境に合わせます。主な設定:
@@ -116,6 +140,9 @@ PSoC 6用の中継です（`docs/spec.md` 5.4）。中継がPSoC 6の代わり�
 - `DOOR_LIVEKIT_TRUSTED_HTTP_HOSTS`: 本番LiveKit APIが同一Tailnet内にある場合だけ、許可するTailscale IPを列挙します。HTTPのまま使う場合は、Tailscale ACLで接続端末を制限してください。
 - `DOOR_MAX_TTS_RESPONSE_BYTES` / `DOOR_API_REQUESTS_PER_MINUTE` / `DOOR_MAX_CONCURRENT_REQUESTS` / `DOOR_MAX_QUEUED_REQUESTS` / `DOOR_QUEUE_WAIT_SECONDS`: 音声サイズ、API要求数、同時処理数、待機数、待機時間の上限
 - `DOOR_OLLAMA_BASE_URL` / `DOOR_LLM_MODEL`: Ollama接続先とLLMモデル
+- `DOOR_LLM_TIMEOUT_SECONDS` / `DOOR_LLM_MAX_TOKENS`: ローカル推論の待ち時間と返答上限（既定値: 30秒 / 96トークン）
+- `DOOR_LLM_KEEP_ALIVE`: OllamaのLLMモデルを常駐させる時間（既定値: `30m`）
+- `DOOR_WARMUP` / `DOOR_WARMUP_TIMEOUT_SECONDS`: 起動時のASR・LLM・TTS先読みの有効化とタイムアウト
 - `DOOR_ASR_BASE_URL` / `DOOR_ASR_API_MODEL`: ASR接続先とモデルID
 - `DOOR_TTS_BASE_URL` / `DOOR_TTS_API_MODEL`: TTS接続先とモデルID
 - `DOOR_TTS_VOICE` / `DOOR_TTS_SAMPLE_RATE`: 合成音声の声とPCMサンプルレート
@@ -177,3 +204,40 @@ DOOR_ASR_BASE_URL=http://127.0.0.1:18100 DOOR_TTS_BASE_URL=http://127.0.0.1:1810
 uv run uvicorn door_backend.api:app --host 127.0.0.1 --port 8093
 uv run python -m scripts.psoc_sim --url ws://127.0.0.1:8093/api/relay visitor.wav
 ```
+
+### WebUIから音声エージェントを通しで試す
+
+開発用LiveKitと偽モデルを起動し、WebUIのマイクからブラウザー→FastAPI→LiveKit→エージェント→ASR/LLM/TTSの経路を試せます。偽モデルは固定の文字起こしと応答を返すため、マイク音声の認識精度や会話品質の評価には使えません。
+
+1. `.env`を開発設定にし、LiveKitを起動します。
+
+   ```bash
+   docker compose up -d
+   ```
+
+2. 別のターミナルで偽モデルを起動します。
+
+   ```bash
+   uv run python -m scripts.fake_models --port 18100
+   ```
+
+3. `DOOR_ASR_BASE_URL`、`DOOR_TTS_BASE_URL`、`DOOR_OLLAMA_BASE_URL`をすべて`http://127.0.0.1:18100`に設定して、エージェントとAPIを別のターミナルで起動します。
+
+   ```bash
+   DOOR_ASR_BASE_URL=http://127.0.0.1:18100 DOOR_TTS_BASE_URL=http://127.0.0.1:18100 DOOR_OLLAMA_BASE_URL=http://127.0.0.1:18100 uv run python -m door_backend.agent dev
+   ```
+
+   ```bash
+   DOOR_ASR_BASE_URL=http://127.0.0.1:18100 DOOR_TTS_BASE_URL=http://127.0.0.1:18100 DOOR_OLLAMA_BASE_URL=http://127.0.0.1:18100 uv run uvicorn door_backend.api:app --host 127.0.0.1 --port 8093
+   ```
+
+4. `http://localhost:8093/`を開いてAPIキーで認証し、モードを選んで通話します。初回はブラウザーのマイク使用を許可してください。
+
+このWebRTCテスト画面の会話は保存されません。Supabaseの来客履歴保存はPSoC経由の`/api/relay`で別途確認してください。
+
+
+### WebUIのテスト環境
+
+`DOOR_ENV=development`のとき、WebUIから通常・おまかせ・外出モードを選び、置き配設定と最大350字の追加指示を変えて会話できます。設定はサーバー側で規則に変換し、会話へ渡します。画面には規則のプレビューとサービス状態を表示します。
+
+Supabase履歴保存は任意です。開発環境で`DOOR_SUPABASE_URL`を設定し、画面で保存を明示的に選んだ場合だけ、入力したテスト用デバイス鍵で履歴を書き込みます。保存を選ばなければSupabaseへ書き込みません。`DOOR_VISIT_WRITE_TIMEOUT_SECONDS`は履歴書き込みの上限時間です。

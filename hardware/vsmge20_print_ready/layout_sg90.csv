@@ -1,0 +1,7 @@
+plate,part,note
+1,PRINT_08_Charger_cradle_frame.stl,unchanged; A1 mini PLA
+2,PRINT_01_Front_guard_SG90.stl,"revised: manual apertures for monitor, 4-way, playback, menu"
+2,SG90_mount_Call.stl + SG90_mount_End.stl,new mounts: M2 clearance holes and cable reliefs
+2,other retained non-MG996R components,existing plate-02 layout geometry retained
+3,remaining existing small parts,MG996R spline hubs removed; use stock SG90 horn
+4,TPU button pads,"unchanged, TPU 95A"

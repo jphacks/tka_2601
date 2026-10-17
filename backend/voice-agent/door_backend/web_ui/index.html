@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f7f8f6" />
     <title>玄関AI</title>
-    <link rel="stylesheet" href="/assets/app.css?v=4" />
+    <link rel="stylesheet" href="/assets/app.css?v=6" />
   </head>
   <body>
     <main class="app">
@@ -26,10 +26,39 @@
           <input id="api-key" type="password" autocomplete="current-password" required />
           <button id="authenticate" type="submit">認証</button>
         </form>
-        <details class="rules">
+        <details id="house-rules-panel" class="rules">
           <summary>お届け時の希望 <span>任意</span></summary>
           <textarea id="house-rules" rows="2" maxlength="800" placeholder="例：宅配ボックスを優先してください。"></textarea>
         </details>
+        <section id="test-panel" class="test-panel" hidden aria-label="開発テスト設定">
+          <div class="test-heading">
+            <strong>管理者設定</strong>
+            <span>モードと指示はWeb UIの次の通話に適用されます</span>
+          </div>
+          <label for="test-mode">応対モード</label>
+          <select id="test-mode">
+            <option value="normal">通常 — 玄関前への置き配を依頼</option>
+            <option value="omakase">おまかせ — 通常と同じ配達ルール</option>
+            <option value="away">外出中 — 不在票を依頼</option>
+          </select>
+          <label class="test-toggle"><input id="away-leave-at-door" type="checkbox" /> 外出中でも指定場所への置き配を許可</label>
+          <label for="extra-instructions">AIへの追加の指示 <span>最大350字</span></label>
+          <textarea id="extra-instructions" rows="2" maxlength="350" placeholder="例：犬がいるので、インターホンを鳴らした後は少し離れてください。"></textarea>
+          <details class="preview">
+            <summary>適用される住人ルールを確認</summary>
+            <pre id="rules-preview">設定を読み込んでいます…</pre>
+          </details>
+          <div class="admin-actions">
+            <button id="save-admin-settings" type="button">設定を保存</button>
+            <button id="reset-admin-settings" type="button" class="secondary">初期化</button>
+          </div>
+          <fieldset id="history-test" class="history-test" hidden>
+            <label class="test-toggle"><input id="save-test-history" type="checkbox" /> このテスト会話の履歴をSupabaseに保存</label>
+            <label for="test-device-key">テスト用デバイス鍵</label>
+            <input id="test-device-key" type="password" autocomplete="off" placeholder="保存を選んだときだけ入力" disabled />
+            <p>保存を選ぶと、会話の文字起こしと時刻がサーバー設定済みのSupabaseへ送られます。実デバイス鍵を使うと実際の来客履歴が追加されます。</p>
+          </fieldset>
+        </section>
         <div class="call-row">
           <span id="call-state" class="call-state">未接続</span>
           <div class="buttons">
@@ -40,8 +69,8 @@
         <p id="notice" class="notice" role="status" aria-live="polite">開始するとマイクが有効になります。</p>
       </section>
       <div id="remote-audio" hidden></div>
-      <footer>音声・会話は通話中のみ処理され、保存しません。</footer>
+      <footer id="footer-note">音声・会話は通話中のみ処理され、保存しません。</footer>
     </main>
-    <script type="module" src="/assets/app.js?v=4"></script>
+    <script type="module" src="/assets/app.js?v=6"></script>
   </body>
 </html>
