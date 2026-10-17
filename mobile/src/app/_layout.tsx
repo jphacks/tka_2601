@@ -37,10 +37,13 @@ function RootNavigator() {
 
   if (!ready) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 
-  // 画面は必ずどれかのガードに入れる。開けない画面に来たときは、開けるもののうち先頭に移る
+  // 状態ごとの最初の画面。開けない画面に来たときはここへ移す（指定しないとファイル名の並びで選ばれる）
+  const home = member ? '/' : signedIn ? '/group-setup' : '/login';
+
+  // 画面は必ずどれかのガードに入れる
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-      <Stack.Protected guard={member}>
+      <Stack.Protected guard={member} redirectTo={home}>
         <Stack.Screen name="index" />
         <Stack.Screen name="visits/[id]" />
         <Stack.Screen name="settings/index" />
@@ -48,14 +51,14 @@ function RootNavigator() {
         <Stack.Screen name="settings/group" />
         <Stack.Screen name="settings/invite" />
       </Stack.Protected>
-      <Stack.Protected guard={signedIn && !household}>
+      <Stack.Protected guard={signedIn && !household} redirectTo={home}>
         <Stack.Screen name="group-setup" />
         <Stack.Screen name="scan" />
       </Stack.Protected>
-      <Stack.Protected guard={signedIn}>
+      <Stack.Protected guard={signedIn} redirectTo={home}>
         <Stack.Screen name="join" />
       </Stack.Protected>
-      <Stack.Protected guard={!signedIn}>
+      <Stack.Protected guard={!signedIn} redirectTo={home}>
         <Stack.Screen name="login" />
         <Stack.Screen name="signup" />
       </Stack.Protected>
