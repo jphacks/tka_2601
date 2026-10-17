@@ -47,6 +47,20 @@ class Session:
         pass
 
 
+class SentenceSession:
+    batches = []
+
+    def __init__(self, **_kwargs):
+        self.requests = []
+
+    def post(self, *_args, **kwargs):
+        self.requests.append(kwargs["json"])
+        return Response(self.batches.pop(0))
+
+    async def close(self):
+        pass
+
+
 class Emitter:
     def __init__(self):
         self.pcm = []
@@ -122,3 +136,49 @@ def test_keep_two_sentences_after_a_long_pause():
     text = "恐れ入りますが、こちらでお願いいたします。ご不明でしたらお知らせください。"
 
     assert speech_tts._trim_delayed_audio_tail(pcm, 24000, text) == pcm
+
+
+def test_split_sentences_keeps_punctuation_and_closing_quote():
+    assert speech_tts._split_sentences('「はい、大丈夫です。」次の文です！') == [
+        '「はい、大丈夫です。」',
+        "次の文です！",
+    ]
+
+
+def test_multi_sentence_speech_is_trimmed_per_sentence(monkeypatch):
+    sample_rate = 48000
+    speech = [5000] * (sample_rate // 2)
+    silence = [0] * (sample_rate * 14 // 10)
+    delayed_tail = [5000] * (sample_rate // 5)
+    samples = speech + silence + delayed_tail
+    pcm = struct.pack(f"<{len(samples)}h", *samples)
+    delta = base64.b64encode(pcm).decode()
+    event_batch = [
+        {"type": "speech.audio.delta", "delta": delta},
+        {"type": "speech.audio.done"},
+    ]
+    SentenceSession.batches = [event_batch.copy(), event_batch.copy()]
+    monkeypatch.setattr(speech_tts.aiohttp, "ClientSession", SentenceSession)
+
+    async def synthesize():
+        tts = speech_tts.SpeechCppTTS()
+        stream = speech_tts.SpeechCppStream(
+            tts=tts,
+            input_text="玄関前に置いてください。写真を撮ってください。",
+            conn_options=DEFAULT_API_CONNECT_OPTIONS,
+        )
+        emitter = Emitter()
+        await stream._run(emitter)
+        return tts._http, emitter
+
+    session, emitter = asyncio.run(synthesize())
+
+    assert [request["input"] for request in session.requests] == [
+        "玄関前に置いてください。",
+        "写真を撮ってください。",
+    ]
+    frame_bytes = (sample_rate // 50) * 2
+    expected_sentence_frames = len(speech) // (sample_rate // 50) + 9
+    assert len(emitter.pcm) == 1
+    assert len(emitter.pcm[0]) == 2 * expected_sentence_frames * frame_bytes
+    assert emitter.flushed
