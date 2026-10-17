@@ -23,7 +23,7 @@
 | P1 | PSoC 6 の音 | チャイムの登録と精度の測定、マイクの音の送信、I2S アンプでの再生、定型音声 |
 | P2 | 押下と機構 | SG90 2つの PWM 制御、5V の配線、押下アーム、ブラケット、ガード板、スピーカーの箱 |
 | P3 | PSoC 6 の通信と状態遷移 | 中継との WebSocket、Edge Function との通信、状態遷移、送信待ちと再送 |
-| P4 | 会話サーバー | FastAPI の中継（LiveKit への参加、家の設定の反映。別セッションで開発中）、`house_rules`、会話の試験（T5、T6） |
+| P4 | 会話サーバー | FastAPI の中継（LiveKit への参加、家の設定の反映、会話の文字の Supabase への書き込み。main に実装済み）、`house_rules`、会話の試験（T5、T6） |
 | P5 | アプリと Supabase | Supabase（PR #4、実装済み）とアプリ（`mobile/`、実装済み）の結合、プッシュ通知の確認、本体の登録とペアリング |
 
 デモ台本、スライド、README、動画は Day 2 の後半に全員で分担する。
@@ -106,8 +106,8 @@ firmware/
 tools/
   serial-monitor/      wifi-check のシリアル出力を見る監視画面
 backend/
-  voice-agent/         会話サーバー（FastAPI と LiveKit の会話エージェント。これから中継を足す）
-supabase/              テーブル、RLS、Edge Function（PR #4）
+  voice-agent/         会話サーバー（FastAPI と LiveKit の会話エージェント、PSoC 6 用の中継）
+supabase/              テーブル、RLS、Edge Function
 mobile/                住人アプリ MONBAN（React Native・Expo。ブランチ claude/mobile-app）
 ```
 
