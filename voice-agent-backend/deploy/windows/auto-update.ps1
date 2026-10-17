@@ -2,7 +2,8 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repository = 'jphacks/tka_2601'
-$PullRequestNumber = 3
+$RepositoryOwner = 'jphacks'
+$DeploymentBranch = 'codex/voice-agent-backend'
 $AppRoot = 'C:\Users\stu23-oba-shion\door-voice-backend'
 $Python = 'C:\Users\stu23-oba-shion\door-prototype\livekit-poc\.venv\Scripts\python.exe'
 $AgentTask = 'Door Voice Agent'
@@ -28,12 +29,15 @@ function Test-Listening([int[]] $Ports) {
 
 try {
     $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'door-voice-backend-updater' }
-    $pullRequest = Invoke-RestMethod -Uri "$ApiRoot/pulls/$PullRequestNumber" -Headers $headers
-    if ($pullRequest.state -eq 'closed' -and -not $pullRequest.merged) {
-        Write-DeployLog 'Skipped: deployment pull request is closed without merge.'
-        exit 0
+    $encodedHead = [Uri]::EscapeDataString("$RepositoryOwner`:$DeploymentBranch")
+    $openPullRequests = Invoke-RestMethod -Uri "$ApiRoot/pulls?state=open&head=$encodedHead&base=main" -Headers $headers
+    $openPullRequest = @($openPullRequests | Select-Object -First 1)
+    if ($openPullRequest.Count -gt 0) {
+        $branch = $openPullRequest[0].head.ref
+    } else {
+        $repositoryInfo = Invoke-RestMethod -Uri $ApiRoot -Headers $headers
+        $branch = $repositoryInfo.default_branch
     }
-    $branch = if ($pullRequest.merged) { $pullRequest.base.ref } else { $pullRequest.head.ref }
     $encodedBranch = [Uri]::EscapeDataString($branch)
     $commit = Invoke-RestMethod -Uri "$ApiRoot/commits/$encodedBranch" -Headers $headers
     $sha = [string]$commit.sha
