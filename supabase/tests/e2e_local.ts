@@ -76,6 +76,9 @@ const missedId = crypto.randomUUID();
 const recoveredId = crypto.randomUUID();
 const startedAt = new Date().toISOString();
 const createdVisits = [visitId, missedId, recoveredId];
+// グループとペアリングの試験で作るアカウントとグループ
+const tempUserIds: string[] = [];
+let tempHouseholdId: string | null = null;
 
 try {
   // H1: ログインしていない利用者は読めない ----------------------------------
@@ -203,6 +206,108 @@ try {
   check("本体は変わったモードを読める", (await device("GET", "/mode")).json.mode === next);
   await resident.from("devices").update({ mode: before }).eq("id", DEVICE_ID);
 
+  // 設定と自動の外出 -----------------------------------------------------------
+  const settings = await device("GET", "/settings");
+  check(
+    "本体は設定をまとめて読める",
+    settings.status === 200 && settings.json.paired === true && typeof settings.json.away_leave_at_door === "boolean" &&
+      typeof settings.json.auto_away === "boolean" && typeof settings.json.extra_instructions === "string",
+    settings,
+  );
+  const saved = await resident.from("devices").update({
+    away_leave_at_door: true,
+    auto_away: true,
+    extra_instructions: "犬がいるので、ゆっくり話してください",
+  }).eq("id", DEVICE_ID).select("id");
+  check("住人は設定を変えられる", saved.data?.length === 1, saved);
+  const changedSettings = (await device("GET", "/settings")).json;
+  check(
+    "本体は住人が変えた設定を読める",
+    changedSettings.away_leave_at_door === true && changedSettings.auto_away === true &&
+      changedSettings.extra_instructions === "犬がいるので、ゆっくり話してください",
+    changedSettings,
+  );
+  await resident.from("devices").update({ away_leave_at_door: false, auto_away: false, extra_instructions: "" })
+    .eq("id", DEVICE_ID);
+  const state = await device("PUT", "/state", { auto_away_active: true });
+  check("本体は自動の外出の状態を書ける", state.status === 200 && state.json.auto_away_active === true, state);
+  const shown = await resident.from("devices").select("auto_away_active").eq("id", DEVICE_ID).single();
+  check("住人は自動の外出の状態を読める", shown.data?.auto_away_active === true, shown);
+  check("自動の外出の状態が真偽値でなければ 400", (await device("PUT", "/state", { auto_away_active: "yes" })).status === 400);
+  await device("PUT", "/state", { auto_away_active: false });
+  const notAllowed = await resident.from("devices").update({ auto_away_active: true }).eq("id", DEVICE_ID);
+  check("住人は自動の外出の状態を書けない", notAllowed.error?.code === "42501", notAllowed);
+
+  // グループの作成と招待（新しいアカウント2つ） --------------------------------------
+  async function newUser(email: string, metadata: Record<string, string>) {
+    const password = crypto.randomUUID();
+    const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: metadata });
+    if (error) throw error;
+    tempUserIds.push(data.user.id);
+    const client = createClient(status.API_URL, status.PUBLISHABLE_KEY, options);
+    const signIn = await client.auth.signInWithPassword({ email, password });
+    if (signIn.error) throw signIn.error;
+    return client;
+  }
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const owner = await newUser(`e2e-owner-${suffix}@example.com`, { full_name: "e2e 太郎" });
+  const joiner = await newUser(`e2e-joiner-${suffix}@example.com`, { name: "e2e Hanako" });
+
+  const created = await owner.rpc("create_household", { name: "e2e の家" });
+  check("アプリからグループを作れる", typeof created.data === "string", created);
+  tempHouseholdId = created.data as string;
+  const again = await owner.rpc("create_household", { name: "e2e の家 2" });
+  check("2つ目のグループは作れない（23505）", again.error?.code === "23505", again);
+  const invite = await owner.rpc("get_or_create_household_invite");
+  check("招待トークンを受け取れる", typeof invite.data === "string" && invite.data.length === 48, invite);
+  const preview = await joiner.rpc("get_household_invite", { token: invite.data });
+  check(
+    "招待を受けた人はグループ名と招待した人の名前を読める",
+    preview.data?.[0]?.household_name === "e2e の家" && preview.data?.[0]?.inviter_name === "e2e 太郎",
+    preview,
+  );
+  const wrongInvite = await joiner.rpc("get_household_invite", { token: "wrong" });
+  check("違う招待トークンは PT404 と理由を JSON で返す", wrongInvite.error?.code === "PT404" && wrongInvite.error.message === "招待が見つかりません", wrongInvite);
+  const accepted = await joiner.rpc("accept_household_invite", { token: invite.data });
+  check("招待でグループに入れる", accepted.data === tempHouseholdId, accepted);
+  const profiles = await owner.rpc("household_member_profiles");
+  check(
+    "メンバーの名前とメールを読める",
+    JSON.stringify(profiles.data?.map((p: { full_name: string; role: string }) => [p.full_name, p.role])) ===
+      JSON.stringify([["e2e 太郎", "owner"], ["e2e Hanako", "member"]]),
+    profiles,
+  );
+  const anonProfiles = await anon.rpc("household_member_profiles");
+  check("anon はメンバーの一覧を読めない", anonProfiles.error !== null, anonProfiles);
+
+  // ペアリング: 管理者が登録した本体を、アプリでコードを入れて結び付ける -----------------------
+  const pairKey = `dk_e2e_${crypto.randomUUID()}`;
+  const [registered] = await sql<{ device_id: string; pairing_code: string }>(
+    `select * from private.register_device('e2e の親機', '${await sha256Hex(pairKey)}')`,
+  );
+  const unpaired = await device("GET", "/settings", undefined, pairKey);
+  check("結び付く前の本体は paired が false", unpaired.status === 200 && unpaired.json.paired === false, unpaired);
+  const early = await device("PUT", `/visits/${crypto.randomUUID()}`, { chimed_at: startedAt, mode: "normal", status: "ringing" }, pairKey);
+  check("結び付く前の本体は来客を書けない（409）", early.status === 409, early);
+  const wrongCode = await joiner.rpc("claim_device", { code: "ZZZZZZZZ" });
+  check("違うペアリングコードは PT404", wrongCode.error?.code === "PT404", wrongCode);
+  const claimed = await joiner.rpc("claim_device", { code: registered.pairing_code.toLowerCase() });
+  check("メンバーはペアリングコードで本体を結び付けられる", claimed.data === registered.device_id, claimed);
+  const pairedVisit = crypto.randomUUID();
+  const written = await device("PUT", `/visits/${pairedVisit}`, {
+    chimed_at: startedAt,
+    mode: "normal",
+    status: "ended",
+    intent: "acquaintance",
+    outcome: "escalated",
+    end_reason: "closing",
+  }, pairKey);
+  check("結び付けた本体は来客を書ける（知人）", written.status === 200, written);
+  const ownerVisits = await owner.from("visits").select("intent").eq("id", pairedVisit);
+  check("グループのメンバーは結び付けた本体の来客を読める", ownerVisits.data?.[0]?.intent === "acquaintance", ownerVisits);
+  const residentVisits = await resident.from("visits").select("id").eq("id", pairedVisit);
+  check("ほかのグループの住人は読めない", residentVisits.data?.length === 0, residentVisits);
+
   // H3b: 住人は1件ずつ消せる ---------------------------------------------------
   const both = await resident.from("visits").delete().in("id", [visitId, missedId]).select("id");
   check("H3b 住人は2件をまとめて消せない", both.error?.code === "42501", both);
@@ -214,6 +319,9 @@ try {
   await admin.from("visits").delete().in("id", createdVisits);
   await admin.from("households").delete().eq("id", OTHER_HOUSEHOLD_ID);
   await admin.from("push_tokens").delete().eq("token", FAKE_PUSH_TOKEN);
+  // グループを消すと、結び付けた本体、その鍵、来客も消える
+  if (tempHouseholdId) await admin.from("households").delete().eq("id", tempHouseholdId);
+  for (const id of tempUserIds) await admin.auth.admin.deleteUser(id);
   await resident.auth.signOut();
 }
 

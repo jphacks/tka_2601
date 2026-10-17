@@ -6,7 +6,7 @@ export type Visit = {
   mode: "normal" | "omakase" | "away" | "off";
   chimed_at: string;
   status: "ringing" | "in_call" | "ended" | "missed";
-  intent: "delivery" | "sales" | "service" | "emergency" | "unknown" | null;
+  intent: "delivery" | "sales" | "service" | "emergency" | "acquaintance" | "unknown" | null;
   company: string | null;
   outcome:
     | "leave_at_door"
@@ -44,6 +44,7 @@ const INTENT_LABELS: Record<NonNullable<Visit["intent"]>, string> = {
   sales: "営業・勧誘",
   service: "点検・工事",
   emergency: "緊急の用件",
+  acquaintance: "知人",
   unknown: "来客",
 };
 

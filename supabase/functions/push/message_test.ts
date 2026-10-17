@@ -61,6 +61,11 @@ Deno.test("外出モードで不在票なら再配達を促し、抜粋は 40 �
   assertEquals(endedNotice(ended, text).body, `不在票をお願いしました。再配達の手配をしてください\n「${"あ".repeat(40)}…」`);
 });
 
+Deno.test("知人の来客は題に「知人」を載せる", () => {
+  const ended: Visit = { ...visit, status: "ended", intent: "acquaintance", outcome: "escalated" };
+  assertEquals(endedNotice(ended, null).title, "知人");
+});
+
 Deno.test("意図と対応がなく発話もなければ、その旨を載せる", () => {
   assertEquals(endedNotice({ ...visit, status: "ended" }, null), {
     kind: "ended",
