@@ -73,7 +73,7 @@ class VisitState:
         value = _compact(self.latest_user_text)
         incomplete = bool(re.search(r"(?:たら|なら|じゃなくて|ではなくて|ではなく|じゃなく)$", value))
         return (
-            _is_filler(self.latest_user_text)
+            (_is_filler(self.latest_user_text) and value != "ああ")
             or (self.purpose == "unknown" and value in {"はい", "ええ", "うん"})
             or incomplete
             or value in {"nhkの", "あの荷物じゃなくて", "お荷物じゃなくて"}
