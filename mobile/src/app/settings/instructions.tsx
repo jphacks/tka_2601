@@ -9,8 +9,8 @@ import { errorMessage } from '../../lib/authActions';
 import type { Device } from '../../lib/types';
 import { colors, radius } from '../../theme';
 
-// 上限字数は未定（house_rules 全体で 800 字以内）。決まったら数を入れる
-const MAX_LENGTH: number | null = null;
+// house_rules 全体を 800 字に収めるための上限。DB の check 制約と同じ値
+const MAX_LENGTH = 350;
 
 export default function InstructionsScreen() {
   const household = useHousehold();
@@ -72,13 +72,13 @@ export default function InstructionsScreen() {
             onChangeText={setText}
             multiline
             editable={!!device}
-            maxLength={MAX_LENGTH ?? undefined}
+            maxLength={MAX_LENGTH}
             accessibilityLabel="指示"
             accessibilityLabelledBy="instructions-label"
             textAlignVertical="top"
             style={styles.input}
           />
-          <Text style={styles.counter}>{MAX_LENGTH ? `${length} / ${MAX_LENGTH} 字` : `${length} 字`}</Text>
+          <Text style={styles.counter}>{`${length} / ${MAX_LENGTH} 字`}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>

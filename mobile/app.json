@@ -45,6 +45,11 @@
     "scheme": "tka2601",
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "886e1515-9588-4282-89bd-86ead13f3da5"
+      }
     }
   }
 }

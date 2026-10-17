@@ -40,10 +40,9 @@ npx expo run:ios
 | Supabase の Auth > Providers > Google | Google Cloud の Web 用 OAuth クライアントの ID とシークレットを入れる。Google 側の承認済みリダイレクト URI は `https://<ref>.supabase.co/auth/v1/callback` |
 | Supabase の Auth > Providers > Email | メールの確認を有効にするなら、無料プランでは独自の SMTP が要る |
 | Apple Developer | バンドル ID の App ID を作り、Sign in with Apple と Push Notifications を有効にする |
-| EAS | `npx eas-cli@latest init` で `app.json` に `extra.eas.projectId` を入れる。通知を送るには `npx eas-cli@latest credentials` で APNs のキーを登録する |
+| EAS | プロジェクト ID（`886e1515-…`）は `app.json` の `extra.eas.projectId` に入れてある。通知を送るには `npx eas-cli@latest credentials` で APNs のキーを登録する |
 
 ## 決まっていないこと
 
 - アプリ名（画面には `[アプリ名]` と出している）とバンドル ID（仮に `com.jphacks.tka2601`）
-- AI への追加の指示の上限字数
-- アプリで作ったグループに本体を結び付ける手順
+- 本体をグループに結び付ける画面（Supabase の `claim_device(code)` にペアリングコードを渡す）。デザインにもアプリにもまだない
