@@ -207,6 +207,40 @@ try {
     notices,
   );
 
+  // 送信待ち: Expo が DeviceNotRegistered を返した端末は、送り直さずにあきらめる
+  const deliveries = await sql<{ kind: string; status: string; attempts: number; last_error: string }>(
+    `select kind, status, attempts, last_error from public.push_deliveries where visit_id = '${visitId}' order by kind`,
+  );
+  check(
+    "送信待ちは来客時と対応後の2件で、どちらも1回送ってあきらめた",
+    deliveries.length === 2 && deliveries.every((d) => d.status === "failed" && d.attempts === 1 && d.last_error.startsWith("DeviceNotRegistered")),
+    deliveries,
+  );
+
+  // 再送: pg_cron が呼ぶ関数 → push の RETRY → Expo（送る時期が来た送信待ちを1件作って確かめる）
+  await sql(
+    `insert into public.push_deliveries (visit_id, kind, token) values ('${concurrentId}', 'ended', '${FAKE_PUSH_TOKEN}')`,
+  );
+  const retryStarted = new Date().toISOString();
+  await sql("select private.retry_push_deliveries()");
+  let retried: { status: string; attempts: number; last_error: string | null }[] = [];
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    retried = await sql(
+      `select status, attempts, last_error from public.push_deliveries where visit_id = '${concurrentId}' and kind = 'ended'`,
+    );
+    if (retried[0]?.status !== "pending") break;
+  }
+  check(
+    "再送で送信待ちを送り、Expo の結果を記録する",
+    retried[0]?.status === "failed" && retried[0].attempts === 1 && retried[0].last_error?.startsWith("DeviceNotRegistered") === true,
+    retried,
+  );
+  const retryResponses = await sql<{ status_code: number; content: string }>(
+    `select status_code, content from net._http_response where created > '${retryStarted}' and content like '%retried%'`,
+  );
+  check("再送の呼び出しに push が 200 を返す", retryResponses.some((r) => r.status_code === 200), retryResponses);
+
   // モード: 住人が変えると、本体が次に読んだときに変わっている ---------------------------
   const before = (await device("GET", "/mode")).json.mode as string;
   const next = before === "omakase" ? "normal" : "omakase";
