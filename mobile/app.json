@@ -9,7 +9,8 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.jphacks.tka2601",
+      "bundleIdentifier": "com.atsushihosaka.monban",
+      "buildNumber": "1",
       "usesAppleSignIn": true,
       "infoPlist": {
         "CFBundleDevelopmentRegion": "ja",

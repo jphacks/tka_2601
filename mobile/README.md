@@ -53,7 +53,7 @@ npx eas-cli@latest build --profile development-simulator --platform ios
 | 対象 | 設定 |
 |---|---|
 | Supabase の Auth > URL Configuration | Redirect URLs に `tka2601://**` を足す（Google のログインから戻るため） |
-| Supabase の Auth > Providers > Apple | 有効にし、Client IDs にバンドル ID（`com.jphacks.tka2601`）を入れる |
+| Supabase の Auth > Providers > Apple | 有効にし、Client IDs にバンドル ID（`com.atsushihosaka.monban`）を入れる |
 | Supabase の Auth > Providers > Google | Google Cloud の Web 用 OAuth クライアントの ID とシークレットを入れる。Google 側の承認済みリダイレクト URI は `https://<ref>.supabase.co/auth/v1/callback` |
 | Supabase の Auth > Providers > Email | メールの確認を有効にするなら、無料プランでは独自の SMTP が要る |
 | Apple Developer | バンドル ID の App ID を作り、Sign in with Apple と Push Notifications を有効にする |
@@ -61,5 +61,5 @@ npx eas-cli@latest build --profile development-simulator --platform ios
 
 ## 決まっていないこと
 
-- バンドル ID（仮に `com.jphacks.tka2601`）と招待リンクのスキーム（`tka2601`）を MONBAN に合わせるか
+- 招待リンクのスキーム（`tka2601`）と Android のパッケージ名（`com.jphacks.tka2601`）を MONBAN に合わせるか
 - 本体をグループに結び付ける画面（Supabase の `claim_device(code)` にペアリングコードを渡す）。デザインにもアプリにもまだない
