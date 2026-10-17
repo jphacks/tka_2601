@@ -32,7 +32,7 @@ def test_company_introduction_is_not_sales_until_the_offer_is_clear():
 def test_polite_farewell_is_acknowledged_as_departure():
     result = state("承知いたしました。また改めて伺わせていただきます。失礼いたします")
     assert result.closing
-    assert result.fallback() == "お気をつけてお帰りください。"
+    assert result.fallback() == "承知いたしました。失礼いたします。"
 
 
 def test_correction_overrides_delivery_context():
@@ -79,3 +79,52 @@ def test_arrival_politeness_is_not_misread_as_departure():
     result = state("夜分に失礼いたします。宅配便です")
     assert result.delivery_allowed
     assert not result.closing
+
+
+def test_delivery_placement_turns_answer_directly_and_do_not_end_early():
+    turns = [
+        ("user", "こんにちは"),
+        ("assistant", "どちらの用件でいらっしゃいましたか。"),
+        ("user", "宅配できました"),
+        ("assistant", "玄関の前に置いていただけますか。"),
+        ("user", "じゃあ置いていきますね"),
+    ]
+    placing = VisitState.from_messages(turns)
+    assert placing.delivery_allowed and placing.visitor_will_place
+    assert not placing.placed
+    assert placing.deterministic_reply == "はい、玄関の前にお願いいたします。"
+
+    turns.extend([("assistant", placing.deterministic_reply), ("user", "どうやっていけば大丈夫ですか?")])
+    question = VisitState.from_messages(turns)
+    assert question.deterministic_reply == "はい、玄関の前に置いていただければ大丈夫です。"
+    assert question.validate(question.deterministic_reply)
+
+    turns.extend([("assistant", "失礼いたします。"), ("user", "失礼しますというかどうすればいいですか")])
+    follow_up = VisitState.from_messages(turns)
+    assert not follow_up.closing
+    assert follow_up.deterministic_reply == "はい、玄関の前に置いていただければ大丈夫です。"
+
+
+def test_placement_confirmation_and_acknowledgement_are_not_repeated():
+    confirmed = VisitState.from_messages(
+        [("user", "宅配便です"), ("assistant", "玄関前にお願いします"), ("user", "置いておいてば大丈夫ですか")]
+    )
+    assert confirmed.deterministic_reply == "はい、玄関の前に置いていただければ大丈夫です。"
+
+    acknowledgement = VisitState.from_messages(
+        [("user", "宅配できました"), ("assistant", "玄関の前に置いていただけますか。"), ("user", "ありがとうございました")]
+    )
+    assert acknowledgement.deterministic_reply == "はい、よろしくお願いいたします。"
+
+
+def test_farewell_must_end_reply_and_is_only_allowed_when_done():
+    pending = VisitState.from_messages(
+        [("user", "宅配便です"), ("assistant", "玄関の前に置いていただけますか。"), ("user", "置きました")]
+    )
+    assert not pending.validate("失礼いたします。")
+
+    done = VisitState.from_messages(
+        [("user", "失礼します")]
+    )
+    assert not done.validate("承知しました。失礼いたします。ほかに何かありますか？")
+    assert done.trim_after_farewell("承知しました。失礼いたします。ほかに何かありますか？") == "承知しました。失礼いたします。"

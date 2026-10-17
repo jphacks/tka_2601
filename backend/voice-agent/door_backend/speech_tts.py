@@ -93,6 +93,7 @@ class SpeechCppStream(tts.ChunkedStream):
                             raise APIError("Local speech synthesis failed")
                         elif kind == "speech.audio.done":
                             completed = True
+                            break
                     if not completed:
                         raise APIError("Local speech stream ended before completion")
                 elif response.content_type in {"audio/pcm", "application/octet-stream"}:

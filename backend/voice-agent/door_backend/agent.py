@@ -34,6 +34,8 @@ BASE_INSTRUCTIONS = """あなたは一般家庭の住人に代わって、家の
 あなた自身もこの家の住人側として話します。店舗、会社、施設、受付窓口の職員ではありません。
 「当店」「弊店」「当社」「お客様」「ご来店」「お引き取り」など、店や会社の立場を示す表現は使わないでください。
 自然で丁寧な短い日本語で答えてください。
+宅配の置き場所について聞かれたら、住人の希望場所を具体的に案内してください。「置いていきますね」は設置完了と決めつけず、短く案内してください。
+「大丈夫ですか」などの確認には、まず「はい、大丈夫です」のように直接答えてください。用件が済む前に終話の挨拶をしないでください。
 会話の前後を踏まえ、既に分かっている用件や名前を聞き直さないでください。
 来訪者が名乗ったら、その名前を短く確認してから、用件が未確認の場合に限り一度だけ用件を尋ねてください。
 用件が宅配だと確認できたときだけ、住人の宅配ルールを使ってください。
@@ -70,15 +72,20 @@ class DoorAgent(Agent):
             return
         context = chat_ctx.copy()
         context.add_message(role="system", content=state.instructions())
-        chunks: list[str] = []
-        async for chunk in Agent.default.llm_node(self, context, tools, model_settings):
-            if isinstance(chunk, str):
-                chunks.append(chunk)
-            elif getattr(chunk, "delta", None) and isinstance(chunk.delta.content, str):
-                chunks.append(chunk.delta.content)
-        reply = "".join(chunks).strip()
-        if not state.validate(reply):
+        reply = state.deterministic_reply
+        if state.closing:
             reply = state.fallback()
+        if reply is None:
+            chunks: list[str] = []
+            async for chunk in Agent.default.llm_node(self, context, tools, model_settings):
+                if isinstance(chunk, str):
+                    chunks.append(chunk)
+                elif getattr(chunk, "delta", None) and isinstance(chunk.delta.content, str):
+                    chunks.append(chunk.delta.content)
+            reply = "".join(chunks).strip()
+            reply = state.trim_after_farewell(reply)
+            if not state.validate(reply):
+                reply = state.fallback()
         if reply:
             yield reply
 
