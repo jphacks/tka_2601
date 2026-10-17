@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f5f7f4">
+  <title>Door — 接続モニター</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 1v5m6-5v5M9 18v5m6-5v5M1 9h5m-5 6h5m12-6h5m-5 6h5"/><rect x="10" y="10" width="4" height="4" rx=".5"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2 8.5a16 16 0 0 1 20 0M5.5 12a10.5 10.5 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0"/><circle cx="12" cy="19" r=".8"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M6 18a5 5 0 1 1 .7-9.95A6 6 0 0 1 18.2 8 5 5 0 0 1 18 18Z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m10.2 4-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.8-3l-8-14a2 2 0 0 0-3.6 0Z"/><path d="M12 9v4m0 4h.01"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5m6-5v5M7 8h10v3a5 5 0 0 1-10 0Zm5 8v5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 3 3-3 3m7 0h5"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 4 12 8-12 8Z"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-5-5 5 5-5 5"/></symbol>
+    <symbol id="i-signal" viewBox="0 0 24 24"><path d="M4 18v3m5-8v8m5-13v13m5-18v18"/></symbol>
+    <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <a href="/" class="brand" aria-label="Door 接続モニター ホーム"><span class="brand-mark"><span></span></span><span class="brand-name">door<span class="brand-period">.</span></span><span class="brand-divider"></span><span class="brand-label">接続モニター</span></a>
+      <div class="monitor-meta"><span class="local-label">このMacで監視</span><span class="badge neutral" id="feed-badge"><span class="status-dot"></span><span id="feed-label">接続中</span></span></div>
+    </header>
+
+    <main>
+      <div class="page-heading"><div><p class="eyebrow">DEVICE OVERVIEW</p><h1>デバイス接続状況</h1><p class="page-description">基板から届くログで、Wi-Fiとサーバーの通信を確認します。</p></div><span class="device-id"><svg class="icon"><use href="#i-chip"/></svg>CY8CPROTO-062-4343W</span></div>
+
+      <div class="monitor-warning" id="monitor-warning" role="status" hidden><svg class="icon"><use href="#i-alert"/></svg><span id="monitor-warning-text"></span></div>
+
+      <section class="connection-card" aria-labelledby="connection-title">
+        <div class="connection-summary"><div class="summary-main"><span class="summary-icon neutral" id="summary-icon"><svg class="icon"><use id="summary-icon-use" href="#i-plug"/></svg></span><div><div class="summary-eyebrow">CONNECTION</div><h2 id="connection-title">ログを待っています</h2><p id="connection-description">監視サービスに接続しています。</p></div></div><div class="last-check"><span>サーバーの最終確認</span><strong id="last-check-time">—</strong><small id="last-check-age">まだ確認していません</small></div></div>
+
+        <div class="connection-path" aria-label="基板からサーバーへの接続経路">
+          <div class="path-node" id="board-node"><div class="node-header"><span class="node-icon"><svg class="icon"><use href="#i-chip"/></svg></span><span class="badge neutral" id="board-badge">待機中</span></div><div class="node-label">01 <span>DEVICE / USB</span></div><h3>PSoC™ 6 ボード</h3><p id="board-detail">USB接続を待っています</p><div class="node-foot"><span class="status-dot" id="board-dot"></span><span id="board-received">未受信</span></div></div>
+          <div class="path-link" id="wifi-link"><span class="link-line"></span><svg class="icon"><use href="#i-arrow"/></svg><span class="link-label">2.4 GHz</span></div>
+          <div class="path-node" id="wifi-node"><div class="node-header"><span class="node-icon"><svg class="icon"><use href="#i-wifi"/></svg></span><span class="badge neutral" id="wifi-badge">未確認</span></div><div class="node-label">02 <span>WI-FI NETWORK</span></div><h3>Wi-Fi</h3><p id="wifi-detail" class="mono">IPアドレス未取得</p><div class="node-foot"><span class="status-dot" id="wifi-dot"></span><span id="wifi-foot">基板からの状態通知を待機</span></div></div>
+          <div class="path-link" id="server-link"><span class="link-line"></span><svg class="icon"><use href="#i-arrow"/></svg><span class="link-label">HTTPS</span></div>
+          <div class="path-node" id="server-node"><div class="node-header"><span class="node-icon"><svg class="icon"><use href="#i-cloud"/></svg></span><span class="badge neutral" id="server-badge">未確認</span></div><div class="node-label">03 <span>DOOR SERVER</span></div><h3>Door API</h3><p class="mono server-host">door-api.shionkk.f5.si</p><div class="node-foot"><span class="status-dot" id="server-dot"></span><span id="server-foot">HTTPS応答を待機</span></div></div>
+        </div>
+
+        <div class="connection-details"><div><svg class="icon"><use href="#i-signal"/></svg><span>起動時の受信強度</span><strong id="signal-value">—</strong><small id="signal-detail">測定待ち</small></div><div><svg class="icon"><use href="#i-clock"/></svg><span>時刻同期</span><strong id="clock-value">未確認</strong><small id="clock-detail">HTTPSの証明書検証に使用</small></div></div>
+      </section>
+
+      <div class="details-grid">
+        <section class="panel endpoints-panel" aria-labelledby="endpoint-title"><div class="panel-heading"><div><p class="eyebrow">SERVER RESPONSE</p><h2 id="endpoint-title">APIの応答</h2></div><span class="quiet-tag"><span class="status-dot"></span>約60秒ごとに確認</span></div>
+          <div class="endpoint" id="health-row"><div class="endpoint-title"><div><span class="method">GET</span><code>/health</code></div><span class="response-code neutral" id="health-code">未確認</span></div><p id="health-body">サーバーの稼働状態を確認します。</p><div class="endpoint-meta"><span id="health-time">応答待ち</span><span id="health-freshness"></span></div></div>
+          <div class="endpoint" id="status-row"><div class="endpoint-title"><div><span class="method">GET</span><code>/v1/status</code></div><span class="response-code neutral" id="status-code">未確認</span></div><p id="status-body">音声認識・音声合成などの状態を取得します。</p><div class="endpoint-meta"><span id="status-time">応答待ち</span><span id="status-freshness"></span></div></div>
+          <div class="panel-note"><svg class="icon"><use href="#i-check"/></svg><span>基板からのHTTPS応答を表示。ブラウザからの疎通結果ではありません。</span></div>
+        </section>
+
+        <section class="panel models-panel" aria-labelledby="models-title"><div class="panel-heading"><div><p class="eyebrow">VOICE SERVICES</p><h2 id="models-title">音声サービス</h2></div><span class="badge neutral" id="models-badge">未取得</span></div>
+          <div class="model-row"><span class="model-mark">ASR</span><div class="model-content"><div class="model-title"><h3>音声認識</h3><span class="model-state neutral" id="asr-ready">未確認</span></div><p id="asr-model">—</p></div></div>
+          <div class="model-row"><span class="model-mark">TTS</span><div class="model-content"><div class="model-title"><h3>音声合成</h3><span class="model-state neutral" id="tts-ready">未確認</span></div><p id="tts-model">—</p><small id="tts-voice"></small></div></div>
+          <div class="model-row"><span class="model-mark">LLM</span><div class="model-content"><div class="model-title"><h3>会話モデル</h3><span class="model-state neutral">モデル名</span></div><p id="llm-model">—</p></div></div>
+          <p class="model-note" id="models-note">/v1/status の最終応答に基づきます。</p>
+        </section>
+      </div>
+
+      <section class="panel logs-panel" aria-labelledby="logs-title"><div class="panel-heading"><div class="logs-heading"><span class="terminal-mark"><svg class="icon"><use href="#i-terminal"/></svg></span><div><h2 id="logs-title">イベントログ <span class="log-count" id="log-count">0</span></h2><p class="log-subtitle" id="logs-subtitle">基板からのシリアル出力</p></div></div><div class="log-actions"><button type="button" class="button" id="pause-button" aria-pressed="false"><svg class="icon"><use id="pause-icon" href="#i-pause"/></svg><span id="pause-label">表示を一時停止</span></button><button type="button" class="button icon-button" id="download-button" aria-label="受信済みログをダウンロード" title="受信済みログをダウンロード"><svg class="icon"><use href="#i-download"/></svg></button></div></div>
+        <div class="log-viewport" id="log-viewport" tabindex="0" aria-label="受信ログ。スクロールして過去のログを確認できます。"><div class="log-empty" id="log-empty"><svg class="icon"><use href="#i-terminal"/></svg><strong>ログを待っています</strong><p>USB接続した基板の出力がここに表示されます。</p></div><div id="log-lines"></div></div>
+        <div class="log-footer"><span><span class="status-dot" id="log-stream-dot"></span><span id="log-stream-status">受信待機中</span></span><span>115200 baud <span class="footer-separator">/</span> 最大400行</span></div>
+      </section>
+    </main>
+    <footer class="page-footer"><span>USBで接続した基板を、このMacで監視しています。</span><span id="last-updated">監視サービスに接続中</span></footer>
+  </div>
+</body>
+</html>
