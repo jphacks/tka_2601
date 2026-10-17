@@ -1,0 +1,90 @@
+[
+    {
+        "asset-name": "abstraction-rtos",
+        "locked-commit": "release-v1.13.0"
+    },
+    {
+        "asset-name": "bt-fw-mur-cyw4343w",
+        "locked-commit": "release-v1.0.0"
+    },
+    {
+        "asset-name": "cat1cm0p",
+        "locked-commit": "release-v1.11.0"
+    },
+    {
+        "asset-name": "clib-support",
+        "locked-commit": "release-v1.9.0"
+    },
+    {
+        "asset-name": "cmsis",
+        "locked-commit": "release-v6.1.0"
+    },
+    {
+        "asset-name": "connectivity-utilities",
+        "locked-commit": "release-v4.5.1"
+    },
+    {
+        "asset-name": "core-lib",
+        "locked-commit": "release-v1.8.0"
+    },
+    {
+        "asset-name": "core-make",
+        "locked-commit": "release-v3.10.0"
+    },
+    {
+        "asset-name": "cy-mbedtls-acceleration",
+        "locked-commit": "release-v2.7.0"
+    },
+    {
+        "asset-name": "device-db",
+        "locked-commit": "release-v4.41.0"
+    },
+    {
+        "asset-name": "freertos",
+        "locked-commit": "release-v10.5.004"
+    },
+    {
+        "asset-name": "lwip-freertos-integration",
+        "locked-commit": "release-v1.1.0"
+    },
+    {
+        "asset-name": "lwip-network-interface-integration",
+        "locked-commit": "release-v1.6.0"
+    },
+    {
+        "asset-name": "mtb-hal-cat1",
+        "locked-commit": "release-v2.7.4"
+    },
+    {
+        "asset-name": "mtb-pdl-cat1",
+        "locked-commit": "release-v3.24.0"
+    },
+    {
+        "asset-name": "recipe-make-cat1a",
+        "locked-commit": "release-v2.8.0"
+    },
+    {
+        "asset-name": "secure-sockets",
+        "locked-commit": "release-v3.10.0"
+    },
+    {
+        "asset-name": "whd-bsp-integration",
+        "locked-commit": "release-v2.3.1"
+    },
+    {
+        "asset-name": "wifi-connection-manager",
+        "locked-commit": "release-v3.7.0"
+    },
+    {
+        "asset-name": "wifi-host-driver",
+        "locked-commit": "release-v4.3.1"
+    },
+    {
+        "asset-name": "wifi-resources",
+        "locked-commit": "release-v2.0.5"
+    },
+    {
+        "asset-name": "wpa3-external-supplicant",
+        "locked-commit": "release-v1.2.3"
+    }
+]

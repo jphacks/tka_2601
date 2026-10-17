@@ -1,0 +1,243 @@
+const $ = (id) => document.getElementById(id);
+const ui = {
+  overall: $("overall"), overallText: $("overall").querySelector("span"),
+  callState: $("call-state"), notice: $("notice"), messages: $("messages"), empty: $("empty"),
+  connect: $("connect"), disconnect: $("disconnect"), rules: $("house-rules"), authenticate: $("authenticate"),
+  remoteAudio: $("remote-audio"),
+};
+
+let livekit = null;
+let room = null;
+let microphone = null;
+let apiKey = "";
+let transcriptEntries = new Map();
+let messageNodes = new Map();
+
+function setNotice(message, error = false) {
+  ui.notice.textContent = message;
+  ui.notice.classList.toggle("error", error);
+}
+
+function setOverall(ready) {
+  ui.overall.className = `status ${ready ? "ready" : "error"}`;
+  ui.overallText.textContent = ready ? "利用できます" : "一部停止中";
+}
+
+async function refreshStatus() {
+  if (!apiKey) {
+    setOverall(false);
+    setNotice("居住者 API キーを入力して認証してください。", true);
+    return;
+  }
+  try {
+    const response = await apiFetch("/api/status", { cache: "no-store" });
+    if (!response.ok) throw new Error(`状態確認に失敗しました (${response.status})`);
+    const data = await response.json();
+    setOverall(Boolean(data.ready));
+  } catch (error) {
+    setOverall(false);
+    setNotice(error.message || "サービス状態を確認できません。", true);
+  }
+}
+
+function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("Authorization", `Bearer ${apiKey}`);
+  return fetch(url, { ...options, headers, cache: options.cache || "no-store" }).then((response) => {
+    if (response.status === 401) {
+      apiKey = "";
+      $("auth-form").hidden = false;
+      ui.connect.disabled = true;
+    }
+    return response;
+  });
+}
+
+$("auth-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const candidate = $("api-key").value;
+  ui.authenticate.disabled = true;
+  try {
+    const response = await fetch("/api/status", {
+      headers: { Authorization: `Bearer ${candidate}` },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(response.status === 401 ? "API キーが正しくありません。" : "認証できませんでした。");
+    apiKey = candidate;
+    $("api-key").value = "";
+    $("auth-form").hidden = true;
+    ui.connect.disabled = false;
+    const data = await response.json();
+    setOverall(Boolean(data.ready));
+    setNotice(data.ready ? "認証しました。通話を開始できます。" : "認証しました。一部サービスが停止中です。", !data.ready);
+  } catch (error) {
+    apiKey = "";
+    $("api-key").value = "";
+    setNotice(error.message || "認証できませんでした。", true);
+  } finally {
+    ui.authenticate.disabled = false;
+  }
+});
+
+function resetConversation() {
+  transcriptEntries = new Map();
+  messageNodes = new Map();
+  ui.messages.replaceChildren();
+  ui.messages.append(ui.empty);
+  ui.empty.hidden = false;
+}
+
+function showTranscript(update) {
+  const previous = transcriptEntries.get(update.key);
+  if (previous?.isFinal && !update.isFinal) return;
+  if (update.complete && !update.text.trim()) {
+    messageNodes.get(update.key)?.article.remove();
+    messageNodes.delete(update.key);
+    transcriptEntries.delete(update.key);
+    ui.empty.hidden = messageNodes.size > 0;
+    return;
+  }
+  if (!update.text.trim()) return;
+
+  const entry = { ...previous, ...update };
+  transcriptEntries.set(update.key, entry);
+  let message = messageNodes.get(update.key);
+  if (!message) {
+    ui.empty.hidden = true;
+    const article = document.createElement("article");
+    article.className = `message ${update.visitor ? "visitor" : "agent"}`;
+    const label = document.createElement("span");
+    label.className = "speaker";
+    label.textContent = update.visitor ? "来訪者" : "玄関AI";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    article.append(label, bubble);
+    ui.messages.append(article);
+    message = { article, bubble };
+    messageNodes.set(update.key, message);
+  }
+
+  message.bubble.textContent = entry.text;
+  message.article.classList.toggle("interim", !entry.isFinal);
+  while (messageNodes.size > 200) {
+    const oldestKey = messageNodes.keys().next().value;
+    messageNodes.get(oldestKey)?.article.remove();
+    messageNodes.delete(oldestKey);
+    transcriptEntries.delete(oldestKey);
+  }
+  ui.messages.scrollTop = ui.messages.scrollHeight;
+}
+
+function playRemoteTrack(track) {
+  const element = track.attach();
+  element.autoplay = true;
+  element.playsInline = true;
+  ui.remoteAudio.append(element);
+  element.play().catch(() => setNotice("応答音声を再生するには、ページ上で再生を許可してください。", true));
+}
+
+async function endCall() {
+  ui.disconnect.disabled = true;
+  ui.connect.disabled = true;
+  try {
+    microphone?.stop();
+    microphone = null;
+    if (room) await room.disconnect();
+  } finally {
+    room = null;
+    ui.remoteAudio.replaceChildren();
+    ui.callState.textContent = "未接続";
+    ui.connect.disabled = false;
+    ui.disconnect.disabled = true;
+    ui.rules.disabled = false;
+  }
+}
+
+ui.connect.addEventListener("click", async () => {
+  ui.connect.disabled = true;
+  ui.rules.disabled = true;
+  resetConversation();
+  setNotice("接続しています…");
+  try {
+    if (!livekit) livekit = await import("https://esm.sh/livekit-client@2");
+    const { Room, RoomEvent, Track, createLocalAudioTrack } = livekit;
+    const response = await apiFetch("/api/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ house_rules: ui.rules.value }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `接続情報を取得できません (${response.status})`);
+    }
+    const config = await response.json();
+    if (!config.url.startsWith("wss://")) throw new Error("LiveKitの接続先がWSSではありません。");
+
+    room = new Room({ adaptiveStream: true, dynacast: true });
+    const candidate = room;
+    // ハンドラーは接続前に登録。接続直後のAI挨拶も取りこぼさない。
+    room.registerTextStreamHandler("lk.transcription", async (reader, participant) => {
+      const attributes = reader.info?.attributes || {};
+      const identity = typeof participant === "string" ? participant : participant?.identity;
+      const trackId = attributes["lk.transcribed_track_id"] || "";
+      const segmentId = attributes["lk.segment_id"] || reader.info?.id || `${Date.now()}-${Math.random()}`;
+      const key = `${identity || "unknown"}:${trackId}:${segmentId}`;
+      const visitor = identity === room.localParticipant.identity;
+      const isFinal = () => reader.info?.attributes?.["lk.transcription_final"] === "true";
+      let text = "";
+      try {
+        for await (const chunk of reader) {
+          if (room !== candidate) return;
+          text += chunk;
+          if (attributes["lk.transcribed_track_id"]) {
+            showTranscript({ key, text, visitor, isFinal: isFinal(), complete: false });
+          }
+        }
+        if (room === candidate && attributes["lk.transcribed_track_id"]) {
+          showTranscript({ key, text, visitor, isFinal: isFinal(), complete: isFinal() });
+        }
+      } catch (error) {
+        if (room === candidate && attributes["lk.transcribed_track_id"]) {
+          showTranscript({ key, text, visitor, isFinal: isFinal(), complete: true });
+        }
+        console.warn("文字起こしを受信できませんでした。", error);
+      }
+    });
+    room.on(RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === Track.Kind.Audio) playRemoteTrack(track);
+    });
+    room.on(RoomEvent.TrackUnsubscribed, (track) => track.detach().forEach((node) => node.remove()));
+    room.on(RoomEvent.Reconnecting, () => {
+      ui.callState.textContent = "再接続中";
+      setNotice("接続が不安定です。再接続しています…");
+    });
+    room.on(RoomEvent.Reconnected, () => {
+      ui.callState.textContent = "接続中";
+      setNotice("接続中です。話しかけてください。応答中も割り込めます。");
+    });
+    room.on(RoomEvent.Disconnected, () => {
+      if (!room) return;
+      ui.callState.textContent = "切断";
+      setNotice("通話が切断されました。もう一度接続してください。", true);
+    });
+
+    await room.connect(config.url, config.token);
+    ui.callState.textContent = "接続中";
+    setNotice("接続中です。話しかけてください。応答中も割り込めます。");
+    microphone = await createLocalAudioTrack({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    });
+    await room.localParticipant.publishTrack(microphone);
+    ui.disconnect.disabled = false;
+  } catch (error) {
+    await endCall();
+    setNotice(error.message || "通話を開始できませんでした。", true);
+  } finally {
+    if (!room) ui.connect.disabled = false;
+  }
+});
+
+ui.disconnect.addEventListener("click", endCall);
+refreshStatus();
