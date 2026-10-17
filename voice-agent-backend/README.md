@@ -43,6 +43,18 @@ uv run uvicorn door_backend.api:app --host 127.0.0.1 --port 8093
 
 APIサーバーとエージェントワーカーは別プロセスです。両方を起動してください。WebUIを開き、`.env` の `DOOR_API_KEY` を認証欄へ入力します。キーはブラウザーのメモリだけに保持し、HTMLやJavaScript、URL、ログには保存しません。API状態確認も含め、すべての `/api/*` はBearer認証が必要です。
 
+### CIとlabpcへの自動反映
+
+`.github/workflows/voice-agent-backend.yml` は対象ブランチへのpushとPull Requestでバックエンドのテストを実行します。labpcの `Door Voice Backend Auto Update` タスクは5分ごとにGitHubを確認し、対象PRが開いている間はそのブランチを、マージ後はベースブランチを追跡します。`backend-tests` が成功したコミットだけを取得し、ローカルの`.env`を保ったままAPIとAgentを入れ替えて再起動します。更新失敗時は直前の配置に戻します。
+
+labpcにはGitHub Actionsの秘密情報やSSHキーを登録せず、公開GitHub APIからソースを取得します。labpcでこのバックエンドのディレクトリを開き、初回だけ次を実行してください。
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\install-auto-update.ps1
+```
+
+更新スクリプトは`deploy/windows/auto-update.ps1`です。デプロイ状態とエラーは `C:\Users\stu23-oba-shion\door-voice-deploy.log` に残り、音声や会話本文は記録しません。
+
 開発用LiveKitの公開ポートはホストのループバックだけにバインドされます。`.env` はGit管理外です。開発用のLiveKit `devkey` / `secret` はローカル開発に限って使います。
 
 ## API
