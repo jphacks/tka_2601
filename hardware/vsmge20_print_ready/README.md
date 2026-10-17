@@ -37,3 +37,19 @@ The SG90 mounts include screw clearance holes and a wire exit relief. Use the SG
 - Start with conservative servo angles and short presses. The push travel and end stop require physical tuning on the actual VS-MGE20 before unattended use.
 
 `layout_sg90.csv` records the revised plate 2/3 placements. `layout.csv` is the original layout mapping.
+
+## PSoC Edge E84 AI Kit + M5Stack Basic carrier
+
+Added an updated Fusion 360 design and a separate electronics carrier for the Infineon KIT_PSE84_AI, alongside the existing VS-MGE20/SG90 package. The carrier retains the M5Stack Basic and leaves connector sides accessible. The carrier plate is 174 × 72 × 2.8 mm (9.8 mm maximum rail height).
+
+**Board-fit limitation:** Infineon's public product page, kit guide and schematic/PCB design-data page do not state the PCB outline dimensions. The E84 bay in this model is a photo-scaled estimate of 98 × 56 mm. Check the actual board and connector/cable clearances before relying on this fit. The nominal modeled gap between the E84 bay and M5Stack fence is about 4 mm.
+
+The Bambu Studio project and G-code in this section contain **the electronics carrier only**, not a complete re-slice of all enclosure and servo parts. The screenshot's separate linkage/bar parts are not in this tray STL. The carrier was sliced for A1 mini, 0.4 mm nozzle, Bambu PLA Basic, 0.12 mm High Quality, supports off: estimated total 1 h 34 min and 30.52 g.
+
+- Fusion design: `VS-MGE20_Case_SG90_v6_PSoC_Edge_E84_AI_M5StackBasic.f3d`
+- Carrier STL: `PLA_parts/Electronics_tray_PSoC_Edge_E84_AI_M5Stack_Basic.stl`
+- Bambu Studio project: `VS-MGE20_E84_M5StackBasic_A1mini_0p12_PLA.3mf`
+- G-code: `Electronics_tray_PSoC_Edge_E84_AI_M5Stack_Basic_PLA_1h34m.gcode`
+- Dimension notes and sources: `README_E84.md`
+
+Sources: [Infineon KIT_PSE84_AI](https://www.infineon.com/evaluation-board/kit-pse84-ai), [kit guide](https://documentation.infineon.com/psocedge/docs/cci1762693051052), [schematic and PCB design data](https://www.infineon.com/assets/row/public/documents/30/60/infineon-kit-pse84-ai-schematics-pcbdesigndata-en.pdf).
