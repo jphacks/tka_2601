@@ -76,6 +76,15 @@ class Emitter:
         self.flushed = True
 
 
+def direct_stream(tts, input_text):
+    """Build a stream without ChunkedStream's background synthesis task."""
+    stream = object.__new__(speech_tts.SpeechCppStream)
+    stream._tts = tts
+    stream._input_text = input_text
+    stream._conn_options = DEFAULT_API_CONNECT_OPTIONS
+    return stream
+
+
 def test_speech_audio_done_stops_later_audio_deltas(monkeypatch):
     first = base64.b64encode(b"\x01\x02").decode()
     trailing = base64.b64encode(b"\x03\x04").decode()
@@ -89,11 +98,7 @@ def test_speech_audio_done_stops_later_audio_deltas(monkeypatch):
 
     async def synthesize():
         tts = speech_tts.SpeechCppTTS()
-        stream = speech_tts.SpeechCppStream(
-            tts=tts,
-            input_text="失礼いたします。",
-            conn_options=DEFAULT_API_CONNECT_OPTIONS,
-        )
+        stream = direct_stream(tts, "失礼いたします。")
         emitter = Emitter()
         await stream._run(emitter)
         return emitter
@@ -145,7 +150,7 @@ def test_split_sentences_keeps_punctuation_and_closing_quote():
     ]
 
 
-def test_multi_sentence_speech_is_trimmed_per_sentence(monkeypatch):
+def test_multi_sentence_speech_is_trimmed_per_sentence():
     sample_rate = 48000
     speech = [5000] * (sample_rate // 2)
     silence = [0] * (sample_rate * 14 // 10)
@@ -158,15 +163,11 @@ def test_multi_sentence_speech_is_trimmed_per_sentence(monkeypatch):
         {"type": "speech.audio.done"},
     ]
     SentenceSession.batches = [event_batch.copy(), event_batch.copy()]
-    monkeypatch.setattr(speech_tts.aiohttp, "ClientSession", SentenceSession)
 
     async def synthesize():
         tts = speech_tts.SpeechCppTTS()
-        stream = speech_tts.SpeechCppStream(
-            tts=tts,
-            input_text="玄関前に置いてください。写真を撮ってください。",
-            conn_options=DEFAULT_API_CONNECT_OPTIONS,
-        )
+        tts._http = SentenceSession()
+        stream = direct_stream(tts, "玄関前に置いてください。写真を撮ってください。")
         emitter = Emitter()
         await stream._run(emitter)
         return tts._http, emitter
