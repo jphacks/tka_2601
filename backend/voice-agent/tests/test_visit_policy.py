@@ -156,6 +156,16 @@ def test_photo_follow_up_after_completion_is_answered_without_farewell():
     )
     assert result.deterministic_reply == "写真はこのインターホンには送れないため、お手元に保管してください。ありがとうございます。"
 
+    result = VisitState.from_messages(
+        [
+            ("user", "宅配便です"),
+            ("assistant", "写真を撮ってください"),
+            ("user", "写真撮りました"),
+            ("user", "保管すればいいの?"),
+        ]
+    )
+    assert result.deterministic_reply == "はい、そのままお手元で保管していただければ大丈夫です。"
+
 
 def test_delivery_box_question_follows_house_rules_and_does_not_echo_asr_error():
     result = VisitState.from_messages(
@@ -167,3 +177,27 @@ def test_delivery_box_question_follows_house_rules_and_does_not_echo_asr_error()
         "宅配ボックスを優先し、入らない場合は玄関前に置いてください。",
     )
     assert result.deterministic_reply == "宅配ボックスに入る大きさでしたら、そちらをご利用ください。入らない場合は玄関前にお願いします。"
+
+
+def test_ambiguous_completion_after_agreed_dropoff_moves_to_photo_step():
+    turns = [
+        ("user", "荷物の配達に行きました"),
+        ("assistant", "玄関の前に置いていただけますか。"),
+        ("user", "分かりました置いておきますね"),
+    ]
+    turns.append(("assistant", "はい、玄関の前にお願いいたします。"))
+    turns.append(("user", "来ました荷物を"))
+    result = VisitState.from_messages(turns)
+    assert result.placed
+    assert result.deterministic_reply == "恐れ入りますが、荷物と置き場所の写真を撮ってください。"
+
+
+def test_corrected_ack_after_goodbye_does_not_restart_conversation():
+    result = VisitState.from_messages(
+        [
+            ("user", "宅配便です"),
+            ("assistant", "失礼いたします。"),
+            ("user", "おかえりましたじゃなくて分かりました"),
+        ]
+    )
+    assert result.should_wait

@@ -27,6 +27,9 @@ _PLACEMENT_QUESTION = re.compile(
 _WILL_PLACE = re.compile(r"(?:置いていきます|置いておきます|置かせていただきます|置いていっても)")
 _DELIVERY_ACK = re.compile(r"^(?:ありがとうございます|ありがとうございました|ありがとう|どうも|お願いします|よろしくお願いします)+$")
 _PHOTO_QUESTION = re.compile(r"(?:写真|画像).{0,20}(?:どう|どこ|何|なに|送|渡|すれば|したら|いい|よい|良い)")
+_CORRECTED_CLOSE_ACK = re.compile(
+    r".+(?:じゃなくて|ではなくて|というか)(?:はい|ええ|うん)?(?:わかりました|分かりました|承知しました|かしこまりました)$"
+)
 
 
 @dataclass(slots=True)
@@ -42,6 +45,7 @@ class VisitState:
     requested_delivery_location: str | None = None
     house_rules: str = ""
     visitor_will_place: bool = False
+    placement_just_completed: bool = False
     photo_requested: bool = False
     latest_user_text: str = ""
 
@@ -73,6 +77,7 @@ class VisitState:
                 continue
 
             state.latest_user_text = text
+            state.placement_just_completed = False
             value = _compact(text)
             if _is_filler(text):
                 continue
@@ -113,8 +118,16 @@ class VisitState:
                     state.visitor_will_place = True
                 if re.search(r"(?:置|入れ)(?:きました|き終わりました|いた|ました)|設置しました", value) or (
                     state.asked_delivery_placement and re.search(r"起きました", value)
+                ) or (
+                    state.asked_delivery_placement
+                    and state.visitor_will_place
+                    and re.fullmatch(
+                        r"(?:はい)?(?:お?荷物(?:が|を)?)?(?:来ました|きました)(?:お?荷物(?:を)?)?",
+                        value,
+                    )
                 ):
                     state.placed = True
+                    state.placement_just_completed = True
                 if re.search(r"写真.*(?:撮りました|撮った|撮影しました|撮影済み)", value):
                     state.photographed = True
         return state
@@ -132,6 +145,7 @@ class VisitState:
             or (self.purpose == "unknown" and value in {"はい", "ええ", "うん"})
             or incomplete
             or (self.closing_said and bool(_CLOSE_ACK.fullmatch(value)))
+            or (self.closing_said and bool(_CORRECTED_CLOSE_ACK.fullmatch(value)))
             or value in {"nhkの", "あの荷物じゃなくて", "お荷物じゃなくて"}
         )
 
@@ -158,10 +172,14 @@ class VisitState:
         location = self.requested_delivery_location
         if not self.delivery_allowed:
             return None
+        if self.placement_just_completed and not self.photographed:
+            return "恐れ入りますが、荷物と置き場所の写真を撮ってください。"
         asks_photo_follow_up = bool(_PHOTO_QUESTION.search(value)) or bool(
             re.search(r"(?:どう|どこ|何|なに|送|渡|すれば|したら|いい|よい|良い)", value)
         )
         if self.photographed and (self.photo_requested or "写真" in value) and asks_photo_follow_up:
+            if re.search(r"保管|保存|とっておく|手元", value):
+                return "はい、そのままお手元で保管していただければ大丈夫です。"
             return "写真はこのインターホンには送れないため、お手元に保管してください。ありがとうございます。"
         mentions_box = bool(re.search(r"宅配ボックス|高いボックス", value))
         box_question_or_correction = bool(re.search(r"(?:大き|入ら|入る|使|いい|よい|良い)|違う|ちがう", value))

@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import struct
 
 from door_backend import speech_tts
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
@@ -86,3 +87,27 @@ def test_speech_audio_done_stops_later_audio_deltas(monkeypatch):
     emitter = asyncio.run(synthesize())
     assert emitter.pcm == [base64.b64decode(first)]
     assert emitter.flushed
+
+
+def test_trim_delayed_vocal_tail_after_long_pause():
+    speech_samples = [5000] * (24000 // 2)
+    silence_samples = [0] * (24000 * 16 // 10)
+    stray_tail_samples = [5000] * (24000 * 3 // 10)
+    pcm = struct.pack(
+        f"<{len(speech_samples) + len(silence_samples) + len(stray_tail_samples)}h",
+        *(speech_samples + silence_samples + stray_tail_samples),
+    )
+
+    trimmed = speech_tts._trim_delayed_audio_tail(pcm, 24000)
+
+    assert len(trimmed) < len(pcm) - len(stray_tail_samples) * 2
+    assert len(trimmed) <= len(speech_samples + silence_samples) * 2
+
+
+def test_keep_audio_after_normal_pause():
+    first = [5000] * (24000 // 2)
+    silence = [0] * (24000 // 2)
+    second = [5000] * (24000 // 2)
+    pcm = struct.pack(f"<{len(first + silence + second)}h", *(first + silence + second))
+
+    assert speech_tts._trim_delayed_audio_tail(pcm, 24000) == pcm
