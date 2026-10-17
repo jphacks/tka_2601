@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="920" viewBox="0 0 1500 920">
+<defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+  <marker id="arrowDark" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker>
+  <style>
+    text{font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP',sans-serif;fill:#172033}
+    .small{font-size:17px}.med{font-size:20px}.big{font-size:30px;font-weight:700}.label{font-size:18px;font-weight:650}
+  </style>
+</defs>
+<rect width="1500" height="920" fill="#f4f7fb"/>
+<text x="56" y="58" class="big">SG90の配置イメージ（概念図）</text>
+<text x="58" y="91" class="med" fill="#526174">正面：手動ボタンの開口を残し、左右のサーボで通話・終了だけを押す</text>
+<!-- front view card -->
+<rect x="45" y="120" width="800" height="740" rx="24" fill="white" stroke="#d7e0ec" stroke-width="2"/>
+<text x="78" y="165" class="label">正面から見た配置</text>
+<!-- unit -->
+<rect x="255" y="208" width="390" height="590" rx="30" fill="#e9eef5" stroke="#64748b" stroke-width="4"/>
+<rect x="290" y="245" width="320" height="232" rx="12" fill="#d7eafe" stroke="#93a9c2" stroke-width="2"/>
+<text x="450" y="370" text-anchor="middle" class="med" fill="#60748c">画面・表示部</text>
+<!-- manual access buttons -->
+<circle cx="450" cy="546" r="48" fill="#fff" stroke="#0f766e" stroke-width="4"/>
+<path d="M450 514v64 M418 546h64" stroke="#0f766e" stroke-width="9" stroke-linecap="round"/>
+<text x="450" y="616" text-anchor="middle" class="small" fill="#0f766e">十字キー開口</text>
+<circle cx="355" cy="692" r="25" fill="#fff" stroke="#0f766e" stroke-width="4"/><text x="355" y="699" text-anchor="middle" class="small">再生</text>
+<circle cx="545" cy="692" r="25" fill="#fff" stroke="#0f766e" stroke-width="4"/><text x="545" y="699" text-anchor="middle" class="small">メニュー</text>
+<rect x="410" y="744" width="80" height="28" rx="8" fill="#fff" stroke="#0f766e" stroke-width="4"/><text x="450" y="765" text-anchor="middle" class="small">モニター</text>
+<!-- servo pods -->
+<rect x="133" y="523" width="104" height="128" rx="16" fill="#dbeafe" stroke="#2563eb" stroke-width="4"/>
+<rect x="663" y="523" width="104" height="128" rx="16" fill="#dbeafe" stroke="#2563eb" stroke-width="4"/>
+<rect x="151" y="544" width="68" height="78" rx="9" fill="#2563eb"/>
+<rect x="681" y="544" width="68" height="78" rx="9" fill="#2563eb"/>
+<text x="185" y="590" text-anchor="middle" font-size="20" font-weight="700" fill="white">SG90</text>
+<text x="715" y="590" text-anchor="middle" font-size="20" font-weight="700" fill="white">SG90</text>
+<path d="M219 565 L264 536 L290 536" fill="none" stroke="#f97316" stroke-width="8" stroke-linecap="round"/>
+<path d="M681 565 L636 536 L610 536" fill="none" stroke="#f97316" stroke-width="8" stroke-linecap="round"/>
+<circle cx="290" cy="536" r="10" fill="#f97316"/><circle cx="610" cy="536" r="10" fill="#f97316"/>
+<rect x="278" y="516" width="34" height="40" rx="10" fill="#fca5a5" stroke="#b91c1c" stroke-width="2"/>
+<rect x="588" y="516" width="34" height="40" rx="10" fill="#fca5a5" stroke="#b91c1c" stroke-width="2"/>
+<text x="295" y="505" text-anchor="middle" class="small">通話</text><text x="605" y="505" text-anchor="middle" class="small">終了</text>
+<path d="M250 670 C210 695 196 704 180 722" fill="none" stroke="#475569" stroke-width="4" stroke-dasharray="7 6"/>
+<path d="M650 670 C690 695 704 704 720 722" fill="none" stroke="#475569" stroke-width="4" stroke-dasharray="7 6"/>
+<text x="450" y="830" text-anchor="middle" class="small" fill="#526174">青：SG90ポッド　橙：付属ホーン／押し子　緑枠：手で押すために残す穴</text>
+<!-- right cross section card -->
+<rect x="875" y="120" width="580" height="740" rx="24" fill="white" stroke="#d7e0ec" stroke-width="2"/>
+<text x="910" y="165" class="label">側面断面：押下の動き</text>
+<text x="910" y="202" class="small" fill="#526174">ボタン面を横から見た模式図</text>
+<!-- phone side profile -->
+<rect x="1120" y="270" width="58" height="410" rx="16" fill="#dbe2ea" stroke="#64748b" stroke-width="3"/>
+<text x="1149" y="710" text-anchor="middle" class="small">本体</text>
+<line x1="1110" y1="272" x2="1110" y2="680" stroke="#0f172a" stroke-width="5"/>
+<text x="1090" y="290" text-anchor="end" class="small">前面</text>
+<circle cx="1110" cy="465" r="13" fill="#ef4444"/>
+<text x="1088" y="470" text-anchor="end" class="small" fill="#b91c1c">対象ボタン</text>
+<!-- SG90 side pod and horn -->
+<rect x="1280" y="420" width="118" height="94" rx="14" fill="#2563eb"/>
+<text x="1339" y="474" text-anchor="middle" font-size="20" font-weight="700" fill="white">SG90</text>
+<circle cx="1278" cy="467" r="12" fill="#f97316" stroke="#9a3412" stroke-width="2"/>
+<!-- horn swings in plane -->
+<path d="M1278 467 L1208 425" stroke="#f97316" stroke-width="10" stroke-linecap="round"/>
+<path d="M1278 467 L1208 467" stroke="#f97316" stroke-width="8" stroke-linecap="round" stroke-dasharray="8 7"/>
+<path d="M1210 425 L1134 425 L1134 455" fill="none" stroke="#334155" stroke-width="7" stroke-linejoin="round"/>
+<circle cx="1134" cy="458" r="11" fill="#ef4444" stroke="#991b1b" stroke-width="2"/>
+<path d="M1240 392 A60 60 0 0 1 1302 420" fill="none" stroke="#2563eb" stroke-width="4" marker-end="url(#arrow)"/>
+<text x="1305" y="385" class="small" fill="#2563eb">ホーン回転</text>
+<path d="M1195 492 L1148 492" stroke="#2563eb" stroke-width="4" marker-end="url(#arrow)"/>
+<text x="1170" y="525" text-anchor="middle" class="small" fill="#2563eb">押し子が前後</text>
+<!-- wire -->
+<path d="M1370 514 C1415 545 1390 578 1420 606" fill="none" stroke="#475569" stroke-width="4" stroke-dasharray="7 6"/>
+<text x="1360" y="635" class="small">配線は側面の切欠きから後方へ</text>
+<line x1="1278" y1="535" x2="1278" y2="665" stroke="#64748b" stroke-width="2" stroke-dasharray="6 6"/>
+<text x="1278" y="697" text-anchor="middle" class="small">ポッドはねじ止め／配線に余長</text>
+<rect x="910" y="746" width="510" height="74" rx="12" fill="#fff7ed" stroke="#fed7aa"/>
+<text x="930" y="777" class="small" fill="#9a3412">※機構の配置案です。SG90実寸、ホーン形状、押下量、</text>
+<text x="930" y="803" class="small" fill="#9a3412">本体上のボタン位置は現物で合わせて確認が必要です。</text>
+</svg>
