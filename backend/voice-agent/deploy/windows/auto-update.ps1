@@ -58,7 +58,7 @@ try {
     Invoke-WebRequest -Uri "$ApiRoot/zipball/$sha" -Headers $headers -OutFile $archive
     Expand-Archive -LiteralPath $archive -DestinationPath $extract -Force
     $repositoryRoot = Get-ChildItem -LiteralPath $extract -Directory | Select-Object -First 1
-    $source = Join-Path $repositoryRoot.FullName 'voice-agent-backend'
+    $source = Join-Path $repositoryRoot.FullName 'backend\voice-agent'
     if (-not (Test-Path -LiteralPath (Join-Path $source 'door_backend\agent.py') -PathType Leaf)) {
         throw 'The downloaded revision does not contain the voice backend.'
     }

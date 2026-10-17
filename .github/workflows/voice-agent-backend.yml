@@ -3,14 +3,14 @@ name: Voice Agent Backend CI
 on:
   pull_request:
     paths:
-      - "voice-agent-backend/**"
+      - "backend/voice-agent/**"
       - ".github/workflows/voice-agent-backend.yml"
   push:
     branches:
       - main
       - codex/voice-agent-backend
     paths:
-      - "voice-agent-backend/**"
+      - "backend/voice-agent/**"
       - ".github/workflows/voice-agent-backend.yml"
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: voice-agent-backend
+        working-directory: backend/voice-agent
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
