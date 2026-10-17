@@ -1,0 +1,12 @@
+# Documentation
+images
+
+# Exports, Project settings
+.mtbLaunchConfigs
+.settings
+.vscode
+
+
+tests
+tools
+docs
