@@ -328,7 +328,16 @@ def test_house_settings_are_read_with_the_device_key(monkeypatch):
 
     async def handler(request):
         seen["authorization"] = request.headers.get("Authorization")
-        return web.json_response({"away_leave_at_door": True, "extra_instructions": "犬がいます。"})
+        # The Edge Function also returns fields the relay does not use (supabase/README.md).
+        return web.json_response(
+            {
+                "paired": True,
+                "mode": "normal",
+                "away_leave_at_door": True,
+                "auto_away": False,
+                "extra_instructions": "犬がいます。",
+            }
+        )
 
     result = run_with_settings_server(
         handler, lambda: relay.fetch_house_settings(DEVICE_KEY), monkeypatch

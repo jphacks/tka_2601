@@ -116,7 +116,7 @@ class Settings:
     relay_start_timeout_seconds: float = _positive_float("DOOR_RELAY_START_TIMEOUT_SECONDS", 5.0)
     relay_max_session_seconds: float = _positive_float("DOOR_RELAY_MAX_SESSION_SECONDS", 120.0)
     supabase_url: str = os.getenv("DOOR_SUPABASE_URL", "").rstrip("/")
-    house_settings_timeout_seconds: float = _positive_float("DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS", 1.0)
+    house_settings_timeout_seconds: float = _positive_float("DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS", 1.5)
 
 
 settings = Settings()
