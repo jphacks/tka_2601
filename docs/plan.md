@@ -10,7 +10,7 @@
 | VS-SGE20LA の準備 | P2 | 親機を充電し、玄関子機に電池を入れ、呼出音を音1・音量大にし、音声応答を切ってある |
 | ModusToolbox の準備 | P1, P2, P3 | `firmware/psoc6` をビルドして基板に書き込める |
 | 中継の仕様の相談（[spec.md 5.4](spec.md#54-会話サーバーの中継)） | P4 | 会話サーバーの担当者と、受け口の形と担当が決まっている |
-| Supabase の準備 | P5 | PR #4 で実装済み、クラウドに適用済み。残りは `EXPO_ACCESS_TOKEN` の設定と本体の登録 |
+| Supabase の準備 | P5 | PR #4 で実装済み、クラウドに適用済み。残りは住人のアカウントの作成と本体の登録（`EXPO_ACCESS_TOKEN` は設定しない） |
 | アプリの開発環境 | P5 | `mobile/` のアプリ（Expo）が iPhone の実機で動き、Supabase につながり、プッシュ通知を受けられる |
 | 定型音声の生成（[spec.md 5.7](spec.md#57-定型音声)） | P4 | U01 と X01 の WAV が door_neutral の声でそろっている |
 
