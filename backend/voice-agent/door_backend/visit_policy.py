@@ -288,6 +288,16 @@ class VisitState:
             return "失礼いたします。"
         return None
 
+    def should_end_after_reply(self, reply: str) -> bool:
+        """A validated response has completed this visit, not merely mentioned a farewell."""
+        if not self.validate(reply):
+            return False
+        if self.purpose in {"sales", "payment"}:
+            return True
+        return bool(_FAREWELL.search(reply)) and (
+            self.closing or (self.placed and self.photographed)
+        )
+
     def trim_after_farewell(self, reply: str) -> str:
         """Drop any generated tail after a valid final farewell."""
         farewell = _FAREWELL.search(reply)

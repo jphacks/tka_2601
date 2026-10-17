@@ -1,0 +1,9 @@
+.build/
+__pycache__/
+.env
+.env.*
+!.env.example
+link_config.h
+servo_config.h
+.m5-config-*
+*.log
