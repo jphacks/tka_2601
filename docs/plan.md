@@ -1,4 +1,4 @@
-# 作業計画（Hack Day 2日間・3〜5人）
+# MONBAN 作業計画（Hack Day 2日間・3〜5人）
 
 仕様は [spec.md](spec.md)、会話履歴とスマホアプリの要件は [history.md](history.md) を参照する。時刻は開始からの経過時間（H+n）で書く。実際のスケジュールに合わせて読み替える。PC は使わない。
 
@@ -10,8 +10,8 @@
 | VS-SGE20LA の準備 | P2 | 親機を充電し、玄関子機に電池を入れ、呼出音を音1・音量大にし、音声応答を切ってある |
 | ModusToolbox の準備 | P1, P2, P3 | `firmware/psoc6` をビルドして基板に書き込める |
 | 中継の仕様の相談（[spec.md 5.4](spec.md#54-会話サーバーの中継)） | P4 | 会話サーバーの担当者と、受け口の形と担当が決まっている |
-| Supabase の準備 | P5 | 別セッションで実装中。本体用の Edge Function の形が決まっている |
-| アプリの開発環境 | P5 | React Native のアプリが iPhone の実機で動き、プッシュ通知を受けられる |
+| Supabase の準備 | P5 | PR #4 で実装済み、クラウドに適用済み。残りは住人のアカウントの作成と本体の登録（`EXPO_ACCESS_TOKEN` は設定しない） |
+| アプリの開発環境 | P5 | `mobile/` のアプリ（Expo）が iPhone の実機で動き、Supabase につながり、プッシュ通知を受けられる |
 | 定型音声の生成（[spec.md 5.7](spec.md#57-定型音声)） | P4 | U01 と X01 の WAV が door_neutral の声でそろっている |
 
 ## 2. 役割分担
@@ -23,8 +23,8 @@
 | P1 | PSoC 6 の音 | チャイムの登録と精度の測定、マイクの音の送信、I2S アンプでの再生、定型音声 |
 | P2 | 押下と機構 | SG90 2つの PWM 制御、5V の配線、押下アーム、ブラケット、ガード板、スピーカーの箱 |
 | P3 | PSoC 6 の通信と状態遷移 | 中継との WebSocket、Edge Function との通信、状態遷移、送信待ちと再送 |
-| P4 | 会話サーバー | FastAPI の中継（LiveKit への参加）、`house_rules`、会話の試験（T5、T6） |
-| P5 | アプリと Supabase | テーブルと RLS、本体用の Edge Function、React Native のアプリ、プッシュ通知 |
+| P4 | 会話サーバー | FastAPI の中継（LiveKit への参加、家の設定の反映、会話の文字の Supabase への書き込み。main に実装済み）、`house_rules`、会話の試験（T5、T6） |
+| P5 | アプリと Supabase | Supabase（PR #4、実装済み）とアプリ（`mobile/`、実装済み）の結合、プッシュ通知の確認、本体の登録とペアリング |
 
 デモ台本、スライド、README、動画は Day 2 の後半に全員で分担する。
 
@@ -106,9 +106,9 @@ firmware/
 tools/
   serial-monitor/      wifi-check のシリアル出力を見る監視画面
 backend/
-  voice-agent/         会話サーバー（FastAPI と LiveKit の会話エージェント。これから中継を足す）
-supabase/              テーブル、RLS、Edge Function（別セッションで作成中）
-app/                   React Native のスマホアプリ（これから）
+  voice-agent/         会話サーバー（FastAPI と LiveKit の会話エージェント、PSoC 6 用の中継）
+supabase/              テーブル、RLS、Edge Function
+mobile/                住人アプリ MONBAN（React Native・Expo。ブランチ claude/mobile-app）
 ```
 
 - ModusToolbox の共有ライブラリ（mtb_shared）は `firmware/mtb_shared` に作られる。リポジトリ直下の `.gitignore` で除外している。
