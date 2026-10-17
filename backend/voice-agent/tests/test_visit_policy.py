@@ -55,3 +55,27 @@ def test_completion_state_is_session_scoped_and_validated():
     assert result.placed and result.photographed
     assert result.validate("ありがとうございます。")
     assert not result.validate("解錠しました。")
+
+
+def test_completion_state_answers_follow_up_instead_of_forcing_thanks():
+    result = state("宅配便です", "そこに置きました", "写真も撮りました")
+    assert result.validate("はい、大丈夫ですよ。")
+    assert not result.validate("鍵を開けました。")
+
+
+def test_goodbye_is_not_repeated_after_a_closing_acknowledgement():
+    result = VisitState.from_messages(
+        [
+            ("user", "宅配便です"),
+            ("assistant", "承知いたしました。失礼いたします。"),
+            ("user", "はい失礼します"),
+        ]
+    )
+    assert result.closing_said
+    assert result.should_wait
+
+
+def test_arrival_politeness_is_not_misread_as_departure():
+    result = state("夜分に失礼いたします。宅配便です")
+    assert result.delivery_allowed
+    assert not result.closing

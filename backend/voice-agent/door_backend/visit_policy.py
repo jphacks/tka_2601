@@ -14,6 +14,13 @@ def _is_filler(text: str) -> bool:
     return bool(re.fullmatch(r"(?:あのう?|えっと|ええと|えと|その|うんと|うん|ん|ええ|ああ|じゃあ|あ|え)+", _compact(text)))
 
 
+_CLOSE_ACK = re.compile(
+    r"^(?:はい|ええ|うん|そう|そうですね|そうですか|わかりました|分かりました|かしこまりました|"
+    r"大丈夫です|大丈夫|ありがとうございます|ありがとう|どうも|お願いします|失礼します|失礼いたします|"
+    r"じゃあ|では|それでは)+$"
+)
+
+
 @dataclass(slots=True)
 class VisitState:
     purpose: str = "unknown"
@@ -21,6 +28,7 @@ class VisitState:
     placed: bool = False
     photographed: bool = False
     closing: bool = False
+    closing_said: bool = False
     asked_purpose: bool = False
     latest_user_text: str = ""
 
@@ -31,6 +39,8 @@ class VisitState:
             if role == "assistant":
                 if re.search(r"用件.*(?:伺|聞|教|何)|どのような.*用", text):
                     state.asked_purpose = True
+                if re.search(r"失礼(?:いた)?します|さようなら|お気をつけて", text):
+                    state.closing_said = True
                 continue
             if role != "user":
                 continue
@@ -40,7 +50,9 @@ class VisitState:
             if _is_filler(text):
                 continue
             state.closing = bool(re.search(
-                r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)|失礼(?:いたします|します)|さようなら|帰ります|おいとまします",
+                r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)|"
+                r"(?:はい|ええ|うん|じゃあ|では|それでは)?失礼(?:いたします|します)$|"
+                r"さようなら$|帰ります$|おいとまします$",
                 value,
             ))
             denied = bool(re.search(r"(?:お?荷物|宅配|配達)(?:は|が|では|じゃ|で)?(?:ない|なく|なかった|ありません|ございません|無い|持っていな)", value))
@@ -87,6 +99,7 @@ class VisitState:
             (_is_filler(self.latest_user_text) and value != "ああ")
             or (self.purpose == "unknown" and value in {"はい", "ええ", "うん"})
             or incomplete
+            or (self.closing_said and bool(_CLOSE_ACK.fullmatch(value)))
             or value in {"nhkの", "あの荷物じゃなくて", "お荷物じゃなくて"}
         )
 
@@ -94,7 +107,8 @@ class VisitState:
         return (
             "来訪者の発言から把握した状態: "
             f"用件={self.purpose}、荷物なしの訂正={self.no_parcel}、設置完了={self.placed}、"
-            f"写真完了={self.photographed}、帰る意向={self.closing}。"
+            f"写真完了={self.photographed}、帰る意向={self.closing}、終話の挨拶済み={self.closing_said}。"
+            "来訪者の言葉を繰り返さず、確認には一度だけ明確に答える。終話の挨拶は一回だけにする。"
             "宅配ルールは用件が宅配と確認できた場合だけ適用する。集金や支払いには対応できないと伝える。"
             "あなたは一般家庭の玄関にいる住人側であり、店・会社・受付の立場ではない。店舗を意味する言葉を使わない。"
             "会社名を名乗っただけでは営業と決めつけない。子ども向けの教育やサービスの案内、無料体験や受講の勧誘など、営業の内容が分かったら『恐れ入りますが、このインターホンでは対応できません。』と答え、用件を聞き返さない。"
@@ -133,7 +147,5 @@ class VisitState:
         if self.purpose in {"payment", "sales", "other"} and re.search(r"(?:お名前|用件.*(?:伺|聞|教)|どちら様)", reply):
             return False
         if self.asked_purpose and re.search(r"(?:お名前|用件.*(?:伺|聞|教|何)|どちら様|どのような.*用)", reply):
-            return False
-        if self.placed and self.photographed and reply.strip() != "ありがとうございます。":
             return False
         return True

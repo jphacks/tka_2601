@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 import aiohttp
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
@@ -21,6 +21,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from livekit import api
 from pydantic import BaseModel, Field
 
+from . import relay, warmup
 from .config import settings
 
 logger = logging.getLogger("door-api")
@@ -126,7 +127,11 @@ class CapacityLimiter:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logging.basicConfig(level=settings.log_level)
-    yield
+    warmup.schedule()
+    try:
+        yield
+    finally:
+        await warmup.shutdown()
 
 
 app = FastAPI(
@@ -174,17 +179,34 @@ _api_capacity = CapacityLimiter(
 )
 
 
+_relay_sessions = 0
+
+
+def _valid_api_key(authorization: str) -> bool:
+    scheme, separator, supplied_key = authorization.partition(" ")
+    return bool(separator) and scheme.lower() == "bearer" and secrets.compare_digest(
+        supplied_key.strip().encode("utf-8"), settings.api_key.encode("utf-8")
+    )
+
+
+def _take_request_slot() -> bool:
+    global _request_window_started, _request_window_count
+    now = time.monotonic()
+    if now - _request_window_started >= 60:
+        _request_window_started = now
+        _request_window_count = 0
+    if _request_window_count >= settings.api_requests_per_minute:
+        return False
+    _request_window_count += 1
+    return True
+
+
 @app.middleware("http")
 async def protect_api(request: Request, call_next):
-    global _request_window_started, _request_window_count
     if request.url.path.startswith("/api/"):
         if settings.environment == "production" and request.url.scheme != "https":
             return Response("HTTPS is required", status_code=400)
-        authorization = request.headers.get("authorization", "")
-        scheme, separator, supplied_key = authorization.partition(" ")
-        if not separator or scheme.lower() != "bearer" or not secrets.compare_digest(
-            supplied_key.strip().encode("utf-8"), settings.api_key.encode("utf-8")
-        ):
+        if not _valid_api_key(request.headers.get("authorization", "")):
             return Response(
                 "Unauthorized",
                 status_code=401,
@@ -199,17 +221,12 @@ async def protect_api(request: Request, call_next):
             except ValueError:
                 return Response("Invalid Content-Length", status_code=400)
 
-        now = time.monotonic()
-        if now - _request_window_started >= 60:
-            _request_window_started = now
-            _request_window_count = 0
-        if _request_window_count >= settings.api_requests_per_minute:
+        if not _take_request_slot():
             return Response(
                 "Too Many Requests",
                 status_code=429,
                 headers={"Retry-After": "60", "Cache-Control": "no-store"},
             )
-        _request_window_count += 1
 
     if request.url.path in {"/api/status", "/api/connect", "/api/tts-check"}:
         if not await _api_capacity.acquire():
@@ -430,3 +447,26 @@ async def tts_check(scenario: Literal["thanks", "compound"] = "thanks") -> Respo
         media_type="audio/wav",
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )
+
+
+@app.websocket("/api/relay")
+async def psoc_relay(websocket: WebSocket) -> None:
+    """PSoC 6 relay (spec.md 5.4). Authenticated with the same Bearer key as the HTTP API."""
+    global _relay_sessions
+    if (settings.environment == "production" and websocket.url.scheme != "wss") or not _valid_api_key(
+        websocket.headers.get("authorization", "")
+    ):
+        await websocket.close(relay.CLOSE_POLICY)
+        return
+    await websocket.accept()
+    if not _take_request_slot() or _relay_sessions >= settings.max_relay_sessions:
+        await websocket.send_json(
+            {"type": "error", "code": "busy", "message": "混み合っています。少し待って接続し直してください。"}
+        )
+        await websocket.close(relay.CLOSE_TRY_AGAIN_LATER)
+        return
+    _relay_sessions += 1
+    try:
+        await relay.serve(websocket, dispatch=_dispatch_agent)
+    finally:
+        _relay_sessions -= 1

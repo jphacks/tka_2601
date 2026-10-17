@@ -5,6 +5,7 @@ import json
 import logging
 import os
 
+import httpx
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import (
@@ -21,6 +22,7 @@ from livekit.agents import (
 from livekit.agents.voice.agent_session import SessionConnectOptions
 from livekit.plugins import openai, silero
 
+from . import warmup
 from .config import settings
 from .speech_tts import SpeechCppTTS
 from .visit_policy import VisitState
@@ -103,8 +105,9 @@ def _llm():
         reasoning_effort="none",
         # Ollama's OpenAI-compatible endpoint honors max_tokens. The SDK's
         # max_completion_tokens field is ignored by some Ollama releases.
-        extra_body={"max_tokens": settings.llm_max_tokens},
-        timeout=settings.llm_timeout_seconds,
+        extra_body={"max_tokens": settings.llm_max_tokens, "keep_alive": settings.llm_keep_alive},
+        timeout=httpx.Timeout(settings.llm_timeout_seconds, connect=5),
+        max_retries=1,
     )
 
 
@@ -181,6 +184,7 @@ async def entrypoint(ctx: JobContext) -> None:
         logger.warning("invalid session metadata; using configured house rules")
 
     logger.info("starting room=%s turn_detector=%s", ctx.room.name, detector_mode)
+    warmup.schedule()
     await session.start(
         room=ctx.room,
         agent=DoorAgent(house_rules),
