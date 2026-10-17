@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { House } from '../components/icons';
 import { BackgroundShapes } from '../components/Screen';
 import { PrimaryButton, TextField } from '../components/ui';
 import { APP_NAME } from '../lib/app';
@@ -43,9 +42,6 @@ export default function LoginScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.brand}>
-            <View style={styles.appIcon}>
-              <House />
-            </View>
             <Text style={styles.appName} accessibilityRole="header">
               {APP_NAME}
             </Text>
@@ -125,15 +121,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   content: { paddingHorizontal: 24, paddingBottom: 40, gap: 32 },
-  brand: { alignItems: 'center', gap: 12 },
-  appIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 16,
-    backgroundColor: colors.navy,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  brand: { alignItems: 'center' },
   appName: { fontSize: 28, fontWeight: '700', color: colors.text },
   form: { gap: 16 },
   signupLine: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
