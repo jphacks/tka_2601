@@ -11,9 +11,12 @@
 | 項目 | 決定 |
 |---|---|
 | 書き込み口 | 本体（音声ブリッジ）が Supabase に直接書き込む。door API サーバーは改修しない |
-| 保存する内容 | 訪問者の発話の文字起こし、AI の返答の文字、対応結果と要約。音声と画像は保存しない |
+| 保存する内容 | 訪問者の発話の文字起こし、AI の返答の文字、対応結果。音声と画像は保存しない |
+| 要約 | 作らない（要件から外す） |
+| 保存期間 | 無期限（自動では消さない） |
 | アプリでできること | 履歴の閲覧、即時通知（ntfy の置き換え）、動作モードの切り替え |
-| アプリの形態 | Flutter か React Native で作るネイティブアプリ（どちらにするかは未定） |
+| アプリの形態 | React Native で作るネイティブアプリ |
+| iPhone での通知 | 受ける。Apple Developer Program には登録済み |
 | 裏側 | Supabase |
 
 本体を書き込み口にしたのは、本体がチャイムの時刻、押下、モード、定型音声で応答した来客など、来客のすべてを知っているためである。サーバーに届かなかった来客も記録でき、本体の機能を足すときにサーバーを改修せずに済む。会話の文字は、本体が door API の WebSocket で受け取る `user_transcript` と `ai_text` をそのまま使う。
@@ -25,7 +28,7 @@ flowchart LR
   BR[音声ブリッジ<br/>ノート PC] -- "デバイス用アカウント + RLS<br/>来客と会話の書き込み" --> SB[(Supabase<br/>Postgres / Auth / Realtime)]
   SB -- "モードの変更" --> BR
   SB -- "Database Webhook" --> EF[Edge Function<br/>通知の送信]
-  EF -- "FCM / APNs" --> APP[スマホアプリ<br/>Flutter か React Native]
+  EF -- "Expo の通知サービス<br/>（APNs / FCM）" --> APP[スマホアプリ<br/>React Native]
   APP -- "住人のログイン + RLS<br/>履歴の閲覧・モード変更" --> SB
   BR <-- "WebSocket（会話）" --> API[door API サーバー<br/>改修しない]
 ```
@@ -42,8 +45,8 @@ flowchart LR
 |---|---|---|
 | HR-1 | チャイムごとに来客の記録を作る | Must |
 | HR-2 | 会話の各発話（訪問者、AI、定型音声）を順番どおりに保存する | Must |
-| HR-3 | 対応結果（意図、会社名、対応、終話の理由）と要約を保存する | Must |
-| HR-4 | アプリで来客の一覧と詳細（会話の全文、要約）を見る | Must |
+| HR-3 | 対応結果（意図、会社名、対応、終話の理由）を保存する | Must |
+| HR-4 | アプリで来客の一覧と詳細（会話の全文、対応結果）を見る | Must |
 | HR-5 | 来客時と対応後に、アプリへプッシュ通知を送る | Must |
 | HR-6 | アプリで動作モード（[spec.md 2.3](spec.md#23-動作モード)）を切り替え、本体に反映する | Should |
 | HR-7 | Supabase に届かなかった来客を、本体が回線の回復後に送る | Should |
@@ -57,11 +60,10 @@ flowchart LR
 | door API から `user_transcript` を受けた | 訪問者の発話を足す |
 | door API から1回分の返答の文字を受け終えた | AI の発話を足す |
 | 定型音声を流した | 定型音声の発話を足す |
-| 終話した | 来客を「終話」にし、終話時刻、終話の理由、意図、会社名、対応、要約を入れる |
+| 終話した | 来客を「終話」にし、終話時刻、終話の理由、意図、会社名、対応を入れる |
 
 - 来客の ID と発話の順番は本体が付ける。同じ来客や発話を送り直しても、記録が増えないようにするためである。
 - Supabase に届かないときは、本体の手元のファイルにためて、回線が戻ったら順に送る（HR-7）。
-- 要約の作り方は決めていない（[9章](#9-決めていないこと)）。
 
 ## 5. アプリ（提案）
 
@@ -69,11 +71,11 @@ flowchart LR
 |---|---|---|
 | ログイン | 住人がログインする | HR-4 |
 | 来客一覧 | 時刻、意図、会社名、対応を新しい順に並べる | HR-4 |
-| 来客詳細 | 会話をチャット形式で表示し、要約と終話の理由を添える | HR-4 |
+| 来客詳細 | 会話をチャット形式で表示し、対応結果と終話の理由を添える | HR-4 |
 | 設定 | デバイスの動作モードを切り替える | HR-6 |
 
-- プッシュ通知は、Flutter なら FCM、React Native なら Expo の通知サービスか FCM で受ける。どちらも iPhone への配信には Apple の APNs を使う。
-- iPhone で通知を受けるには、有料の Apple Developer Program への登録が要る。Android は FCM だけで無料で受けられる。
+- プッシュ通知は Expo の通知サービスで送ることを提案する。Supabase のドキュメントに React Native と Expo の例があり、iPhone 向けの APNs の資格情報は Expo のビルド（EAS）で用意できるためである。FCM を直接使う方法もある。
+- iPhone への配信には APNs を使う。チームは Apple Developer Program に登録済みなので、そのまま使える。
 - 通知を受けるための端末ごとのトークンは、Supabase のテーブルに保存する。
 - アプリの通知が動いたら、[spec.md 5.9](spec.md#59-スマホ通知) の ntfy を置き換える。
 
@@ -84,13 +86,13 @@ flowchart LR
 | `households` | `id`、`name`、`created_at` | 家。記録の持ち主の単位 |
 | `household_members` | `household_id`、`user_id`、`role`、`created_at` | 家と住人の対応 |
 | `devices` | `id`、`household_id`、`auth_user_id`（デバイス用アカウント）、`name`、`mode`、`last_seen_at`、`created_at` | 本体1台。モードはここに持つ |
-| `visits` | `id`（本体が生成）、`household_id`、`device_id`、`mode`、`chimed_at`、`answered_at`、`ended_at`、`status`、`intent`、`company`、`outcome`、`end_reason`、`summary`、`created_at`、`updated_at` | 来客1件 |
+| `visits` | `id`（本体が生成）、`household_id`、`device_id`、`mode`、`chimed_at`、`answered_at`、`ended_at`、`status`、`intent`、`company`、`outcome`、`end_reason`、`created_at`、`updated_at` | 来客1件 |
 | `visit_messages` | `visit_id`、`household_id`、`seq`、`speaker`（訪問者・AI・定型音声）、`text`、`spoken_at`、`created_at`。(`visit_id`, `seq`) は一意 | 会話の1発話 |
 | `push_tokens` | `user_id`、`token`、`platform`、`created_at`、`last_seen_at` | 通知の送り先 |
 
 - `status`、`intent`、`outcome`、`end_reason` の値は、[spec.md 5.1](spec.md#51-状態遷移ブリッジ) の状態と [spec.md 6.4](spec.md#64-通知用の意図判定ブリッジ) の意図に合わせる。
 - 外部キーの列と、一覧の並び（家ごとの新しい順）にはインデックスを張る。
-- 来客を消したら、その発話も一緒に消えるようにする。
+- 記録は自動では消さない（保存期間は無期限）。来客を消す場合は、その発話も一緒に消えるようにする。
 
 ## 7. 権限（提案）
 
@@ -128,10 +130,8 @@ flowchart LR
 
 | 項目 | 選択肢や論点 |
 |---|---|
-| Flutter か React Native か | チームの経験で決める。通知の受け方（FCM か Expo）もこれで決まる |
-| iPhone で通知を受けるか | 受けるなら有料の Apple Developer Program への登録が要る |
-| 要約の作り方 | 本体が意図と対応から定型文で作る（追加の仕組みは要らない）、door API に要約を頼む（サーバーの改修が要る）、などがある |
-| 保存期間と削除 | 訪問者の会社名や名前が文字で残るため、決めることを勧める |
+| 通知の送り方 | Expo の通知サービスか、FCM を直接使うか（5章では Expo を提案） |
+| 削除の方法 | 保存期間は無期限と決めた。住人がアプリから記録を消せるようにするか |
 | 家族で共有するか | 1つの家に複数の住人を登録するか |
 | 通知の内容と時期 | 来客時と対応後の2回か、対応後だけか |
 | 通知とモード反映の目標時間 | H6、H7 の合格基準 |
