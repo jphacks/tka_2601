@@ -31,6 +31,10 @@ npx expo run:ios
 
 `.env` を書き換えたら Metro を起動し直す。開発ビルド（expo-dev-client）なので、起動時に開発サーバーを選ぶ画面が出ることがある。
 
+## テスト用アカウント
+
+クラウドの Supabase（`tka_2601`）に、テスト用のアカウント `ymt@example.com` がある（メール確認済み）。パスワードはリポジトリに書かず、チーム内で共有する。
+
 ## EAS のビルド
 
 `eas.json` のプロファイルは次の4つ。どれも Expo へのログイン（`npx eas-cli@latest login`）が要る。
