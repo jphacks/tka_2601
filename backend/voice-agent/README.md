@@ -6,12 +6,16 @@
 
 ## 構成
 
-- `door_backend.api`: `/api/status`、`/api/connect`、`/api/tts-check`を提供するFastAPIサーバー
+- `door_backend.api`: `/api/status`、`/api/connect`、`/api/tts-check`、PSoC 6用の`/api/relay`を提供するFastAPIサーバー
+- `door_backend.relay`: PSoC 6の代わりにLiveKitルームへ入る中継と、Supabaseからの家の設定の読み込み
+- `door_backend.house_rules`: 動作モードと家の設定から組み立てる住人ルール
 - `door_backend.web_ui`: 同じAPIオリジンから使えるマイク通話画面
 - `door_backend.agent`: LiveKitルームごとの音声エージェント
 - `door_backend.speech_tts`: speech.cppのストリーミングPCM/SSE接続
 - `door_backend.visit_policy`: 来訪目的と会話状態に基づく応答制約
 - `compose.yaml`: ローカル開発用LiveKit Server
+- `scripts/psoc_sim.py`: PSoC 6の代わりに`/api/relay`へつなぐ確認用クライアント
+- `scripts/fake_models.py`: labpcのモデルの代わりに決まった応答を返す確認用のASR、LLM、TTS
 
 ## 必要なサービス
 
@@ -65,6 +69,41 @@ Bearer認証が必要です。成功時は`url`、`token`、`room`を返しま�
 
 Bearer認証が必要です。`thanks`または`compound`の固定文を合成し、`audio/wav`を返します。音声はメモリ上で組み立て、キャッシュしません。TTS応答は既定で5 MiB、API全体は1分あたり120要求、API処理は同時に4件までです。処理枠が埋まると最大8件を最大2秒だけ待機させ、待機枠満杯または期限超過は`503`と`Retry-After`で返します。上限値は環境変数で調整できます。
 
+### `WebSocket /api/relay`
+
+PSoC 6用の中継です（`docs/spec.md` 5.4）。中継がPSoC 6の代わりにLiveKitルームへ入り、PSoC 6の音を音声トラックとして流し、エージェントの声と文字起こしをPSoC 6へ返します。接続時に`Authorization: Bearer <DOOR_API_KEY>`を付けてください。キーが違う場合は1008で閉じます。
+
+| 向き | 種類 | 内容 |
+|---|---|---|
+| PSoC 6 → 中継 | テキスト | 最初の1通。5秒以内に`{"type":"start","visit_id":"<uuid>","mode":"normal\|omakase\|away","device_key":"<デバイス鍵>"}`を送ります |
+| PSoC 6 → 中継 | バイナリ | マイクのPCM。16 kHz・16bit LE・モノラルで、20 ms（640 B）ずつ送ります。1通は100 ms以下です |
+| PSoC 6 → 中継 | テキスト | `{"type":"end"}`。中継はルームを抜け、1000で閉じます |
+| 中継 → PSoC 6 | テキスト | `{"type":"ready"}`。家の設定を読み、ルームに入り、エージェントを呼んだ後に送ります |
+| 中継 → PSoC 6 | バイナリ | エージェントの声。PSoC 6が送る音と同じ形式のPCMを20 ms（640 B）ずつ送ります |
+| 中継 → PSoC 6 | テキスト | `{"type":"transcript","speaker":"visitor\|ai","text":"..."}`。確定した文字起こしだけを送ります。`speaker`はSupabaseの`visit_messages.speaker`と同じ値です |
+| 中継 → PSoC 6 | テキスト | `{"type":"agent_state","state":"speaking\|listening\|thinking"}`。エージェントの状態が変わるたびに送ります |
+| 中継 → PSoC 6 | テキスト | `{"type":"error","code":"...","message":"..."}`。送った後に閉じます |
+
+| `code` | 閉じるときのコード | 起きる場面 |
+|---|---|---|
+| `start_timeout`、`invalid_start` | 1008 | 開始のJSONが5秒以内に届かない、または形が違う（`mode`が無い・不正など） |
+| `invalid_audio`、`invalid_message` | 1008 | 音のバイト数が0か奇数、または100 ms（3200 B）を超える。テキストがJSONのオブジェクトでない |
+| `time_limit` | 1008 | 1回の会話が`DOOR_RELAY_MAX_SESSION_SECONDS`（既定120秒）を過ぎた |
+| `agent_unavailable` | 1011 | LiveKitに入れない、またはエージェントを呼べない |
+| `livekit_disconnected` | 1011 | 会話中にLiveKitから切れた |
+| `busy` | 1013 | 同時に中継できる会話（`DOOR_MAX_RELAY_SESSIONS`、既定4）またはAPIの要求数の上限に達した |
+
+エージェントが話していない間、LiveKitの音声トラックには無音が流れています。中継はこの無音をPSoC 6へ送りません。PSoC 6は再生中にマイクの音を送らないため（`docs/spec.md` 3.7）、無音が届き続けると訪問者の声を送れなくなるためです。
+
+#### 住人ルールの組み立て
+
+中継は会話の開始時に一度だけ、`device_key`を付けてSupabaseのEdge Function（`GET {DOOR_SUPABASE_URL}/functions/v1/device/settings`）から家の設定を読みます。応答は`{"away_leave_at_door": false, "extra_instructions": ""}`の形を想定しています。中継は設定と`mode`から住人ルールを組み立て、`/api/connect`の`house_rules`と同じ扱いで会話エージェントへ渡します。
+
+- 基本の規則は`docs/spec.md` 5.6のものです。規則2は、`normal`と`omakase`では置き配を、`away`では不在票を頼む文です。
+- `mode`が`away`で`away_leave_at_door`が`true`のときは、規則2を「置き配の指定があればその場所に置き、なければ不在票」の文に替えます。ほかのモードでは`away_leave_at_door`を使いません。
+- `extra_instructions`（AIへの追加の指示）は、「1〜8とぶつかるときは1〜8を守る」という前置きを付けて規則の後ろに足します。全体が`DOOR_MAX_HOUSE_RULES_CHARS`（既定800字）を超える場合は、追加の指示の末尾を切ります。規則が最も長い`away`の置き配ありでは、追加の指示に使えるのは350字です。
+- 設定を読めない場合（`DOOR_SUPABASE_URL`が未設定、`DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS`以内に応答がない、200以外、形が違う）は、設定なしの規則で会話を続けます。
+
 ## 設定
 
 `.env.example`を`.env`へコピーし、上のコマンドでランダムな32-byte `DOOR_API_KEY` を生成してください。`.env`を共有したり、キーをソースやブラウザーコードに埋め込んだりしないでください。LiveKit、Ollama、ASR、TTSのURLとモデル名も環境に合わせます。主な設定:
@@ -82,6 +121,10 @@ Bearer認証が必要です。`thanks`または`compound`の固定文を合成�
 - `DOOR_TTS_VOICE` / `DOOR_TTS_SAMPLE_RATE`: 合成音声の声とPCMサンプルレート
 - `DOOR_HOUSE_RULES`: セッションに初期適用する住人ルール
 - `DOOR_TURN_DETECTOR`: `vad`が既定値。`mini`はLiveKitの追加モデル条件を確認したうえで明示的に選択
+- `DOOR_SUPABASE_URL`: 家の設定を読むSupabaseのURL（例: `https://<ref>.supabase.co`）。未設定なら設定を読みません。productionではHTTPSが必要です。
+- `DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS`: 家の設定を待つ時間。既定は1秒
+- `DOOR_RELAY_LIVEKIT_URL`: 中継が入るLiveKitのURL。既定は`LIVEKIT_URL`の`http`を`ws`に替えたものです。
+- `DOOR_MAX_RELAY_SESSIONS` / `DOOR_RELAY_START_TIMEOUT_SECONDS` / `DOOR_RELAY_MAX_SESSION_SECONDS`: 同時に中継する会話の数、開始のJSONを待つ時間、1回の会話の上限時間
 
 開発用の`devkey` / `secret`を公開ネットワークで使わないでください。APIとモデルサービスは信頼されたネットワーク内に限定してください。
 
@@ -110,4 +153,27 @@ WebUIは`DOOR_UI_HOSTNAME`のホストで配信され、APIリクエストは同
 uv run pytest
 ```
 
-テストは会話ルール、サービス準備状態、接続失敗時の応答、WAVプレビュー形式を確認します。実機のマイク・スピーカーを通した遅延と割り込み、およびlabpcとブラウザー間のICE到達性は、対象ネットワーク上で別途確認してください。
+テストは会話ルール、サービス準備状態、接続失敗時の応答、WAVプレビュー形式、中継の受け口、住人ルールの組み立て、家の設定の読み込みを確認します。中継の試験では、LiveKitとSupabaseの代わりにモックを使います。実機のマイク・スピーカーを通した遅延と割り込み、およびlabpcとブラウザー間のICE到達性は、対象ネットワーク上で別途確認してください。
+
+### PSoC 6なしで中継を確かめる
+
+`scripts/psoc_sim.py`は、PSoC 6と同じ手順で`/api/relay`につなぎ、WAVファイルを訪問者の声として送ります。PSoC 6と同じく、エージェントの声の再生中と再生後0.5秒はマイクの音を送りません。受け取った声はWAVに保存し、文字起こし、`ready`までの時間、訪問者の発話の送信終了から返答の音が届くまでの時間を表示します。WAVは16 kHz・16bit・モノラルにしてください。
+
+```bash
+ffmpeg -i visitor.m4a -ar 16000 -ac 1 -sample_fmt s16 visitor.wav
+DOOR_DEVICE_KEY=<デバイス鍵> uv run python -m scripts.psoc_sim --url wss://<会話サーバー>/api/relay --mode omakase visitor.wav
+```
+
+`DOOR_API_KEY`は環境変数か`.env`から読みます。`DOOR_DEVICE_KEY`を省くと仮の鍵を送るため、家の設定は読めず、設定なしの規則で会話します。WAVを複数渡すと、エージェントが話し終えるたびに順に送ります。エージェントが「失礼いたします」と言った後は、残りのWAVを送らずに終話します。
+
+### labpcのモデルなしで確かめる
+
+`scripts/fake_models.py`は、ASR、LLM、TTSの代わりに決まった応答を返します。TTSは言葉を読み上げず、文の長さに合わせた長さの音を返します。中継、LiveKit、会話エージェントのつながりは確かめられますが、会話の質は確かめられません。それぞれ別の端末で起動します。
+
+```bash
+docker compose up -d
+uv run python -m scripts.fake_models --port 18100
+DOOR_ASR_BASE_URL=http://127.0.0.1:18100 DOOR_TTS_BASE_URL=http://127.0.0.1:18100 DOOR_OLLAMA_BASE_URL=http://127.0.0.1:18100 uv run python -m door_backend.agent dev
+uv run uvicorn door_backend.api:app --host 127.0.0.1 --port 8093
+uv run python -m scripts.psoc_sim --url ws://127.0.0.1:8093/api/relay visitor.wav
+```
