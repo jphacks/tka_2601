@@ -111,6 +111,8 @@
 - `applied` は、送った内容を来客に反映したかを示す。古い送信だと `false` になる。
 - 値の誤りは 400、他の本体の来客への書き込みは 403 を返す。
 
+会話サーバーの中継（labpc）は、会話の始めに PSoC から受け取ったデバイス鍵で `GET /functions/v1/device/settings` を一度呼び、`extra_instructions` と `away_leave_at_door` を会話エージェントに渡す。中継には secret key を置かない。`extra_instructions` には字数の制約がまだないため、house_rules 全体が 800 字を超えないよう中継が切る。
+
 ```bash
 curl -X PUT "$SUPABASE_URL/functions/v1/device/visits/$VISIT_ID" -H "Authorization: Bearer $DEVICE_KEY" -H "Content-Type: application/json" -d '{"chimed_at": "2026-10-17T10:00:00+09:00", "mode": "normal", "status": "ringing"}'
 ```
