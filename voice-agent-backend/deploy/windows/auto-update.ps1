@@ -2,7 +2,6 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repository = 'jphacks/tka_2601'
-$RepositoryOwner = 'jphacks'
 $DeploymentBranch = 'codex/voice-agent-backend'
 $AppRoot = 'C:\Users\stu23-oba-shion\door-voice-backend'
 $Python = 'C:\Users\stu23-oba-shion\door-prototype\livekit-poc\.venv\Scripts\python.exe'
@@ -29,17 +28,7 @@ function Test-Listening([int[]] $Ports) {
 
 try {
     $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'door-voice-backend-updater' }
-    $encodedHead = [Uri]::EscapeDataString("$RepositoryOwner`:$DeploymentBranch")
-    $openPullRequests = Invoke-RestMethod -Uri "$ApiRoot/pulls?state=open&head=$encodedHead&base=main" -Headers $headers
-    $openPullRequest = @($openPullRequests | Select-Object -First 1)
-    if ($openPullRequest.Count -gt 0) {
-        $branch = $openPullRequest[0].head.ref
-    } else {
-        $repositoryInfo = Invoke-RestMethod -Uri $ApiRoot -Headers $headers
-        $branch = $repositoryInfo.default_branch
-    }
-    $encodedBranch = [Uri]::EscapeDataString($branch)
-    $commit = Invoke-RestMethod -Uri "$ApiRoot/commits/$encodedBranch" -Headers $headers
+    $commit = Invoke-RestMethod -Uri "$ApiRoot/commits/$DeploymentBranch" -Headers $headers
     $sha = [string]$commit.sha
     $installedSha = if (Test-Path -LiteralPath $InstalledShaPath -PathType Leaf) {
         (Get-Content -LiteralPath $InstalledShaPath -Raw).Trim()
@@ -117,7 +106,7 @@ try {
     Set-Content -LiteralPath $InstalledShaPath -Value $sha -Encoding ASCII
     Remove-Item -LiteralPath $backup -Recurse -Force
     Remove-Item -LiteralPath $work -Recurse -Force
-    Write-DeployLog "Deployed $sha from $branch; API and Agent listeners are ready."
+    Write-DeployLog "Deployed $sha from $DeploymentBranch; API and Agent listeners are ready."
 } catch {
     Write-DeployLog "Deployment failed: $($_.Exception.Message)"
     if (Test-Path -LiteralPath $backup) {

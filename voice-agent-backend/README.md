@@ -45,7 +45,7 @@ APIサーバーとエージェントワーカーは別プロセスです。両�
 
 ### CIとlabpcへの自動反映
 
-`.github/workflows/voice-agent-backend.yml` は対象ブランチへのpushとPull Requestでバックエンドのテストを実行します。labpcの `Door Voice Backend Auto Update` タスクは5分ごとにGitHubを確認し、対象PRが開いている間はそのブランチを、マージ後はベースブランチを追跡します。`backend-tests` が成功したコミットだけを取得し、ローカルの`.env`を保ったままAPIとAgentを入れ替えて再起動します。更新失敗時は直前の配置に戻します。
+`.github/workflows/voice-agent-backend.yml` は対象ブランチへのpushとPull Requestでバックエンドのテストを実行します。labpcの `Door Voice Backend Auto Update` タスクは5分ごとに `codex/voice-agent-backend` ブランチを確認し、`backend-tests` が成功したコミットだけを取得します。ローカルの`.env`を保ったままAPIとAgentを入れ替えて再起動し、更新失敗時は直前の配置に戻します。
 
 labpcにはGitHub Actionsの秘密情報やSSHキーを登録せず、公開GitHub APIからソースを取得します。labpcでこのバックエンドのディレクトリを開き、初回だけ次を実行してください。
 
