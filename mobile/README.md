@@ -1,4 +1,4 @@
-# 住人アプリ（Expo）
+# MONBAN 住人アプリ（Expo）
 
 インターホン自動応答デバイスの住人向けアプリ。来客の履歴、即時通知、動作モードの切り替えを行う。画面は Claude Design のキャンバス（https://claude.ai/artifact/G9j5naxUGESrVJmT1pxSab ）に合わせている。裏側は [supabase/](../supabase/README.md)（PR #4）を使う。
 
@@ -44,5 +44,5 @@ npx expo run:ios
 
 ## 決まっていないこと
 
-- アプリ名（画面には `[アプリ名]` と出している）とバンドル ID（仮に `com.jphacks.tka2601`）
+- バンドル ID（仮に `com.jphacks.tka2601`）、slug、招待リンクのスキーム（`tka2601`）を MONBAN に合わせるか
 - 本体をグループに結び付ける画面（Supabase の `claim_device(code)` にペアリングコードを渡す）。デザインにもアプリにもまだない

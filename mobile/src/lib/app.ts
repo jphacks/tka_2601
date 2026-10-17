@@ -1,7 +1,6 @@
 import * as Linking from 'expo-linking';
 
-// アプリ名はまだ決まっていない。デザインの仮置きのまま表示する
-export const APP_NAME = '[アプリ名]';
+export const APP_NAME = 'MONBAN';
 
 // 招待リンク。開くと参加の確認画面（/join）に進む。スキームは app.json の scheme
 export function inviteLink(token: string): string {
