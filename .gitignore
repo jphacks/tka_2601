@@ -1,5 +1,15 @@
-# Secrets
+# Secrets: never commit real values. Keep the *.example templates.
 .env
+.env.*
+!.env.example
+!.env.*.example
+*.p8
+*.p12
+*.jks
+*.keystore
+*.mobileprovision
+credentials.json
+credentials/
 
 # ModusToolbox shared libraries (created next to the apps in firmware/)
 firmware/mtb_shared/
