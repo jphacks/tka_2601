@@ -1,4 +1,4 @@
-# 作業計画（Hack Day 2日間・3〜5人）
+# MONBAN 作業計画（Hack Day 2日間・3〜5人）
 
 仕様は [spec.md](spec.md)、会話履歴とスマホアプリの要件は [history.md](history.md) を参照する。時刻は開始からの経過時間（H+n）で書く。実際のスケジュールに合わせて読み替える。PC は使わない。
 
@@ -108,7 +108,7 @@ tools/
 backend/
   voice-agent/         会話サーバー（FastAPI と LiveKit の会話エージェント。これから中継を足す）
 supabase/              テーブル、RLS、Edge Function（PR #4）
-mobile/                住人アプリ（React Native・Expo。ブランチ claude/mobile-app）
+mobile/                住人アプリ MONBAN（React Native・Expo。ブランチ claude/mobile-app）
 ```
 
 - ModusToolbox の共有ライブラリ（mtb_shared）は `firmware/mtb_shared` に作られる。リポジトリ直下の `.gitignore` で除外している。
