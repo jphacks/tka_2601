@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "MONBAN",
-    "slug": "tka2601",
+    "slug": "jphacks2026",
+    "owner": "atsushihosaka",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
