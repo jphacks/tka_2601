@@ -38,7 +38,10 @@ export default function LoginScreen() {
       <BackgroundShapes />
       <KeyboardAvoidingView behavior="padding" style={styles.flex}>
         <ScrollView
-          contentContainerStyle={[styles.content, { paddingTop: insets.top + 41 }]}
+          contentContainerStyle={[
+            styles.content,
+            { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 },
+          ]}
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.brand}>
@@ -120,7 +123,8 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  content: { paddingHorizontal: 24, paddingBottom: 40, gap: 32 },
+  // 画面の縦の中央に寄せる。キーボードが出て狭くなったらスクロールする
+  content: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, gap: 32 },
   brand: { alignItems: 'center' },
   appName: { fontSize: 28, fontWeight: '700', color: colors.text },
   form: { gap: 16 },
