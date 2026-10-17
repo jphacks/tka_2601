@@ -77,6 +77,7 @@ Bearer認証が必要です。`thanks`または`compound`の固定文を合成�
 - `DOOR_LIVEKIT_TRUSTED_HTTP_HOSTS`: 本番LiveKit APIが同一Tailnet内にある場合だけ、許可するTailscale IPを列挙します。HTTPのまま使う場合は、Tailscale ACLで接続端末を制限してください。
 - `DOOR_MAX_TTS_RESPONSE_BYTES` / `DOOR_API_REQUESTS_PER_MINUTE` / `DOOR_MAX_CONCURRENT_REQUESTS` / `DOOR_MAX_QUEUED_REQUESTS` / `DOOR_QUEUE_WAIT_SECONDS`: 音声サイズ、API要求数、同時処理数、待機数、待機時間の上限
 - `DOOR_OLLAMA_BASE_URL` / `DOOR_LLM_MODEL`: Ollama接続先とLLMモデル
+- `DOOR_LLM_TIMEOUT_SECONDS` / `DOOR_LLM_MAX_TOKENS`: ローカル推論の待ち時間と返答上限（既定値: 120秒 / 96トークン）
 - `DOOR_ASR_BASE_URL` / `DOOR_ASR_API_MODEL`: ASR接続先とモデルID
 - `DOOR_TTS_BASE_URL` / `DOOR_TTS_API_MODEL`: TTS接続先とモデルID
 - `DOOR_TTS_VOICE` / `DOOR_TTS_SAMPLE_RATE`: 合成音声の声とPCMサンプルレート

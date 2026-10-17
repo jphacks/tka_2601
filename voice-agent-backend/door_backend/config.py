@@ -82,6 +82,8 @@ class Settings:
 
     ollama_base_url: str = os.getenv("DOOR_OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/").removesuffix("/v1")
     llm_model: str = os.getenv("DOOR_LLM_MODEL", "gemma4:latest")
+    llm_timeout_seconds: float = _positive_float("DOOR_LLM_TIMEOUT_SECONDS", 120)
+    llm_max_tokens: int = _integer("DOOR_LLM_MAX_TOKENS", 96)
     asr_base_url: str = os.getenv("DOOR_ASR_BASE_URL", "http://127.0.0.1:18095").rstrip("/")
     asr_model: str = os.getenv("DOOR_ASR_API_MODEL", "kotoba-tech/kotoba-whisper-v2.1")
     tts_base_url: str = os.getenv("DOOR_TTS_BASE_URL", "http://127.0.0.1:18094").rstrip("/")

@@ -8,6 +8,7 @@ import os
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import (
+    APIConnectOptions,
     Agent,
     AgentServer,
     AgentSession,
@@ -17,6 +18,7 @@ from livekit.agents import (
     inference,
     room_io,
 )
+from livekit.agents.voice.agent_session import SessionConnectOptions
 from livekit.plugins import openai, silero
 
 from .config import settings
@@ -89,11 +91,16 @@ def _stt():
 
 
 def _llm():
-    return openai.LLM.with_ollama(
+    return openai.LLM(
         model=settings.llm_model,
         base_url=f"{settings.ollama_base_url}/v1",
+        api_key="ollama",
         temperature=0.15,
         reasoning_effort="none",
+        # Ollama's OpenAI-compatible endpoint honors max_tokens. The SDK's
+        # max_completion_tokens field is ignored by some Ollama releases.
+        extra_body={"max_tokens": settings.llm_max_tokens},
+        timeout=settings.llm_timeout_seconds,
     )
 
 
@@ -118,6 +125,13 @@ async def entrypoint(ctx: JobContext) -> None:
         llm=llm_model,
         tts=tts_model,
         vad=vad,
+        conn_options=SessionConnectOptions(
+            llm_conn_options=APIConnectOptions(
+                max_retry=1,
+                retry_interval=1.0,
+                timeout=settings.llm_timeout_seconds,
+            )
+        ),
         turn_handling=TurnHandlingOptions(
             turn_detection=detector,
             endpointing={"mode": "dynamic", "min_delay": 0.55, "max_delay": 1.5, "alpha": 0.75},
@@ -170,10 +184,7 @@ async def entrypoint(ctx: JobContext) -> None:
             text_output=room_io.TextOutputOptions(sync_transcription=True),
         ),
     )
-    await session.generate_reply(
-        instructions="玄関のインターホンに出ました。短く『はい、どちら様でしょうか』と応答してください。",
-        allow_interruptions=True,
-    )
+    await session.say("はい、どちら様でしょうか。", allow_interruptions=True)
 
 
 if __name__ == "__main__":
