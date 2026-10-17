@@ -272,6 +272,8 @@ try {
   );
   await resident.from("devices").update({ away_leave_at_door: false, auto_away: false, extra_instructions: "" })
     .eq("id", DEVICE_ID);
+  const tooLong = await resident.from("devices").update({ extra_instructions: "あ".repeat(351) }).eq("id", DEVICE_ID);
+  check("AI への追加の指示は 351 字だと拒否する（23514）", tooLong.error?.code === "23514", tooLong);
   const state = await device("PUT", "/state", { auto_away_active: true });
   check("本体は自動の外出の状態を書ける", state.status === 200 && state.json.auto_away_active === true, state);
   const shown = await resident.from("devices").select("auto_away_active").eq("id", DEVICE_ID).single();

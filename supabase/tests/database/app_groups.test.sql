@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(42);
+select plan(44);
 
 -- 来客の Webhook を送信待ちに入れない（このトランザクションの中だけ）
 delete from vault.secrets where name in ('push_function_url', 'push_webhook_secret');
@@ -132,6 +132,10 @@ select throws_ok($$select public.claim_device(current_setting('test.code'))$$, '
 
 -- 設定 ---------------------------------------------------------------------
 
+select throws_ok($$update public.devices set extra_instructions = repeat('あ', 351)$$, '23514', null,
+  'AI への追加の指示は 351 字だと拒否する');
+select lives_ok($$update public.devices set extra_instructions = repeat('あ', 350)$$,
+  'AI への追加の指示は 350 字まで入る');
 update public.devices set away_leave_at_door = true, auto_away = true, extra_instructions = '犬がいるので、ゆっくり話してください';
 select throws_ok($$update public.devices set auto_away_active = true$$, '42501', null,
   '住人は自動の外出の状態を書けない');

@@ -14,6 +14,7 @@
 | `migrations/20261017070548_app_groups_and_settings.sql` | アプリのための追加（知人、グループと招待、メンバーの名前、設定、本体のペアリング） |
 | `migrations/20261017071512_review_fixes.sql` | 同じ来客の同時の書き込みを1つずつ処理する。入口の関数の権限をそろえる |
 | `migrations/20261017072020_push_retry.sql` | 通知の送信待ちと、pg_cron による再送 |
+| `migrations/20261017073719_extra_instructions_limit.sql` | AI への追加の指示を 350 字までにする |
 | `functions/device/` | 本体が来客を書き込み、設定を読むための Edge Function |
 | `functions/push/` | Expo の通知サービスで住人の端末に通知を送る Edge Function |
 | `scripts/seed_local.ts` | ローカルのシード（グループ1つ、住人1人、本体1台とデバイス鍵）と Vault の設定 |
@@ -57,7 +58,7 @@
 - 招待トークンはグループごとに1つで、有効期限はなく、同じトークンを何度でも使える。作り直しとグループからの脱退は作っていない。
 - メンバーの権限は全員同じで、モードと設定はだれでも変えられる。
 - メンバーの名前は `auth.users` の `raw_user_meta_data` の `full_name`、なければ `name`（Apple や Google）を使う。表示に使うだけで、権限の判定には使わない。
-- 設定（外出時に置き配を頼む、だれもいないとき外出にする、AI への追加の指示）は `devices` に持ち、グループで共有する。追加の指示の上限の字数は、house_rules の基本の規則の字数が決まってから足す。
+- 設定（外出時に置き配を頼む、だれもいないとき外出にする、AI への追加の指示）は `devices` に持ち、グループで共有する。追加の指示は 350 字までにした。house_rules は全体で 800 字以内で、基本の規則が最も長いモード（外出・置き配あり）では、追加の指示に使えるのが 350 字になるためである。
 - 応答しなかったチャイム（停止モード、住人が近づいた、15 秒経過）は、`status` を `missed` にして締める。
 - 住人は自分のグループの来客を1件ずつ消せる。1回の DELETE で2件以上を消そうとすると、トリガーが拒否する。来客を消すと発話も消える。
 
@@ -92,7 +93,7 @@
 | `household_member_profiles()` | `user_id`、`full_name`、`email`、`role`、`joined_at`（入った順） | グループに入っていなければ `PT403` |
 | `claim_device(code)` | 本体の id | グループに入っていなければ `PT403`、コードが違えば `PT404` |
 
-ペアリングコードの小文字、空白、ハイフンは無視する。ほかに、`visits` と `visit_messages` の読み取り、`visits` の1件ずつの削除、`devices` の `mode`、`away_leave_at_door`、`auto_away`、`extra_instructions` の更新、`push_tokens` の登録・更新・削除を Data API で直接行える。通知の `data` には `visit_id` と `kind`（`chime` か `ended`）が入る。
+ペアリングコードの小文字、空白、ハイフンは無視する。ほかに、`visits` と `visit_messages` の読み取り、`visits` の1件ずつの削除、`devices` の `mode`、`away_leave_at_door`、`auto_away`、`extra_instructions` の更新、`push_tokens` の登録・更新・削除を Data API で直接行える。`extra_instructions` が 350 字を超えると `23514`（400）になる。通知の `data` には `visit_id` と `kind`（`chime` か `ended`）が入る。
 
 ## 本体が使う API
 
@@ -111,7 +112,7 @@
 - `applied` は、送った内容を来客に反映したかを示す。古い送信だと `false` になる。
 - 値の誤りは 400、他の本体の来客への書き込みは 403 を返す。
 
-会話サーバーの中継（labpc）は、会話の始めに PSoC から受け取ったデバイス鍵で `GET /functions/v1/device/settings` を一度呼び、`extra_instructions` と `away_leave_at_door` を会話エージェントに渡す。中継には secret key を置かない。`extra_instructions` には字数の制約がまだないため、house_rules 全体が 800 字を超えないよう中継が切る。
+会話サーバーの中継（labpc）は、会話の始めに PSoC から受け取ったデバイス鍵で `GET /functions/v1/device/settings` を一度呼び、`extra_instructions` と `away_leave_at_door` を会話エージェントに渡す。中継には secret key を置かない。`extra_instructions` は 350 字までなので、基本の規則と合わせても 800 字に収まる。
 
 ```bash
 curl -X PUT "$SUPABASE_URL/functions/v1/device/visits/$VISIT_ID" -H "Authorization: Bearer $DEVICE_KEY" -H "Content-Type: application/json" -d '{"chimed_at": "2026-10-17T10:00:00+09:00", "mode": "normal", "status": "ringing"}'
@@ -145,8 +146,8 @@ deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_
 
 | 試験 | 実行 | 内容 |
 |---|---|---|
-| pgTAP（126 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送 |
-| 結合（65 件） | `deno run --allow-read --allow-run --allow-net --allow-env supabase/tests/e2e_local.ts` | Data API での H1 と H3b、device での H2 と H4（同時の作成を含む）、グループの作成から招待での参加まで、ペアリング、設定、Webhook から Expo までと通知の文面、pg_cron の再送 |
+| pgTAP（128 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送 |
+| 結合（66 件） | `deno run --allow-read --allow-run --allow-net --allow-env supabase/tests/e2e_local.ts` | Data API での H1 と H3b、device での H2 と H4（同時の作成を含む）、グループの作成から招待での参加まで、ペアリング、設定、Webhook から Expo までと通知の文面、pg_cron の再送 |
 | Edge Function（14 件） | `deno test supabase/functions/push/` | 通知を送る条件と文面、優先度、Expo の一時的な失敗の試し直し |
 
 結合試験は、シードを入れたローカルで流す。Expo には実在しないトークンで送るため、Expo から `DeviceNotRegistered` の ticket が返れば正しい。マイグレーションを変えたら `supabase db advisors --local` も通す。指摘は、権限を与えない4つの表（`device_keys`、`device_pairing_codes`、`household_invites`、`push_deliveries`）の「RLS はあるがポリシーがない」（INFO）だけになる。
@@ -158,7 +159,7 @@ deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_
 | 組織 | AttackOnRasshiine（Free プラン） |
 | プロジェクト | `tka_2601`（ref `bqdvxzvezecunnkbcyoy`、リージョン `ap-northeast-1`） |
 | URL | https://bqdvxzvezecunnkbcyoy.supabase.co |
-| 入っているもの | マイグレーション6つ、pg_cron の `push-retry`、Edge Function「device」と「push」、Edge のシークレット `PUSH_WEBHOOK_SECRET`、Vault の `push_function_url` と `push_webhook_secret` |
+| 入っているもの | マイグレーション7つ、pg_cron の `push-retry`、Edge Function「device」と「push」、Edge のシークレット `PUSH_WEBHOOK_SECRET`、Vault の `push_function_url` と `push_webhook_secret` |
 | 入っていないもの | シード（グループ、住人、本体、デバイス鍵）、`EXPO_ACCESS_TOKEN` |
 
 アプリは publishable key（`sb_publishable_...`）を使う。secret key はダッシュボードの API Keys にあり、リポジトリにも本体にも入れない。Free プランのプロジェクトは、1週間使われないと一時停止する。
