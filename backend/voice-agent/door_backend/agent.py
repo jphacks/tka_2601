@@ -57,17 +57,20 @@ ASR_PROMPT = (
 class DoorAgent(Agent):
     def __init__(self, house_rules: str) -> None:
         safe_rules = house_rules.strip()[: settings.max_house_rules_chars] or settings.house_rules
+        self.house_rules = safe_rules
         super().__init__(instructions=BASE_INSTRUCTIONS.format(house_rules=safe_rules))
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
         messages = [(item.role, item.text_content or "") for item in turn_ctx.items if item.type == "message"]
         messages.append(("user", new_message.text_content or ""))
-        if VisitState.from_messages(messages).should_wait:
+        if VisitState.from_messages(messages, self.house_rules).should_wait:
             raise StopResponse()
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         messages = [item for item in chat_ctx.items if item.type == "message"]
-        state = VisitState.from_messages([(item.role, item.text_content or "") for item in messages])
+        state = VisitState.from_messages(
+            [(item.role, item.text_content or "") for item in messages], self.house_rules
+        )
         if state.should_wait:
             return
         context = chat_ctx.copy()
@@ -151,11 +154,14 @@ async def entrypoint(ctx: JobContext) -> None:
             interruption={
                 "mode": "vad",
                 "enabled": True,
-                "min_words": 0,
+                # Discard stray word fragments and room noise before they can
+                # cancel a response. Never resume a superseded TTS stream: it
+                # can otherwise speak stale audio after the next turn starts.
+                "min_words": 2,
                 "discard_audio_if_uninterruptible": False,
-                "min_duration": 0.4,
+                "min_duration": 0.7,
                 "false_interruption_timeout": 1.6,
-                "resume_false_interruption": True,
+                "resume_false_interruption": False,
             },
             # Generate ahead when useful, but do not speak a response to an
             # interim/noisy transcript before the visitor's turn is finalized.

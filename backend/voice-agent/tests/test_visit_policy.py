@@ -128,3 +128,42 @@ def test_farewell_must_end_reply_and_is_only_allowed_when_done():
     )
     assert not done.validate("承知しました。失礼いたします。ほかに何かありますか？")
     assert done.trim_after_farewell("承知しました。失礼いたします。ほかに何かありますか？") == "承知しました。失礼いたします。"
+
+
+def test_asr_placement_homophone_is_corrected_in_delivery_context():
+    result = VisitState.from_messages(
+        [
+            ("user", "宅配便です"),
+            ("assistant", "玄関の前に置いていただけますか。"),
+            ("user", "はい、起きました"),
+        ]
+    )
+    assert result.placed
+    assert result.fallback() == "恐れ入りますが、荷物と置き場所の写真を撮ってください。"
+
+
+def test_photo_follow_up_after_completion_is_answered_without_farewell():
+    result = VisitState.from_messages(
+        [
+            ("user", "宅配便です"),
+            ("assistant", "玄関の前にお願いします"),
+            ("user", "そこに置きました"),
+            ("assistant", "荷物と置き場所の写真を撮ってください"),
+            ("user", "写真撮りました"),
+            ("assistant", "失礼いたします。"),
+            ("user", "写真はどうしたらいいの"),
+        ]
+    )
+    assert result.deterministic_reply == "写真はこのインターホンには送れないため、お手元に保管してください。ありがとうございます。"
+
+
+def test_delivery_box_question_follows_house_rules_and_does_not_echo_asr_error():
+    result = VisitState.from_messages(
+        [
+            ("user", "宅配便です"),
+            ("assistant", "玄関の前にお願いします"),
+            ("user", "この荷物大きいので高いボックスを使ってもいいですか"),
+        ],
+        "宅配ボックスを優先し、入らない場合は玄関前に置いてください。",
+    )
+    assert result.deterministic_reply == "宅配ボックスに入る大きさでしたら、そちらをご利用ください。入らない場合は玄関前にお願いします。"

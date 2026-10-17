@@ -26,6 +26,7 @@ _PLACEMENT_QUESTION = re.compile(
 )
 _WILL_PLACE = re.compile(r"(?:置いていきます|置いておきます|置かせていただきます|置いていっても)")
 _DELIVERY_ACK = re.compile(r"^(?:ありがとうございます|ありがとうございました|ありがとう|どうも|お願いします|よろしくお願いします)+$")
+_PHOTO_QUESTION = re.compile(r"(?:写真|画像).{0,20}(?:どう|どこ|何|なに|送|渡|すれば|したら|いい|よい|良い)")
 
 
 @dataclass(slots=True)
@@ -39,23 +40,33 @@ class VisitState:
     asked_purpose: bool = False
     asked_delivery_placement: bool = False
     requested_delivery_location: str | None = None
+    house_rules: str = ""
     visitor_will_place: bool = False
+    photo_requested: bool = False
     latest_user_text: str = ""
 
     @classmethod
-    def from_messages(cls, messages: list[tuple[str, str]]) -> "VisitState":
-        state = cls()
+    def from_messages(cls, messages: list[tuple[str, str]], house_rules: str = "") -> "VisitState":
+        state = cls(house_rules=house_rules)
+        if re.search(r"宅配ボックス.{0,12}(?:優先|入れて|入れ)|(?:優先|入れて|入れ).{0,12}宅配ボックス", house_rules):
+            state.requested_delivery_location = "宅配ボックス"
+        elif re.search(r"玄関(?:の)?前", house_rules):
+            state.requested_delivery_location = "玄関の前"
         for role, text in messages:
             if role == "assistant":
                 if re.search(r"用件.*(?:伺|聞|教|何)|どのような.*用", text):
                     state.asked_purpose = True
                 if re.search(r"失礼(?:いた)?します|さようなら|お気をつけて", text):
                     state.closing_said = True
+                if re.search(r"写真.*(?:撮|お願|ください)", text):
+                    state.photo_requested = True
                 if re.search(r"玄関(?:の)?前|置いていただけ|宅配ボックス|不在票", text):
                     state.asked_delivery_placement = True
-                if re.search(r"玄関(?:の)?前", text):
+                if not state.requested_delivery_location and re.search(r"宅配ボックス.{0,10}(?:優先|入れて|入れ)|(?:優先|入れて|入れ).{0,10}宅配ボックス", text):
+                    state.requested_delivery_location = "宅配ボックス"
+                elif not state.requested_delivery_location and re.search(r"玄関(?:の)?前", text):
                     state.requested_delivery_location = "玄関の前"
-                elif "宅配ボックス" in text:
+                elif not state.requested_delivery_location and "宅配ボックス" in text:
                     state.requested_delivery_location = "宅配ボックス"
                 continue
             if role != "user":
@@ -100,7 +111,9 @@ class VisitState:
             if state.delivery_allowed:
                 if _WILL_PLACE.search(value):
                     state.visitor_will_place = True
-                if re.search(r"(?:置|入れ)(?:きました|き終わりました|いた|ました)|設置しました", value):
+                if re.search(r"(?:置|入れ)(?:きました|き終わりました|いた|ました)|設置しました", value) or (
+                    state.asked_delivery_placement and re.search(r"起きました", value)
+                ):
                     state.placed = True
                 if re.search(r"写真.*(?:撮りました|撮った|撮影しました|撮影済み)", value):
                     state.photographed = True
@@ -143,7 +156,22 @@ class VisitState:
         """Return a direct, short response for delivery placement turns."""
         value = _compact(self.latest_user_text)
         location = self.requested_delivery_location
-        if not self.delivery_allowed or not location:
+        if not self.delivery_allowed:
+            return None
+        asks_photo_follow_up = bool(_PHOTO_QUESTION.search(value)) or bool(
+            re.search(r"(?:どう|どこ|何|なに|送|渡|すれば|したら|いい|よい|良い)", value)
+        )
+        if self.photographed and (self.photo_requested or "写真" in value) and asks_photo_follow_up:
+            return "写真はこのインターホンには送れないため、お手元に保管してください。ありがとうございます。"
+        mentions_box = bool(re.search(r"宅配ボックス|高いボックス", value))
+        box_question_or_correction = bool(re.search(r"(?:大き|入ら|入る|使|いい|よい|良い)|違う|ちがう", value))
+        if mentions_box and self.asked_delivery_placement and box_question_or_correction:
+            if re.search(r"宅配ボックス.{0,12}(?:優先|入れて|入れ)|(?:優先|入れて|入れ).{0,12}宅配ボックス", self.house_rules):
+                return "宅配ボックスに入る大きさでしたら、そちらをご利用ください。入らない場合は玄関前にお願いします。"
+            if location:
+                action = "入れて" if location == "宅配ボックス" else "置いて"
+                return f"恐れ入りますが、{location}に{action}いただけますか。"
+        if not location:
             return None
         action = "入れて" if location == "宅配ボックス" else "置いて"
         if _PLACEMENT_QUESTION.search(value):
