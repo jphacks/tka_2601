@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "MONBAN",
+    "slug": "jphacks2026",
+    "owner": "atsushihosaka",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.atsushihosaka.monban",
+      "buildNumber": "1",
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "CFBundleDevelopmentRegion": "ja",
+        "CFBundleLocalizations": [
+          "ja"
+        ]
+      },
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundColor": "#04346D"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.jphacks.tka2601"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-web-browser",
+      "expo-apple-authentication",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "家族の招待の QR コードを読み取るためにカメラを使います。"
+        }
+      ],
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#04346D"
+        }
+      ]
+    ],
+    "scheme": "tka2601",
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "886e1515-9588-4282-89bd-86ead13f3da5"
+      }
+    }
+  }
+}
