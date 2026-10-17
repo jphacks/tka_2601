@@ -156,3 +156,11 @@ __pycache__/
 # Ninja build cache
 .ninja_log
 .ninja_deps
+
+# Additional local workspace exclusions
+/mtb_shared/
+.DS_Store
+*.log
+# Local network credentials and compiled firmware must not be committed.
+**/wifi_config.h
+**/__pycache__/
