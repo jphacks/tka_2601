@@ -3,7 +3,10 @@ const ui = {
   overall: $("overall"), overallText: $("overall").querySelector("span"),
   callState: $("call-state"), notice: $("notice"), messages: $("messages"), empty: $("empty"),
   connect: $("connect"), disconnect: $("disconnect"), rules: $("house-rules"), authenticate: $("authenticate"),
-  remoteAudio: $("remote-audio"),
+  remoteAudio: $("remote-audio"), testPanel: $("test-panel"), houseRulesPanel: $("house-rules-panel"),
+  mode: $("test-mode"), awayLeaveAtDoor: $("away-leave-at-door"), extraInstructions: $("extra-instructions"),
+  rulesPreview: $("rules-preview"), historyTest: $("history-test"), saveTestHistory: $("save-test-history"),
+  deviceKey: $("test-device-key"),
 };
 
 let livekit = null;
@@ -12,6 +15,7 @@ let microphone = null;
 let apiKey = "";
 let transcriptEntries = new Map();
 let messageNodes = new Map();
+let testVisit = null;
 
 function setNotice(message, error = false) {
   ui.notice.textContent = message;
@@ -34,10 +38,47 @@ async function refreshStatus() {
     if (!response.ok) throw new Error(`状態確認に失敗しました (${response.status})`);
     const data = await response.json();
     setOverall(Boolean(data.ready));
+    configureTestPanel(data);
   } catch (error) {
     setOverall(false);
     setNotice(error.message || "サービス状態を確認できません。", true);
   }
+}
+
+function configureTestPanel(status) {
+  const enabled = Boolean(status.test_environment);
+  ui.testPanel.hidden = !enabled;
+  ui.houseRulesPanel.hidden = enabled;
+  ui.historyTest.hidden = !(enabled && status.history_write_available);
+  if (enabled) previewTestRules();
+}
+
+function testSettings() {
+  return {
+    mode: ui.mode.value,
+    away_leave_at_door: ui.awayLeaveAtDoor.checked,
+    extra_instructions: ui.extraInstructions.value,
+  };
+}
+
+let previewTimer = null;
+function previewTestRules() {
+  if (!apiKey || ui.testPanel.hidden) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    try {
+      const response = await apiFetch("/api/test/rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(testSettings()),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "ルールを確認できません。");
+      ui.rulesPreview.textContent = data.house_rules;
+    } catch (error) {
+      ui.rulesPreview.textContent = error.message || "ルールを確認できません。";
+    }
+  }, 180);
 }
 
 function apiFetch(url, options = {}) {
@@ -48,6 +89,8 @@ function apiFetch(url, options = {}) {
       apiKey = "";
       $("auth-form").hidden = false;
       ui.connect.disabled = true;
+      ui.testPanel.hidden = true;
+      ui.houseRulesPanel.hidden = false;
     }
     return response;
   });
@@ -69,6 +112,7 @@ $("auth-form").addEventListener("submit", async (event) => {
     ui.connect.disabled = false;
     const data = await response.json();
     setOverall(Boolean(data.ready));
+    configureTestPanel(data);
     setNotice(data.ready ? "認証しました。通話を開始できます。" : "認証しました。一部サービスが停止中です。", !data.ready);
   } catch (error) {
     apiKey = "";
@@ -99,7 +143,11 @@ function showTranscript(update) {
   }
   if (!update.text.trim()) return;
 
-  const entry = { ...previous, ...update };
+  const entry = {
+    ...previous,
+    ...update,
+    spokenAt: update.isFinal ? previous?.spokenAt || new Date().toISOString() : previous?.spokenAt,
+  };
   transcriptEntries.set(update.key, entry);
   let message = messageNodes.get(update.key);
   if (!message) {
@@ -143,6 +191,9 @@ async function endCall() {
     microphone?.stop();
     microphone = null;
     if (room) await room.disconnect();
+    if (testVisit?.answered_at && ui.saveTestHistory.checked) {
+      await saveTestVisit();
+    }
   } finally {
     room = null;
     ui.remoteAudio.replaceChildren();
@@ -150,28 +201,85 @@ async function endCall() {
     ui.connect.disabled = false;
     ui.disconnect.disabled = true;
     ui.rules.disabled = false;
+    for (const field of [ui.mode, ui.awayLeaveAtDoor, ui.extraInstructions]) field.disabled = false;
+    ui.saveTestHistory.disabled = false;
+    ui.deviceKey.disabled = !ui.saveTestHistory.checked;
+    ui.deviceKey.value = "";
+    testVisit = null;
+  }
+}
+
+async function saveTestVisit() {
+  const messages = [...transcriptEntries.values()]
+    .filter((entry) => entry.isFinal && entry.text.trim() && entry.spokenAt)
+    .map((entry) => ({
+      speaker: entry.visitor ? "visitor" : "ai",
+      text: entry.text.trim(),
+      spoken_at: entry.spokenAt,
+    }));
+  try {
+    const response = await apiFetch("/api/test/visits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...testVisit,
+        device_key: ui.deviceKey.value.trim(),
+        messages,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || "履歴を保存できませんでした。");
+    setNotice("会話履歴をSupabaseに保存しました。");
+  } catch (error) {
+    setNotice(error.message || "履歴を保存できませんでした。", true);
   }
 }
 
 ui.connect.addEventListener("click", async () => {
   ui.connect.disabled = true;
   ui.rules.disabled = true;
+  ui.saveTestHistory.disabled = true;
+  for (const field of [ui.mode, ui.awayLeaveAtDoor, ui.extraInstructions]) field.disabled = true;
   resetConversation();
+  testVisit = ui.testPanel.hidden ? null : {
+    visit_id: crypto.randomUUID(),
+    mode: ui.mode.value,
+    chimed_at: new Date().toISOString(),
+    answered_at: null,
+  };
+  if (ui.saveTestHistory.checked && !ui.deviceKey.value.trim()) {
+    setNotice("履歴保存を選んだ場合はテスト用デバイス鍵を入力してください。", true);
+    ui.connect.disabled = false;
+    ui.rules.disabled = false;
+    ui.saveTestHistory.disabled = false;
+    for (const field of [ui.mode, ui.awayLeaveAtDoor, ui.extraInstructions]) field.disabled = false;
+    testVisit = null;
+    return;
+  }
   setNotice("接続しています…");
   try {
     if (!livekit) livekit = await import("https://esm.sh/livekit-client@2");
     const { Room, RoomEvent, Track, createLocalAudioTrack } = livekit;
+    const payload = ui.testPanel.hidden
+      ? { house_rules: ui.rules.value }
+      : testSettings();
     const response = await apiFetch("/api/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ house_rules: ui.rules.value }),
+      body: JSON.stringify(payload),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `接続情報を取得できません (${response.status})`);
     }
     const config = await response.json();
-    if (!config.url.startsWith("wss://")) throw new Error("LiveKitの接続先がWSSではありません。");
+    const livekitUrl = new URL(config.url);
+    const localDevelopmentSocket = !ui.testPanel.hidden
+      && livekitUrl.protocol === "ws:"
+      && ["localhost", "127.0.0.1", "::1"].includes(livekitUrl.hostname);
+    if (livekitUrl.protocol !== "wss:" && !localDevelopmentSocket) {
+      throw new Error("LiveKitの接続先がWSSではありません。");
+    }
 
     room = new Room({ adaptiveStream: true, dynacast: true });
     const candidate = room;
@@ -230,6 +338,7 @@ ui.connect.addEventListener("click", async () => {
       autoGainControl: true,
     });
     await room.localParticipant.publishTrack(microphone);
+    if (testVisit) testVisit.answered_at = new Date().toISOString();
     ui.disconnect.disabled = false;
   } catch (error) {
     await endCall();
@@ -240,4 +349,11 @@ ui.connect.addEventListener("click", async () => {
 });
 
 ui.disconnect.addEventListener("click", endCall);
+for (const field of [ui.mode, ui.awayLeaveAtDoor, ui.extraInstructions]) {
+  field.addEventListener("input", previewTestRules);
+  field.addEventListener("change", previewTestRules);
+}
+ui.saveTestHistory.addEventListener("change", () => {
+  ui.deviceKey.disabled = !ui.saveTestHistory.checked;
+});
 refreshStatus();

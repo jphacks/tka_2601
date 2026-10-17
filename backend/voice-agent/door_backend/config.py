@@ -129,6 +129,7 @@ class Settings:
     relay_max_session_seconds: float = _positive_float("DOOR_RELAY_MAX_SESSION_SECONDS", 120.0)
     supabase_url: str = os.getenv("DOOR_SUPABASE_URL", "").rstrip("/")
     house_settings_timeout_seconds: float = _positive_float("DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS", 1.5)
+    visit_write_timeout_seconds: float = _positive_float("DOOR_VISIT_WRITE_TIMEOUT_SECONDS", 3.0)
 
 
 settings = Settings()

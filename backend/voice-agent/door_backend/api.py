@@ -9,8 +9,10 @@ import secrets
 import time
 import wave
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 import aiohttp
 from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -23,6 +25,8 @@ from pydantic import BaseModel, Field
 
 from . import relay, warmup
 from .config import settings
+from .house_rules import HouseSettings, Mode, build_house_rules
+from .supabase_history import write_visit
 
 logger = logging.getLogger("door-api")
 AGENT_NAME = settings.livekit_agent_name
@@ -251,7 +255,7 @@ async def protect_api(request: Request, call_next):
 async def root(request: Request) -> Response:
     if settings.environment == "production" and request.url.scheme != "https":
         return Response("HTTPS is required", status_code=400)
-    if (request.url.hostname or "").lower() == settings.ui_hostname:
+    if settings.environment == "development" or (request.url.hostname or "").lower() == settings.ui_hostname:
         return FileResponse(WEB_UI_DIR / "index.html", headers={"Cache-Control": "no-store"})
     if settings.environment == "production":
         raise HTTPException(status_code=404)
@@ -260,12 +264,30 @@ async def root(request: Request) -> Response:
 
 class ConnectRequest(BaseModel):
     house_rules: str | None = Field(default=None, max_length=settings.max_house_rules_chars)
+    mode: Mode | None = None
+    away_leave_at_door: bool = False
+    extra_instructions: str = Field(default="", max_length=350)
 
 
 class ConnectResponse(BaseModel):
     url: str
     token: str
     room: str
+
+
+class TestVisitMessage(BaseModel):
+    speaker: Literal["visitor", "ai"]
+    text: str = Field(min_length=1, max_length=2000)
+    spoken_at: datetime
+
+
+class TestVisitRequest(BaseModel):
+    visit_id: UUID
+    device_key: str = Field(min_length=1, max_length=512, pattern=r"^[\x21-\x7e]+$")
+    mode: Mode
+    chimed_at: datetime
+    answered_at: datetime
+    messages: list[TestVisitMessage] = Field(max_length=100)
 
 
 async def _model_available(
@@ -346,14 +368,72 @@ async def status() -> dict:
         "tts": {"model": settings.tts_model, "voice": settings.tts_voice, "ready": tts_ready},
         "llm": {"model": settings.llm_model, "ready": llm_ready},
     }
-    return {**components, "ready": all(item["ready"] for item in components.values())}
+    return {
+        **components,
+        "ready": all(item["ready"] for item in components.values()),
+        "test_environment": settings.environment == "development",
+        "history_write_available": settings.environment == "development" and bool(settings.supabase_url),
+    }
+
+
+@app.post("/api/test/rules")
+async def test_rules(body: ConnectRequest) -> dict[str, str]:
+    """Preview the server-generated mode rules for the development test UI."""
+    if settings.environment != "development":
+        raise HTTPException(status_code=404, detail="テスト設定は開発環境だけで使えます。")
+    if body.mode is None:
+        raise HTTPException(status_code=422, detail="modeを指定してください。")
+    rules = build_house_rules(
+        body.mode,
+        HouseSettings(
+            away_leave_at_door=body.away_leave_at_door,
+            extra_instructions=body.extra_instructions,
+        ),
+        settings.max_house_rules_chars,
+    )
+    return {"mode": body.mode, "house_rules": rules}
+
+
+@app.post("/api/test/visits")
+async def test_save_visit(body: TestVisitRequest) -> dict[str, bool]:
+    """Optionally save an explicitly selected development UI call to Supabase."""
+    if settings.environment != "development":
+        raise HTTPException(status_code=404, detail="テスト履歴保存は開発環境だけで使えます。")
+    if not settings.supabase_url:
+        raise HTTPException(status_code=503, detail="DOOR_SUPABASE_URLが設定されていません。")
+    result = await write_visit(
+        settings,
+        body.device_key,
+        body.visit_id,
+        body.mode,
+        chimed_at=body.chimed_at.isoformat(),
+        answered_at=body.answered_at.isoformat(),
+        utterances=[message.model_dump(mode="json") for message in body.messages],
+        end_code=None,
+        end_json=None,
+    )
+    if result is None:
+        raise HTTPException(status_code=502, detail="Supabaseへのテスト履歴保存に失敗しました。")
+    return {"saved": True}
 
 
 @app.post("/api/connect", response_model=ConnectResponse)
 async def connect(body: ConnectRequest | None = None) -> ConnectResponse:
     room = f"door-{secrets.token_hex(5)}"
     identity = f"visitor-{secrets.token_hex(4)}"
-    house_rules = body.house_rules.strip() if body and body.house_rules is not None else settings.house_rules
+    if body and body.mode is not None:
+        if settings.environment != "development":
+            raise HTTPException(status_code=404, detail="テスト設定は開発環境だけで使えます。")
+        house_rules = build_house_rules(
+            body.mode,
+            HouseSettings(
+                away_leave_at_door=body.away_leave_at_door,
+                extra_instructions=body.extra_instructions,
+            ),
+            settings.max_house_rules_chars,
+        )
+    else:
+        house_rules = body.house_rules.strip() if body and body.house_rules is not None else settings.house_rules
     if len(house_rules) > settings.max_house_rules_chars:
         raise HTTPException(status_code=422, detail="住人ルールが長すぎます。")
 

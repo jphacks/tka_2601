@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import secrets
+from datetime import UTC, datetime
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol
 from uuid import UUID
@@ -23,6 +24,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from .config import settings
 from .house_rules import HouseSettings, Mode, build_house_rules
+from .supabase_history import write_visit
 
 logger = logging.getLogger("door-relay")
 
@@ -74,6 +76,7 @@ class LiveKitLink:
 
     def __init__(self, outbox: asyncio.Queue[Outbound]) -> None:
         self._outbox = outbox
+        self.utterances: list[dict[str, str]] = []
         self._room = rtc.Room()
         self._source = rtc.AudioSource(SAMPLE_RATE, 1)
         self._track_sid: str | None = None
@@ -165,6 +168,13 @@ class LiveKitLink:
             return
         if text:
             speaker = "visitor" if visitor else "ai"
+            utterance = {
+                "speaker": speaker,
+                "text": text,
+                "spoken_at": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            }
+            if hasattr(self, "utterances"):
+                self.utterances.append(utterance)
             self._outbox.put_nowait(("json", {"type": "transcript", "speaker": speaker, "text": text}))
 
     def _discard_stream(self, reader: rtc.ByteStreamReader, _participant_identity: str) -> None:
@@ -334,8 +344,12 @@ async def serve(websocket: WebSocket, dispatch: Dispatch) -> None:
     link: AgentLink | None = None
     room = f"door-{secrets.token_hex(5)}"
     house_task: asyncio.Task | None = None
+    started_at: str | None = None
+    answered_at: str | None = None
+    end_code: str | None = None
     try:
         start = await _receive_start(websocket)
+        started_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         logger.info("relay start visit=%s mode=%s room=%s", start.visit_id, start.mode, room)
         outbox: asyncio.Queue[Outbound] = asyncio.Queue()
         # Read the settings while joining the room; the agent is dispatched once both are done.
@@ -350,16 +364,29 @@ async def serve(websocket: WebSocket, dispatch: Dispatch) -> None:
                 "agent_unavailable", "音声エージェントを開始できません。", CLOSE_SERVER_ERROR
             ) from exc
         await websocket.send_json({"type": "ready"})
+        answered_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         await _converse(websocket, link, outbox)
     except RelayError as error:
+        end_code = error.code
         logger.info("relay error code=%s room=%s", error.code, room)
         await _send_error(websocket, error)
     except WebSocketDisconnect:
+        end_code = "disconnected"
         pass
     finally:
         if house_task is not None and not house_task.done():
             house_task.cancel()
         if link is not None:
+            if started_at is not None and answered_at is not None:
+                try:
+                    await write_visit(
+                        settings, start.device_key, start.visit_id, start.mode,
+                        chimed_at=started_at, answered_at=answered_at,
+                        utterances=getattr(link, "utterances", []),
+                        end_code=end_code, end_json=None,
+                    )
+                except Exception as exc:
+                    logger.warning("visit history write failed: %s", type(exc).__name__)
             await link.aclose()
             await delete_room(room)
         logger.info("relay closed room=%s", room)

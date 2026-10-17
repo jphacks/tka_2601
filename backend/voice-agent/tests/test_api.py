@@ -2,9 +2,12 @@ import asyncio
 import io
 import os
 import wave
+from dataclasses import replace
+from datetime import UTC, datetime
 from dataclasses import asdict
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 TEST_API_KEY = "a" * 64
@@ -33,6 +36,20 @@ def test_status_reports_individual_service_readiness(monkeypatch):
     assert result["llm"]["ready"]
     assert not result["livekit"]["ready"]
     assert not result["ready"]
+    assert result["test_environment"] == (api.settings.environment == "development")
+
+
+def test_local_root_serves_the_web_ui_in_development(monkeypatch):
+    monkeypatch.setattr(api, "settings", replace(api.settings, environment="development"))
+    with TestClient(api.app) as client:
+        response = client.get("/")
+        script = client.get("/assets/app.js")
+        stylesheet = client.get("/assets/app.css")
+    assert response.status_code == 200
+    assert 'id="test-panel"' in response.text
+    assert script.status_code == stylesheet.status_code == 200
+    assert "/api/test/rules" in script.text
+    assert "history-test" in stylesheet.text
 
 
 def test_connect_returns_503_when_dispatch_fails(monkeypatch):
@@ -47,6 +64,101 @@ def test_connect_returns_503_when_dispatch_fails(monkeypatch):
             headers=auth_headers(),
         )
     assert response.status_code == 503
+
+
+def test_development_rules_preview_applies_selected_mode_and_settings(monkeypatch):
+    monkeypatch.setattr(api, "settings", replace(api.settings, environment="development"))
+    result = asyncio.run(
+        api.test_rules(
+            api.ConnectRequest(
+                mode="away",
+                away_leave_at_door=True,
+                extra_instructions="犬がいるので、ドアから離れてください。",
+            )
+        )
+    )
+    assert result["mode"] == "away"
+    assert "置き配の指定があればその場所に置き" in result["house_rules"]
+    assert "犬がいるので、ドアから離れてください。" in result["house_rules"]
+
+
+def test_connect_dispatches_mode_specific_rules_in_development(monkeypatch):
+    monkeypatch.setattr(api, "settings", replace(api.settings, environment="development"))
+    dispatched = {}
+
+    async def dispatch(room, rules):
+        dispatched.update(room=room, rules=rules)
+
+    monkeypatch.setattr(api, "_dispatch_agent", dispatch)
+    response = asyncio.run(
+        api.connect(
+            api.ConnectRequest(
+                mode="away",
+                away_leave_at_door=False,
+                extra_instructions="呼び鈴を鳴らしたら少し待ってください。",
+            )
+        )
+    )
+    assert response.room == dispatched["room"]
+    assert "不在票を入れるよう頼む" in dispatched["rules"]
+    assert "呼び鈴を鳴らしたら少し待ってください。" in dispatched["rules"]
+
+
+def test_development_rules_preview_is_disabled_in_production(monkeypatch):
+    monkeypatch.setattr(api, "settings", replace(api.settings, environment="production"))
+    with pytest.raises(api.HTTPException) as error:
+        asyncio.run(api.test_rules(api.ConnectRequest(mode="normal")))
+    assert error.value.status_code == 404
+
+
+def test_development_visit_save_passes_test_device_key_and_transcript(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "settings",
+        replace(api.settings, environment="development", supabase_url="https://example.supabase.co"),
+    )
+    written = {}
+
+    async def save(settings, device_key, visit_id, mode, **kwargs):
+        written.update(device_key=device_key, visit_id=visit_id, mode=mode, kwargs=kwargs)
+        return {"applied": True}
+
+    monkeypatch.setattr(api, "write_visit", save)
+    body = api.TestVisitRequest(
+        visit_id="6d761ee0-b454-4d25-bc6c-60672dd1fa37",
+        device_key="test-device-key",
+        mode="away",
+        chimed_at=datetime(2026, 10, 17, tzinfo=UTC),
+        answered_at=datetime(2026, 10, 17, 0, 0, 1, tzinfo=UTC),
+        messages=[
+            api.TestVisitMessage(
+                speaker="visitor", text="荷物です。", spoken_at=datetime(2026, 10, 17, 0, 0, 2, tzinfo=UTC)
+            )
+        ],
+    )
+    response = asyncio.run(api.test_save_visit(body))
+
+    assert response == {"saved": True}
+    assert written["device_key"] == "test-device-key"
+    assert written["mode"] == "away"
+    assert written["kwargs"]["utterances"][0]["text"] == "荷物です。"
+
+
+def test_development_visit_save_is_disabled_in_production(monkeypatch):
+    monkeypatch.setattr(
+        api, "settings", replace(api.settings, environment="production", supabase_url="https://example.supabase.co")
+    )
+    body = api.TestVisitRequest(
+        visit_id="6d761ee0-b454-4d25-bc6c-60672dd1fa37",
+        device_key="test-device-key",
+        mode="normal",
+        chimed_at=datetime(2026, 10, 17, tzinfo=UTC),
+        answered_at=datetime(2026, 10, 17, 0, 0, 1, tzinfo=UTC),
+        messages=[],
+    )
+    with pytest.raises(api.HTTPException) as error:
+        asyncio.run(api.test_save_visit(body))
+    assert error.value.status_code == 404
 
 
 def test_tts_preview_is_playable_wav(monkeypatch):
