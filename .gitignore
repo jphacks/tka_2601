@@ -164,3 +164,11 @@ __pycache__/
 # Local network credentials and compiled firmware must not be committed.
 **/wifi_config.h
 **/__pycache__/
+
+# Voice agent backend local files
+voice-agent-backend/.env*
+!voice-agent-backend/.env.example
+voice-agent-backend/.venv/
+voice-agent-backend/__pycache__/
+voice-agent-backend/.pytest_cache/
+voice-agent-backend/.ruff_cache/
