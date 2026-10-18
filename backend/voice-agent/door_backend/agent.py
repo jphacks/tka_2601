@@ -97,14 +97,13 @@ class DoorAgent(Agent):
 
 
 def _stt():
-    kwargs = {"prompt": ASR_PROMPT} if settings.asr_model.startswith("Qwen") else {}
     return openai.STT(
         model=settings.asr_model,
         language="ja",
         base_url=f"{settings.asr_base_url}/v1",
         api_key="local",
         use_realtime=False,
-        **kwargs,
+        prompt=ASR_PROMPT,
     )
 
 

@@ -1,4 +1,6 @@
-/* KIT_PSE84_AI left XENSIV PDM microphone, PDM0 channel 2.
+/* KIT_PSE84_AI right XENSIV PDM microphone, PDM0 channel 3.
+ * The BSP routes P8.5 to PDM_CLK3 and P8.6 to PDM_DATA3. Activating only
+ * channel 2 leaves that microphone clock output inactive on this kit.
  * API/configuration references:
  * https://github.com/Infineon/mtb-example-psoc-edge-pdm-pcm
  * https://github.com/Infineon/TARGET_KIT_PSE84_AI
@@ -11,7 +13,7 @@
 #include "task.h"
 #include <string.h>
 
-#define MICROPHONE_CHANNEL 2u
+#define MICROPHONE_CHANNEL 3u
 #define FRAME_QUEUE_LENGTH 8u
 #define PDM_FIFO_CAPACITY 64u
 #define PDM_ERROR_MASK (CY_PDM_PCM_INTR_RX_FIR_OVERFLOW | \
@@ -31,7 +33,7 @@
 #endif
 
 static const cy_stc_sysint_t microphone_irq = {
-    .intrSrc = (IRQn_Type)CYBSP_PDM_CHANNEL_2_IRQ,
+    .intrSrc = (IRQn_Type)CYBSP_PDM_CHANNEL_3_IRQ,
     .intrPriority = E84_AUDIO_IRQ_PRIORITY,
 };
 static QueueHandle_t frame_queue;
@@ -100,7 +102,7 @@ cy_rslt_t e84_audio_capture_start(void)
     cy_en_pdm_pcm_status_t result = Cy_PDM_PCM_Init(PDM0, &CYBSP_PDM_config);
     if (result != CY_PDM_PCM_SUCCESS) return (cy_rslt_t)result;
     Cy_PDM_PCM_Channel_Enable(PDM0, MICROPHONE_CHANNEL);
-    result = Cy_PDM_PCM_Channel_Init(PDM0, &channel_2_config, MICROPHONE_CHANNEL);
+    result = Cy_PDM_PCM_Channel_Init(PDM0, &channel_3_config, MICROPHONE_CHANNEL);
     if (result != CY_PDM_PCM_SUCCESS) {
         Cy_PDM_PCM_Channel_Disable(PDM0, MICROPHONE_CHANNEL);
         return (cy_rslt_t)result;

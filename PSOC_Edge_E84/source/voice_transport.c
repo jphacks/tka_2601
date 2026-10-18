@@ -12,7 +12,15 @@
 void voice_transport_init(voice_transport_t *l)
 {
     memset(l,0,sizeof(*l)); l->socket=CY_SOCKET_INVALID_HANDLE;
+    l->relay.allow_legacy=VOICE_RELAY_PROTOCOL==1;
     mbedtls_entropy_init(&l->entropy); mbedtls_ctr_drbg_init(&l->random);
+}
+bool voice_transport_legacy(const voice_transport_t *l) { return l->websocket && l->relay.legacy; }
+static const char *device_key(void)
+{
+    // Same diagnostic fallback as the backend's psoc_sim.py. It cannot load
+    // resident settings or save history as a registered household device.
+    return DOOR_DEVICE_KEY[0] ? DOOR_DEVICE_KEY : "e84-diagnostic-unpaired";
 }
 void voice_transport_close(voice_transport_t *l)
 {
@@ -21,7 +29,13 @@ void voice_transport_close(voice_transport_t *l)
     voice_transport_init(l);
 }
 static bool option(voice_transport_t *l, int level, int name, const void *p, size_t n)
-{ return cy_socket_setsockopt(l->socket,level,name,p,(uint32_t)n)==CY_RSLT_SUCCESS; }
+{
+    cy_rslt_t result=cy_socket_setsockopt(l->socket,level,name,p,(uint32_t)n);
+    if (result!=CY_RSLT_SUCCESS)
+        printf("[VOICE] Socket option failed: level=%d option=%d result=0x%08lx.\n",
+            level,name,(unsigned long)result);
+    return result==CY_RSLT_SUCCESS;
+}
 static bool send_all(voice_transport_t *l, const uint8_t *p, size_t n)
 {
     TickType_t start=xTaskGetTickCount();
@@ -67,8 +81,12 @@ static bool connect_socket(voice_transport_t *l, const char *host, uint16_t port
         printf("[VOICE] %s connection failed: 0x%08lx\n",tls?"TLS":"M5",(unsigned long)result);
         return false;
     }
+    /* 20 ms audio frames must leave immediately rather than waiting for
+     * another segment or a delayed ACK (both links also carry control). */
+    uint8_t no_delay=1;
     timeout=1000;
-    return option(l,CY_SOCKET_SOL_SOCKET,CY_SOCKET_SO_SNDTIMEO,&timeout,sizeof(timeout));
+    return option(l,CY_SOCKET_SOL_TCP,CY_SOCKET_SO_TCP_NODELAY,&no_delay,sizeof(no_delay)) &&
+        option(l,CY_SOCKET_SOL_SOCKET,CY_SOCKET_SO_SNDTIMEO,&timeout,sizeof(timeout));
 }
 static bool poll_timeout(voice_transport_t *l)
 {
@@ -83,7 +101,7 @@ bool voice_transport_m5(voice_transport_t *l)
 }
 bool voice_transport_server(voice_transport_t *l)
 {
-    if (!voice_relay_settings_valid(DOOR_RELAY_MODE,DOOR_DEVICE_KEY)) {
+    if (!voice_relay_settings_valid(DOOR_RELAY_MODE,VOICE_RELAY_PROTOCOL==1?device_key():DOOR_DEVICE_KEY)) {
         printf("[VOICE] Relay settings missing/invalid: set DOOR_DEVICE_KEY and DOOR_RELAY_MODE in .env, run python3 configure_api.py, then rebuild/program.\n");
         return false;
     }
@@ -125,7 +143,7 @@ bool voice_transport_server(voice_transport_t *l)
     response[used]=0;
     if (!voice_ws_upgrade_valid(response,(char *)expected)) {
         /* Do not print arbitrary server content or echoed Authorization. */
-        printf("[VOICE] WebSocket upgrade rejected. Deploy /api/relay with protocol v2 and enable proxy Upgrade forwarding.\n");
+        printf("[VOICE] WebSocket upgrade rejected. Check /api/relay authentication and proxy Upgrade forwarding.\n");
         return false;
     }
     l->websocket=true;
@@ -157,9 +175,10 @@ bool voice_transport_send(voice_transport_t *l, const voice_header_t *h, const v
                 random[8],random[9],random[10],random[11],random[12],random[13],random[14],random[15]);
         }
         size_t length; uint8_t opcode;
-        if (!voice_relay_encode(&l->relay,h,payload,uuid,DOOR_RELAY_MODE,DOOR_DEVICE_KEY,
+        if (!voice_relay_encode(&l->relay,h,payload,uuid,DOOR_RELAY_MODE,
+                l->relay.allow_legacy?device_key():DOOR_DEVICE_KEY,
                 wire,sizeof(wire),&length,&opcode)) return false;
-        bool sent=websocket_send(l,opcode,wire,length);
+        bool sent=!length || websocket_send(l,opcode,wire,length);
         memset(wire,0,sizeof(wire)); /* start contains the private device key */
         return sent;
     }
@@ -191,8 +210,27 @@ int voice_transport_poll(voice_transport_t *l, voice_packet_t *p)
         }
         return unpack(l,p);
     }
+    l->relay.clock_ms=(uint32_t)((uint64_t)xTaskGetTickCount()*1000u/pdMS_TO_TICKS(1000));
+    int pending=voice_relay_pending(&l->relay,l->relay.clock_ms,&p->header,p->payload);
+    if (pending) return pending;
+    // The existing relay feeds a live audio track, so silence must keep time
+    // while the local VAD waits and after a 30s cutoff. Without these frames,
+    // the server VAD cannot observe the end of a max-duration utterance.
+    if (l->relay.legacy && l->relay.call_started &&
+        (l->relay.input_active || l->relay.waiting_reply) &&
+        !l->relay.output_active && !l->relay.output_complete && !l->relay.speaking &&
+        l->relay.clock_ms-l->relay.last_input_ms>=20u) {
+        const uint8_t silence[640]={0};
+        if (!websocket_send(l,2,silence,sizeof(silence))) return -1;
+        l->relay.last_input_ms=l->relay.clock_ms;
+    }
     if (l->header_used<2) {
-        int r=receive(l,l->frame_header,2,&l->header_used); if (r<=0) return r;
+        int r=receive(l,l->frame_header,2,&l->header_used);
+        if (r<=0) {
+            if (!r && !l->header_used && !l->fragmented)
+                return voice_relay_pending(&l->relay,l->relay.clock_ms,&p->header,p->payload);
+            return r;
+        }
     }
     if ((l->frame_header[1]&127)==126 && l->header_used<4) {
         int r=receive(l,l->frame_header,4,&l->header_used); if (r<=0) return r;
@@ -213,6 +251,6 @@ int voice_transport_poll(voice_transport_t *l, voice_packet_t *p)
     if (!l->final) return 0;
     int result=voice_relay_decode(&l->relay,l->message_opcode,l->message,l->message_used,&p->header,p->payload);
     l->message_used=0;
-    if (result<0) printf("[VOICE] Invalid/incompatible relay message; /api/relay protocol_version 2 is required.\n");
+    if (result<0) printf("[VOICE] Invalid/incompatible /api/relay message.\n");
     return result;
 }

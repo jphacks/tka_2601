@@ -7,7 +7,7 @@ static unsigned checks;
 static TickType_t now;
 static uint8_t input[16384], output[16384];
 static size_t input_size, input_position, output_size, read_limit, write_limit;
-static bool timeout_with_bytes, eof, local;
+static bool timeout_with_bytes, eof, local, nodelay;
 static cy_rslt_t recv_error, send_error;
 static uint32_t io_delay;
 static unsigned deleted, options, random_calls;
@@ -19,6 +19,10 @@ cy_rslt_t cy_socket_setsockopt(cy_socket_t socket,int level,int name,const void 
 {
     check(socket==42 && value && length);
     if (level==CY_SOCKET_SOL_TLS) options |= 1u << name;
+    if (name==CY_SOCKET_SO_TCP_NODELAY) {
+        check(level==CY_SOCKET_SOL_TCP && length==sizeof(uint8_t) && *(const uint8_t *)value==1);
+        nodelay=true;
+    }
     return 0;
 }
 cy_rslt_t cy_socket_send(cy_socket_t socket,const void *data,uint32_t length,int flags,uint32_t *sent)
@@ -74,7 +78,7 @@ int mbedtls_sha1(const unsigned char *in,size_t n,unsigned char out[20])
 static void reset(voice_transport_t *link,bool websocket)
 {
     now=100; input_size=input_position=output_size=0;
-    read_limit=write_limit=16384; timeout_with_bytes=eof=false; local=true;
+    read_limit=write_limit=16384; timeout_with_bytes=eof=nodelay=false; local=true;
     recv_error=send_error=0; io_delay=1; deleted=options=random_calls=0; protocol=0;
     voice_transport_init(link); link->socket=42; link->websocket=websocket; link->progress=now;
 }
@@ -182,6 +186,7 @@ static void upgrade_and_connections(void)
     voice_transport_t link; voice_packet_t got;
     reset(&link,false); local=false; check(!voice_transport_m5(&link));
     reset(&link,false); check(voice_transport_m5(&link) && protocol==CY_SOCKET_IPPROTO_TCP);
+    check(nodelay);
     const char response[]="HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
       "Connection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
     reset(&link,false); append(response,strlen(response));
@@ -189,6 +194,7 @@ static void upgrade_and_connections(void)
     websocket(1,true,(const uint8_t *)ready,strlen(ready));
     timeout_with_bytes=true;
     check(voice_transport_server(&link));
+    check(nodelay);
     check(protocol==CY_SOCKET_IPPROTO_TLS && link.websocket && link.random_ready);
     check((options & (1u << CY_SOCKET_SO_TLS_AUTH_MODE))!=0);
     check((options & (1u << CY_SOCKET_SO_TRUSTED_ROOTCA_CERTIFICATE))!=0);
@@ -213,8 +219,26 @@ static void upgrade_and_connections(void)
     reset(&link,false); const char denied[]="HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
     append(denied,strlen(denied)); check(!voice_transport_server(&link));
 }
+static void legacy_silence_keeps_vad_clock(void)
+{
+    voice_transport_t link; voice_packet_t got;
+    reset(&link,true); io_delay=0;
+    link.relay=(voice_relay_t){.started=true,.ready=true,.legacy=true,.call_started=true,
+        .session=1,.input_active=true,.input_turn=1};
+    check(voice_transport_poll(&link,&got)==0 && output_size==648);
+    for(size_t i=0;i<640;++i) check((output[8+i]^output[4+i%4])==0);
+    now+=19; check(voice_transport_poll(&link,&got)==0 && output_size==648);
+    now+=1; check(voice_transport_poll(&link,&got)==0 && output_size==1296);
+    link.relay.output_active=true;
+    now+=20; check(voice_transport_poll(&link,&got)==0 && output_size==1296);
+    link.relay.output_active=false; link.relay.input_active=false; link.relay.waiting_reply=true;
+    check(voice_transport_poll(&link,&got)==0 && output_size==1944);
+    link.relay.speaking=true; now+=20;
+    check(voice_transport_poll(&link,&got)==0 && output_size==1944);
+}
 int main(void)
 {
     tcp_partial_reads(); ws_fragmentation_and_ping(); sends_are_bounded(); upgrade_and_connections();
+    legacy_silence_keeps_vad_clock();
     printf("E84 voice transport: %u checks passed\n",checks); return 0;
 }

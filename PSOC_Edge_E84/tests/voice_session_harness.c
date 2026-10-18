@@ -5,7 +5,7 @@
 
 static e84_shared_t mailbox;
 static TickType_t tick;
-static bool network_ready, server_connects, m5_connects, auto_ack, stop_on_start;
+static bool network_ready, server_connects, m5_connects, auto_ack, stop_on_start, server_opened;
 static uint8_t failed_send_type;
 static voice_packet_t server_in[8], m5_in[8];
 static unsigned server_used, server_read, m5_used, m5_read;
@@ -25,7 +25,10 @@ void vTaskDelay(TickType_t ticks)
 bool e84_network_voice_ready(void) { return network_ready; }
 bool m5_link_configured(void) { return true; }
 void voice_transport_init(voice_transport_t *link) { memset(link, 0, sizeof(*link)); }
-bool voice_transport_server(voice_transport_t *link) { assert(link == &call.server); link->websocket=true; return server_connects; }
+bool voice_transport_server(voice_transport_t *link) {
+    assert(link == &call.server && call.state == CONNECT_AGENT);
+    server_opened=true; link->websocket=true; return server_connects;
+}
 bool voice_transport_m5(voice_transport_t *link) { assert(link == &call.m5); return m5_connects; }
 void voice_transport_close(voice_transport_t *link) { (void)link; }
 bool voice_transport_send(voice_transport_t *link, const voice_header_t *header, const void *payload)
@@ -61,6 +64,7 @@ static void reset(void)
     tick = 1000u;
     network_ready = server_connects = m5_connects = auto_ack = true;
     stop_on_start = busy = start_requested = stop_requested = false;
+    server_opened=false;
     failed_send_type = 0u;
     server_used = server_read = m5_used = m5_read = sent_count = 0u;
     call.session = 123u;
@@ -252,6 +256,45 @@ static void test_stop_and_uncertain_shutdown(void)
     assert(count_sent(VOICE_CALL_START) == 0u);
     assert(mailbox.voice_call_ack == 0u && mailbox.voice_record_enabled == 0u);
 }
+static void test_legacy_early_vad_and_stale_input(void)
+{
+    prepare_capture();
+    call.server.websocket=call.server.legacy=true;
+    mailbox.voice_write_seq=3; mailbox.voice_read_seq=0;
+    // The deployed backend's VAD can reply while the endpoint is still
+    // capturing its longer 1.2 second silence boundary.
+    output_to_end(false);
+    assert(call.state==PLAYING && mailbox.voice_record_enabled==0);
+    assert(from_m5(VOICE_AUDIO_ACK,1,2));
+    assert(from_m5(VOICE_PLAYBACK_DONE,1,2));
+    assert(from_server(VOICE_LISTEN,2,0));
+    assert(begin_listen());
+    assert(mailbox.voice_read_seq==3 && mailbox.voice_record_enabled==1);
+    assert(call.state==LISTENING && call.turn==2);
+}
+static void test_agent_only_after_button_released(void)
+{
+    reset();
+    call.state=STARTING; call.turn=0;
+    assert(from_m5(VOICE_CALL_STARTED,0,0));
+    assert(call.state==CONNECT_AGENT && !server_opened && sent_count==0);
+
+    reset(); mailbox.voice_call_active=mailbox.voice_call_ack=0;
+    queue_ready();
+    m5_in[m5_used++]=packet(VOICE_CALL_STARTED,0,0);
+    m5_in[m5_used++]=packet(VOICE_CALL_ENDED,0,0);
+    server_connects=false;
+    assert(run_call(123));
+    assert(server_opened && count_sent(VOICE_CALL_START)==1);
+    assert(mailbox.voice_call_ack==0); // connection failure still ends the intercom
+
+    reset(); mailbox.voice_call_active=mailbox.voice_call_ack=0;
+    queue_ready();
+    m5_in[m5_used++]=packet(VOICE_ERROR,0,0);
+    m5_in[m5_used++]=packet(VOICE_CALL_ENDED,0,0);
+    assert(run_call(123));
+    assert(!server_opened); // failed/unfinished button action never starts agent
+}
 int main(void)
 {
     test_wait_for_actual_playback_done();
@@ -259,6 +302,8 @@ int main(void)
     test_no_reply_and_final_end();
     test_capture_end_boundary_and_failures();
     test_stop_and_uncertain_shutdown();
+    test_legacy_early_vad_and_stale_input();
+    test_agent_only_after_button_released();
     puts("PASS: CM33 playback gating, packet identity, final turn, capture errors and safe stop");
     return 0;
 }

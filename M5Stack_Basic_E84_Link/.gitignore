@@ -7,3 +7,7 @@ link_config.h
 servo_config.h
 .m5-config-*
 *.log
+calibration_ui/.runtime/
+
+# Local hardware verification snapshots
+tests/last-servo-verification.json

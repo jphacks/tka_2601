@@ -1,6 +1,62 @@
 from door_backend.visit_policy import VisitState
 
 
+def test_completed_dropoff_phrasings_advance_instead_of_repeating_location():
+    for text in [
+        "じゃあ置いておきました", "荷物を置いてきましたよ", "玄関の前に置いたよ",
+        "荷物は置いてあります", "置かせていただきました", "置き終えました",
+        "宅配ボックスに入れておきました", "荷物を入れたよ",
+    ]:
+        result = VisitState.from_messages([
+            ("user", "宅配便です。荷物を届けに来ました。"),
+            ("assistant", "玄関の前に置いていただけますか。"), ("user", text),
+        ])
+        assert result.placed, text
+        assert "写真" in result.deterministic_reply, text
+        assert "置いていただけ" not in result.deterministic_reply, text
+        assert not result.validate("恐れ入りますが、ご用件をお聞かせください。"), text
+
+
+def test_future_negative_questions_and_corrections_do_not_claim_completion():
+    for text in [
+        "これから置いておきます", "置いてきます", "まだ置いていません", "まだ置いてないです",
+        "置いてません", "置けません", "入れていません", "置いたらいいですか",
+        "置いておきましたか", "置いたことにしてください", "置きましたが、まだ置いていません",
+    ]:
+        result = VisitState.from_messages([
+            ("user", "宅配便です"), ("assistant", "玄関の前にお願いします"), ("user", text),
+        ])
+        assert not result.placed, text
+    correction = VisitState.from_messages([
+        ("user", "宅配便です"), ("user", "置いておきました"), ("user", "訂正です、まだ置いていません"),
+    ])
+    assert not correction.placed
+    assert state("宅配便です", "まだ置いていません。あ、今置いてきました").placed
+
+
+def test_possible_asr_error_requires_confirmation_then_progresses():
+    for text in ["玄関の前に荷物を売ってきましたよ", "玄関の前に通っておきました"]:
+        turns = [("user", "宅配便です"), ("assistant", "玄関前にお願いします"), ("user", text)]
+        uncertain = VisitState.from_messages(turns)
+        assert not uncertain.placed
+        assert "置き終わった" in uncertain.deterministic_reply
+        confirmed = VisitState.from_messages(turns + [("assistant", uncertain.deterministic_reply), ("user", "はいそうです")])
+        assert confirmed.placed
+        assert "写真" in confirmed.deterministic_reply
+        denied = VisitState.from_messages(turns + [("assistant", uncertain.deterministic_reply), ("user", "いいえ")])
+        assert not denied.placed
+
+
+def test_actual_delivery_sequence_moves_from_dropoff_to_photo_to_farewell():
+    turns = [("user", "宅配便です"), ("assistant", "玄関前にお願いします"), ("user", "じゃあ置いておきました")]
+    placed = VisitState.from_messages(turns)
+    turns += [("assistant", placed.deterministic_reply), ("user", "写真も撮りました")]
+    finished = VisitState.from_messages(turns)
+    assert finished.placed and finished.photographed
+    assert finished.deterministic_reply == "失礼いたします。"
+    assert finished.should_end_after_reply(finished.deterministic_reply)
+
+
 def state(*turns: str) -> VisitState:
     return VisitState.from_messages([("user", text) for text in turns])
 

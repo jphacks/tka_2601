@@ -22,6 +22,7 @@ typedef struct {
     uint32_t queued_count, dropped_clips;
     float last_score, last_rms;
     uint32_t heartbeat;
+    int32_t pcm_min, pcm_max; /* raw 20ms-frame extrema, independent of RMS/DC removal */
 
     /* Latest detection; CM33 relay polls separately from slow HTTPS work.
      * Writer sets event_guard odd before changing, even after publishing. */

@@ -240,6 +240,13 @@ static void process_frame(const e84_audio_frame_t *frame)
     shared->capture_errors = frame->errors;
     shared->capture_drops = frame->drops;
     shared->audio_status = 1u;
+    int32_t minimum=32767, maximum=-32768;
+    for (unsigned i=0; i<AUDIO_FRAME; ++i) {
+        int32_t value=frame->pcm[i];
+        if(value<minimum) minimum=value;
+        if(value>maximum) maximum=value;
+    }
+    shared->pcm_min=minimum; shared->pcm_max=maximum;
     if (gap) {
         reset_active_capture(true);
         ring_buffer.used = 0u;
