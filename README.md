@@ -88,3 +88,6 @@ NHKの集金を名乗る訪問者に応対する場面。
 # 技術スタック
 
 <!-- 技術スタック図をここに追加 -->
+
+<img width="741" height="417" alt="image" src="https://github.com/user-attachments/assets/302b0e18-ff96-4eab-9c55-f6bd7681c5fa" />
+
