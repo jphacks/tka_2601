@@ -1,6 +1,9 @@
 # MONBAN
 
-今あるインターホンに後付けする来客対応AI。
+今あるインターホンに後付けするAI自動対応デバイスです。
+
+<img width="1160" height="654" alt="image" src="https://github.com/user-attachments/assets/e1c3c289-fec1-4a8c-88f4-4864dab0afc5" />
+
 
 ## 製品概要
 
