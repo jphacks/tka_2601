@@ -77,9 +77,13 @@ class DeviceConversation:
                 await asyncio.wait_for(self.websocket.send_json(payload), 5)
 
     async def transcript(self, speaker: str, text: str) -> None:
-        # Device firmware does not need transcript text. Keep full text in visit
-        # history without exceeding its bounded WebSocket control-frame buffer.
         self.utterances.append({"speaker": speaker, "text": text, "spoken_at": now()})
+        # USB/Web UI logs use these events too. Retain full text in history,
+        # but bound each event for E84's fixed WebSocket control-frame buffer.
+        payload = {"type": "transcript", "speaker": speaker, "text": text[:120]}
+        while len(json.dumps(payload, ensure_ascii=True).encode("utf-8")) > 1024:
+            payload["text"] = payload["text"][:-1]
+        await self.send(payload)
 
     async def write_audio(self, pcm: bytes) -> None:
         if self.state != "processing" or self.output_ended or not pcm or len(pcm) % 2 or len(pcm) > 640:

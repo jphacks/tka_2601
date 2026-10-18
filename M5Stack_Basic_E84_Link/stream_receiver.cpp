@@ -1,5 +1,6 @@
 #include "stream_receiver.h"
 #include "stream_protocol.h"
+#include "servo_pwm.h"
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <lwip/sockets.h>
@@ -28,7 +29,7 @@
 
 namespace e84stream {
 namespace {
-constexpr uint32_t kDmaDrainMs = 30;
+constexpr uint32_t kDmaDrainMs = 60;
 constexpr uint32_t kPartialTimeoutMs = 5000;
 constexpr uint32_t kIdleTimeoutMs = 180000;
 constexpr uint32_t kOutputTimeoutMs = 15000;
@@ -45,7 +46,7 @@ bool listening = false, authenticated = false, clientPresent = false;
 bool speakerReady = false, primed = false, draining = false;
 size_t submitted = 0;
 uint32_t drainAt = 0, lastPacket = 0, lastOutput = 0, packetAt = 0, bindAt = 0;
-uint32_t lastPlaybackProgress = 0;
+uint32_t lastPlaybackProgress = 0, playedFrames = 0, creditedFrames = 0, outputAt = 0;
 uint8_t wire[kHeaderBytes + kMaxPayload];
 size_t received = 0;
 Header incoming;
@@ -56,7 +57,8 @@ uint32_t txAt = 0;
 enum class ServoPhase { Idle, Wait, Press, Return, Manual, Calibrating };
 ServoPhase servoPhase = ServoPhase::Idle;
 bool servoEnding = false, servoAttached = false;
-bool servoTesting = false, servoTestCancelled = false;
+bool servoTesting = false, servoTestCancelled = false, servoPreview = false;
+const char* motionError = "";
 bool callAttempted = false, endAttempted = false, failsafeEndPending = false;
 bool callActionRequested = false, cancelRequested = false;
 uint32_t servoAt = 0;
@@ -117,14 +119,15 @@ void loadCalibration() {
   prefs.end();
 }
 void calibrationReply(const char* error = nullptr) {
-  Serial.printf("[CAL] {\"ok\":%s,\"error\":\"%s\",\"active\":%s,\"call_rest\":%u,\"call_press\":%u,\"end_rest\":%u,\"end_press\":%u,\"call_delay_ms\":%u,\"call_hold_ms\":%u,\"end_hold_ms\":%u,\"return_ms\":%u,\"test_busy\":%s,\"test_target\":\"%s\",\"end_mirror_supported\":true,\"settings_source\":\"%s\",\"saved\":{\"call_rest\":%u,\"call_press\":%u,\"end_rest\":%u,\"end_press\":%u,\"call_delay_ms\":%u,\"call_hold_ms\":%u,\"end_hold_ms\":%u,\"return_ms\":%u},\"pwm_active\":%s,\"commanded_angle\":%d}\n",
+  Serial.printf("[CAL] {\"ok\":%s,\"error\":\"%s\",\"active\":%s,\"call_rest\":%u,\"call_press\":%u,\"end_rest\":%u,\"end_press\":%u,\"call_delay_ms\":%u,\"call_hold_ms\":%u,\"end_hold_ms\":%u,\"return_ms\":%u,\"test_busy\":%s,\"test_target\":\"%s\",\"end_mirror_supported\":true,\"settings_source\":\"%s\",\"saved\":{\"call_rest\":%u,\"call_press\":%u,\"end_rest\":%u,\"end_press\":%u,\"call_delay_ms\":%u,\"call_hold_ms\":%u,\"end_hold_ms\":%u,\"return_ms\":%u},\"pwm_active\":%s,\"commanded_angle\":%d,\"motion_busy\":%s,\"motion_error\":\"%s\",\"pwm_backend\":\"isolated-ledc\"}\n",
     error ? "false" : "true", error ? error : "", calibrating ? "true" : "false",
     angles.callRest, angles.callPress, angles.endRest, angles.endPress,
     angles.callDelayMs, angles.callPressMs, angles.endPressMs, angles.returnMs,
     servoTesting ? "true" : "false", servoTesting ? (servoEnding ? "e" : "c") : "", settingsSource(),
     savedAngles.callRest, savedAngles.callPress, savedAngles.endRest, savedAngles.endPress,
     savedAngles.callDelayMs, savedAngles.callPressMs, savedAngles.endPressMs, savedAngles.returnMs,
-    servoAttached ? "true" : "false", commandedAngle);
+    servoAttached ? "true" : "false", commandedAngle,
+    servoPhase != ServoPhase::Idle ? "true" : "false", motionError);
 }
 
 uint32_t servoDuty(unsigned angle) {
@@ -152,11 +155,11 @@ void logServoConfiguration() {
 bool prepareSpeaker() {
   if (speakerReady) return true;
   auto config = M5.Speaker.config();
-  config.sample_rate = 192000;
+  config.sample_rate = 48000; // 16 kHz speech: 3x resampling, less CPU pressure than 192 kHz.
   config.dma_buf_len = 256;
   config.dma_buf_count = 8;
   M5.Speaker.config(config);
-  M5.Speaker.setVolume(100);
+  M5.Speaker.setVolume(255);
   speakerReady = M5.Speaker.begin();
   return speakerReady;
 }
@@ -166,6 +169,17 @@ void stopAudio() {
   speakerReady = false;
   audio.clear(); submitted = 0; primed = draining = false;
 }
+void fail(const char* reason);
+void servoFailure(const char* reason) {
+  motionError = reason;
+  servoAttached = false; servoPhase = ServoPhase::Idle;
+  if (servoTesting || servoPreview) {
+    // A failed local motion must release the UI's busy state, without using
+    // old network-call flags to schedule another button operation.
+    servoTesting = servoPreview = false;
+    setStatus(reason);
+  } else fail(reason);
+}
 void neutralServo() {
   // Returning is idempotent: save/cancel/disconnect cannot rewrite the target
   // or restart its timer while the same return operation is already running.
@@ -173,7 +187,10 @@ void neutralServo() {
   if (servoAttached) {
     // Keep the return pulse active for the configured return interval even
     // after a socket disconnect, then detach in pollServo().
-    ledcWrite(activeServoPin, servoDuty(restAngle()));
+    if (!e84servo::write(activeServoPin, servoDuty(restAngle()))) {
+      e84servo::detach(activeServoPin);
+      servoFailure("servo_return_failed"); return;
+    }
     commandedAngle = restAngle();
     servoPhase = ServoPhase::Return; servoAt = millis();
     Serial.printf("[SERVO] %s returning to %u degrees for %u ms; at_ms=%lu\n",
@@ -183,8 +200,11 @@ void neutralServo() {
 void closeClient() {
   client.stop(); clientPresent = authenticated = false;
   received = txUsed = 0; headerReady = false;
-  stopAudio(); neutralServo();
-  if (callAttempted && !endAttempted) {
+  stopAudio();
+  // Socket cleanup does not own a USB preview/test. Old call flags must not
+  // return it early or schedule an unrelated END operation.
+  if (!servoTesting && !servoPreview) neutralServo();
+  if (!servoTesting && !servoPreview && callAttempted && !endAttempted) {
     if (M5_SERVO_ENABLED) failsafeEndPending = true;
     else if (M5_SERVO_MANUAL_TEST) setStatus("MANUAL: close intercom call yourself");
   }
@@ -197,7 +217,8 @@ bool flushTx() {
     txAt = millis();
     return true;
   }
-  return amount < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) &&
+  return amount < 0 && (errno == EAGAIN || errno == EWOULDBLOCK ||
+                        errno == ENOMEM || errno == ENOBUFS || errno == EINTR) &&
          !elapsed(millis(), txAt, kPartialTimeoutMs);
 }
 bool reply(Type type, uint32_t turn, uint32_t sequence = 0, const char* message = nullptr) {
@@ -211,6 +232,9 @@ bool reply(Type type, uint32_t turn, uint32_t sequence = 0, const char* message 
   return flushTx();
 }
 void fail(const char* reason) {
+  Serial.printf("[STREAM] Failure detail: received=%lu played=%lu queued=%u tx_pending=%u\n",
+    (unsigned long)session.frames(), (unsigned long)playedFrames,
+    (unsigned)audio.size(), (unsigned)txUsed);
   setStatus(reason);
   if (authenticated) reply(Type::Error, session.turn(), 0, reason);
   closeClient();
@@ -230,13 +254,13 @@ bool servoConfigValid() {
     M5_SERVO_RETURN_MS >= 100 && M5_SERVO_RETURN_MS <= 3000;
 }
 bool attachAndPressServo(bool ending) {
+  motionError = "";
   activeServoPin = ending ? M5_SERVO_END_PIN : M5_SERVO_CALL_PIN;
-  // Explicit channel 6 avoids the LCD backlight's LEDC channel.
-  servoAttached = ledcAttachChannel(activeServoPin, 50, 16, 6);
+  servoAttached = e84servo::attach(activeServoPin);
   if (!servoAttached) return false;
   captureMotion(ending);
   const unsigned pressAngle = motion.press;
-  if (!ledcWrite(activeServoPin, servoDuty(pressAngle))) return false;
+  if (!e84servo::write(activeServoPin, servoDuty(pressAngle))) return false;
   commandedAngle = pressAngle;
   servoPhase = ServoPhase::Press;
   servoAt = millis();
@@ -256,6 +280,7 @@ bool startServo(bool ending) {
   if (servoPhase != ServoPhase::Idle) { fail("servo_busy"); return false; }
   if (!servoConfigValid()) { fail("servo_config_invalid"); return false; }
   if (!M5_SERVO_ENABLED && !M5_SERVO_MANUAL_TEST) { fail("servo_disabled"); return false; }
+  motionError = "";
   if (!ending) callActionRequested = true;
   servoEnding = ending; servoAt = millis();
   if (M5_SERVO_MANUAL_TEST) {
@@ -277,6 +302,11 @@ bool startServo(bool ending) {
 }
 void completeServo() {
   servoPhase = ServoPhase::Idle;
+  if (servoPreview) {
+    servoPreview = false;
+    setStatus(servoEnding ? "Calibration preview complete: end" : "Calibration preview complete: call");
+    return;
+  }
   if (servoTesting) {
     servoTesting = false;
     setStatus(servoTestCancelled
@@ -324,8 +354,10 @@ void pollServo(bool confirmStart, bool confirmEnd) {
   } else if (servoPhase == ServoPhase::Press && elapsed(millis(), servoAt, motion.holdMs)) {
     neutralServo();
   } else if (servoPhase == ServoPhase::Return && elapsed(millis(), servoAt, motion.returnMs)) {
-    ledcDetach(activeServoPin); servoAttached = false;
-    Serial.printf("[SERVO] %s released; PWM detached; at_ms=%lu\n", servoEnding ? "END" : "CALL", (unsigned long)millis());
+    const bool stopped = e84servo::detach(activeServoPin);
+    servoAttached = false;
+    if (!stopped) { servoFailure("servo_release_failed"); return; }
+    Serial.printf("[SERVO] %s released; PWM stopped; signal LOW; at_ms=%lu\n", servoEnding ? "END" : "CALL", (unsigned long)millis());
     completeServo();
   }
 }
@@ -335,7 +367,25 @@ void pumpAudio() {
   // release the oldest buffer. The ring has >=3 distinct buffers; no queued
   // pointer is refilled while the asynchronous speaker task still reads it.
   const size_t playing = M5.Speaker.isPlaying(0);
-  while (submitted > playing) { audio.pop(); --submitted; lastPlaybackProgress = millis(); }
+  const uint32_t previousPlayed = playedFrames;
+  while (submitted > playing) {
+    audio.pop(); --submitted; ++playedFrames; lastPlaybackProgress = millis();
+  }
+  if (playedFrames / 100u != previousPlayed / 100u)
+    Serial.printf("[STREAM] Playback progress: received=%lu ms played=%lu ms queued=%u elapsed=%lu ms\n",
+      (unsigned long)(session.frames()*20u), (unsigned long)(playedFrames*20u),
+      (unsigned)audio.size(), (unsigned long)(millis()-outputAt));
+  // Allow a bounded jitter buffer, then return credit only as PCM is released.
+  // Never let the API's 10-frame window fill our 64-frame ring/TCP buffers.
+  const uint32_t credit = session.frames() < playedFrames + kCreditFrames
+    ? session.frames() : playedFrames + kCreditFrames;
+  if (credit > creditedFrames) {
+    if (!reply(Type::AudioAck, session.turn(), credit)) {
+      fail("audio_ack_failed"); return;
+    }
+    creditedFrames = credit;
+  }
+  if (primed && !submitted && !audio.size() && !session.outputEnded()) primed = false;
   if (!primed && (audio.size() >= kPrebufferFrames || session.outputEnded())) primed = true;
   while (primed && submitted < audio.size() && submitted < 2) {
     if (!submitted) lastPlaybackProgress = millis();
@@ -385,11 +435,11 @@ void processPacket() {
     case Action::Started: ok = reply(Type::CallStarted, 0); break;
     case Action::StartOutput:
       if (audio.size() || submitted || !prepareSpeaker()) { fail("speaker_busy"); return; }
-      primed = draining = false; lastOutput = lastPlaybackProgress = millis();
+      primed = draining = false; playedFrames = creditedFrames = 0; outputAt = lastOutput = lastPlaybackProgress = millis();
       setStatus("Receiving speech"); break;
     case Action::Audio:
       if (!audio.push(payload, incoming.length)) { fail("audio_queue_full"); return; }
-      lastOutput = millis(); ok = reply(Type::AudioAck, session.turn(), session.frames()); break;
+      lastOutput = millis(); break;
     case Action::EndOutput: lastOutput = millis(); break;
     case Action::EndCall: startServo(true); break;
     case Action::Ended: ok = reply(Type::CallEnded, session.turn()); break;
@@ -466,6 +516,7 @@ bool requestServoTest(bool ending, bool useCalibration) {
   }
   // Do not touch callAttempted/endAttempted or the protocol session. A local
   // diagnostic must never schedule the disconnect failsafe's other servo.
+  motionError = "";
   servoTesting = true; servoTestCancelled = false;
   servoEnding = ending; servoAt = millis();
   if (!ending && angles.callDelayMs) {
@@ -583,10 +634,11 @@ void calibrationCommand(const char* command) {
     calibrationReply("returning_previous_servo"); return;
   }
   if (servoPhase != ServoPhase::Idle) { calibrationReply("servo_busy"); return; }
+  motionError = "";
   servoEnding = ending; activeServoPin = pin;
-  if (!servoAttached) servoAttached = ledcAttachChannel(pin, 50, 16, 6);
+  if (!servoAttached) servoAttached = e84servo::attach(pin);
   if (!servoAttached) { calibrationReply("pwm_unavailable"); return; }
-  if (!ledcWrite(pin, servoDuty(static_cast<unsigned>(angle)))) {
+  if (!e84servo::write(pin, servoDuty(static_cast<unsigned>(angle)))) {
     captureMotion(ending);
     neutralServo(); calibrationReply("pwm_write_failed"); return;
   }
@@ -596,6 +648,7 @@ void calibrationCommand(const char* command) {
   value = static_cast<uint16_t>(angle);
   captureMotion(ending);
   calibrationPreviewMs = position == 'p' ? (ending ? angles.endPressMs : angles.callPressMs) : 1500;
+  servoPreview = true;
   servoPhase = ServoPhase::Calibrating; servoAt = millis(); calibrationReply();
 }
 void pollReceiver(bool networkReady, bool confirmStart, bool confirmEnd) {

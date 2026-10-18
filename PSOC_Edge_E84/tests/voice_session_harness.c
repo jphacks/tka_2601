@@ -26,7 +26,7 @@ bool e84_network_voice_ready(void) { return network_ready; }
 bool m5_link_configured(void) { return true; }
 void voice_transport_init(voice_transport_t *link) { memset(link, 0, sizeof(*link)); }
 bool voice_transport_server(voice_transport_t *link) {
-    assert(link == &call.server && call.state == CONNECT_AGENT);
+    assert(link == &call.server && (call.state == CONNECT_AGENT || link->diagnostic));
     server_opened=true; link->websocket=true; return server_connects;
 }
 bool voice_transport_m5(voice_transport_t *link) { assert(link == &call.m5); return m5_connects; }
@@ -63,7 +63,7 @@ static void reset(void)
     memset(sent, 0, sizeof(sent));
     tick = 1000u;
     network_ready = server_connects = m5_connects = auto_ack = true;
-    stop_on_start = busy = start_requested = stop_requested = false;
+    stop_on_start = busy = start_requested = stop_requested = recovery_required = false;
     server_opened=false;
     failed_send_type = 0u;
     server_used = server_read = m5_used = m5_read = sent_count = 0u;
@@ -234,7 +234,11 @@ static void test_stop_and_uncertain_shutdown(void)
     queue_ready();
     stop_on_start = true;
     failed_send_type = VOICE_CANCEL;
+    busy=true;
     assert(!run_call(123u));
+    assert(!voice_stream_busy() && recovery_required);
+    voice_stream_request_call(); assert(!start_requested);
+    voice_stream_request_probe(); assert(probe_requested==1); probe_requested=0;
     assert(count_sent(VOICE_CALL_START) == 1u && count_sent(VOICE_CALL_END) == 0u);
     assert(count_sent(VOICE_CANCEL) == 2u); /* Server + M5; no duplicate physical END. */
     assert(mailbox.voice_record_enabled == 0u && mailbox.voice_call_active == 1u);
@@ -295,8 +299,37 @@ static void test_agent_only_after_button_released(void)
     assert(run_call(123));
     assert(!server_opened); // failed/unfinished button action never starts agent
 }
+static void test_tcp_probe_never_starts_a_call_or_capture(void)
+{
+    reset(); queue_ready();
+    uint32_t record_enabled=mailbox.voice_record_enabled, pause=mailbox.voice_call_active;
+    assert(run_m5_probe(123));
+    assert(!server_opened && count_sent(VOICE_HELLO)==1 && count_sent(VOICE_PING)==1);
+    assert(sent_count==2 && count_sent(VOICE_CALL_START)==0 && count_sent(VOICE_CANCEL)==0);
+    assert(mailbox.voice_record_enabled==record_enabled && mailbox.voice_call_active==pause);
+    reset(); m5_connects=false;
+    assert(!run_m5_probe(123) && sent_count==0 && !server_opened);
+    reset();
+    assert(!run_m5_probe(123));
+    assert(count_sent(VOICE_CALL_START)==0 && count_sent(VOICE_CANCEL)==0 && !server_opened);
+}
+static void test_api_probe_does_not_open_m5_or_start_conversation(void)
+{
+    reset(); m5_connects=false;
+    server_in[server_used++]=packet(VOICE_READY,0,0);
+    server_in[server_used++]=packet(VOICE_PONG,0,1);
+    assert(run_api_probe(123));
+    assert(sent_count==3 && count_sent(VOICE_CALL_START)==0 && count_sent(VOICE_INPUT_AUDIO)==0);
+    assert(count_sent(VOICE_HELLO)==1 && count_sent(VOICE_PING)==1 && count_sent(VOICE_CANCEL)==1);
+    for (unsigned i=0;i<sent_count;++i) assert(sent[i].to_server);
+    assert(mailbox.voice_record_enabled==0 && mailbox.voice_call_active==1);
+    reset(); server_connects=false;
+    assert(!run_api_probe(123) && sent_count==0);
+}
 int main(void)
 {
+    test_api_probe_does_not_open_m5_or_start_conversation();
+    test_tcp_probe_never_starts_a_call_or_capture();
     test_wait_for_actual_playback_done();
     test_stale_and_mismatched_packets();
     test_no_reply_and_final_end();

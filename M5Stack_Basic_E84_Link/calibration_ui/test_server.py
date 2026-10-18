@@ -3,11 +3,13 @@ import os
 import pty
 import select
 import threading
+import tempfile
 import time
 import unittest
 import urllib.error
 import urllib.request
 from types import SimpleNamespace
+from pathlib import Path
 from conversation_history import ConversationHistory
 from http.server import ThreadingHTTPServer
 
@@ -24,6 +26,118 @@ class Bridge:
 
 
 class CalibrationUITests(unittest.TestCase):
+    def test_recovery_releases_diagnostics_but_preserves_warning(self):
+        monitor = E84Monitor('/nonexistent-test-port')
+        try:
+            monitor.record('[VOICE] Preparing streaming call.')
+            self.assertTrue(monitor.snapshot()['voice_active'])
+            monitor.record('[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and reset both boards. Diagnostics available.')
+            self.assertFalse(monitor.snapshot()['voice_active'])
+            self.assertTrue(monitor.snapshot()['recovery_required'])
+            monitor.record('[M5] PONG received.')
+            self.assertTrue(monitor.snapshot()['recovery_required'])
+            monitor.record('[BOOT] Network task running.')
+            self.assertFalse(monitor.snapshot()['recovery_required'])
+            monitor.record('[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and reset both boards.')
+            self.assertTrue(monitor.snapshot()['voice_active']) # Old firmware still latches busy.
+        finally:
+            monitor.close()
+
+    def test_diagnostic_exchange_ignores_old_success_and_other_replies(self):
+        master, slave = pty.openpty()
+        monitor = E84Monitor(os.ttyname(slave))
+        try:
+            deadline=time.monotonic()+2
+            while not monitor.snapshot()['connected'] and time.monotonic()<deadline: time.sleep(.01)
+            self.assertTrue(select.select([master], [], [], 1)[0]); os.read(master,128)
+            monitor.record('[DIAG] usb ok=1')
+            with self.assertRaises(TimeoutError):
+                monitor.exchange('u', lambda text:text.startswith('[DIAG] usb '), .08)
+            self.assertEqual(os.read(master,128),b'u')
+            def device():
+                assert select.select([master], [], [], 1)[0]
+                assert os.read(master,128)==b'n'
+                os.write(master,b'[DIAG] usb ok=1\n[DIAG] wifi {"connected":false}\n')
+            worker=threading.Thread(target=device);worker.start()
+            lines, reply=monitor.exchange('n', lambda text:text.startswith('[DIAG] wifi '), 2)
+            worker.join()
+            self.assertIn('"connected":false',reply)
+            self.assertTrue(any('usb ok=1' in row['text'] for row in lines))
+        finally:
+            monitor.close();os.close(master);os.close(slave)
+
+    def test_missing_m5_usb_does_not_prevent_start_and_reconnect(self):
+        with tempfile.TemporaryDirectory() as directory:
+            port=Path(directory)/'m5-port'
+            bridge=SerialBridge(str(port))
+            self.assertIsNone(bridge.fd)
+            with self.assertRaises(OSError): bridge.command('@get')
+            master,slave=pty.openpty();port.symlink_to(os.ttyname(slave))
+            def device():
+                for expected in (b'@get\n',b'@cancel\n'):
+                    assert select.select([master], [], [], 2)[0]
+                    assert os.read(master,128)==expected
+                    os.write(master,b'[CAL] {"ok":true,"active":false,"saved":{}}\n')
+            worker=threading.Thread(target=device);worker.start()
+            try:
+                self.assertTrue(bridge.command('@get')['ok'])
+            finally:
+                bridge.close();worker.join();os.close(master);os.close(slave)
+
+    def test_board_link_requires_round_trip_and_invalidates_old_evidence(self):
+        master, slave = pty.openpty()
+        monitor = E84Monitor(os.ttyname(slave))
+        try:
+            deadline = time.monotonic()+3
+            while not monitor.snapshot()['connected'] and time.monotonic()<deadline:
+                time.sleep(.01)
+            monitor.record('[M5 USB] [STATUS] Wi-Fi=connected IP=172.20.10.2 UDP=8768/ready ping=1 chime=0 duplicate=2 rejected=0')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'unknown')
+            monitor.record('[M5] Testing 172.20.10.2:8768; waiting for authenticated pong...')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'checking')
+            monitor.record('[M5 USB] [LINK] Ping received; pong sent. peer=172.20.10.3:62512')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'checking')
+            monitor.record('[M5] No authenticated reply (3/3 pings submitted).')
+            monitor.record('[M5 USB] [LINK] Ping received; pong sent. peer=172.20.10.3:62512 (retry)')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'failed')
+            monitor.record('[M5] PONG received. E84 <-> M5Stack Wi-Fi communication OK.')
+            result = monitor.snapshot()
+            self.assertEqual(result['board_link']['state'], 'confirmed')
+            self.assertIsNotNone(result['board_link']['last_success_at'])
+            self.assertTrue(any('[E84↔M5] 連携確認済み' in x['text'] for x in result['lines']))
+            monitor.link_last_ok_tick -= 61
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'stale')
+            monitor.record('[M5 USB] [STREAM] E84 authenticated')
+            monitor.record('[M5 USB] [LINK] Chime received. score=0.1 peer=172.20.10.3:62512')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'stale')
+            monitor.record('[VOICE] Call button operation complete; now connecting voice agent.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'confirmed')
+            monitor.record('[VOICE] Call ending: reason=m5_connection_lost state=1 turn=1 input_ms=0.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'failed')
+            monitor.record('[BOOT] Network task running.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'unknown')
+            monitor.record('[VOICE] M5 playback complete: turn 1.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'confirmed')
+            monitor.record('[M5 USB] [Wi-Fi] Disconnected; reconnecting automatically.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'unknown')
+            monitor.record('[M5] PONG received. E84 <-> M5Stack Wi-Fi communication OK.')
+            monitor.record('[Wi-Fi] Connection lost; WCM will reconnect.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'unknown')
+            monitor.record('[M5 MODE] calibration=active')
+            monitor.record('[VOICE] Call ending: reason=m5_auth_failed state=0 turn=0 input_ms=0.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'blocked')
+            self.assertIn('角度調整中', monitor.snapshot()['board_link']['detail'])
+            monitor.record('[M5 MODE] calibration=idle')
+            self.assertFalse(monitor.snapshot()['calibration_active'])
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'unknown')
+            monitor.record('[M5 TCP] Checking voice connection; no buttons, microphone or agent started.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'checking')
+            monitor.record('[M5 TCP] OK: authenticated HELLO/READY and PING/PONG; no buttons operated.')
+            self.assertEqual(monitor.snapshot()['board_link']['state'], 'confirmed')
+            self.assertIn('TCP', monitor.snapshot()['board_link']['detail'])
+        finally:
+            monitor.close(); os.close(slave); os.close(master)
+
     def test_uart_live_logs_and_console_allowlist(self):
         master, slave = pty.openpty()
         monitor = E84Monitor(os.ttyname(slave))
@@ -97,8 +211,8 @@ class CalibrationUITests(unittest.TestCase):
         try:
             os.write(master,b'[SERVO] CALL waiting 3000 ms\r\n')
             deadline=time.monotonic()+2
-            while not lines and time.monotonic()<deadline: time.sleep(.01)
-            self.assertIn('CALL waiting',lines[0])
+            while not any('CALL waiting' in line for line in lines) and time.monotonic()<deadline: time.sleep(.01)
+            self.assertTrue(any('CALL waiting' in line for line in lines))
             worker.start()
             self.assertEqual(bridge.command('@time c 200')['call_hold_ms'],200)
             worker.join()

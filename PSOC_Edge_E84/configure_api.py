@@ -66,7 +66,7 @@ def main():
             os.unlink(temporary)
     print(".envからAPI設定を保存しました（キーは非表示）。次に make -j8 program を実行してください。")
     if not (values.get("DOOR_DEVICE_KEY") or ""):
-        print("DOOR_DEVICE_KEYが未設定です。既定のv1通話は診断用IDで試せますが、住人設定・履歴保存には登録済みの鍵が必要です。v2通話は鍵の設定が必要です。")
+        print("DOOR_DEVICE_KEYが未設定です。通話は診断用IDで試せますが、住人設定・履歴保存には登録済みの鍵が必要です。")
 
 
 if __name__ == "__main__":

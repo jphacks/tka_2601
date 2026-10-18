@@ -8,7 +8,9 @@ constexpr size_t kHeaderBytes = 24;
 constexpr size_t kMaxPayload = 1280;
 constexpr size_t kAudioBytes = 640;
 constexpr size_t kQueueFrames = 64;
-constexpr size_t kPrebufferFrames = 10;
+constexpr size_t kPrebufferFrames = 32;
+// API may have another 10 unacknowledged frames in flight: 48+10 < 64.
+constexpr size_t kCreditFrames = 48;
 
 enum class Type : uint8_t {
   Hello = 1, Ready, CallStart, CallStarted, InputStart, InputAudio, InputEnd,

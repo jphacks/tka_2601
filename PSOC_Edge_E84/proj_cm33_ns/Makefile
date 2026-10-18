@@ -67,6 +67,8 @@ CORE_NAME=CM33_0
 # by default, or otherwise not found by the build system.
 SOURCES+=../source/e84_shared.c ../source/e84_network.c ../source/e84_wifi_hw.c ../source/door_server.c ../source/door_clock.c ../source/wifi_settings.c ../source/wifi_reconnect.c ../source/audio_core.c ../source/audio_store.c ../source/m5_link.c ../source/m5_protocol.c
 SOURCES+=../source/voice_protocol.c ../source/relay_protocol.c ../source/voice_transport.c ../source/voice_stream.c
+SOURCES+=../source/socket_copy.c
+LDFLAGS+=-Wl,--wrap=netconn_write_partly
 
 # Like SOURCES, but for include directories. Value should be paths to
 # directories (without a leading -I).

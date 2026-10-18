@@ -11,9 +11,11 @@ static bool timeout_with_bytes, eof, local, nodelay;
 static cy_rslt_t recv_error, send_error;
 static uint32_t io_delay;
 static unsigned deleted, options, random_calls;
+static unsigned blocked_sends, partial_block;
 static int protocol;
 static void check(bool condition) { ++checks; assert(condition); }
 TickType_t xTaskGetTickCount(void) { return now; }
+void vTaskDelay(TickType_t ticks) { now+=ticks; }
 cy_rslt_t cy_socket_delete(cy_socket_t socket) { check(socket==42); ++deleted; return 0; }
 cy_rslt_t cy_socket_setsockopt(cy_socket_t socket,int level,int name,const void *value,uint32_t length)
 {
@@ -29,9 +31,12 @@ cy_rslt_t cy_socket_send(cy_socket_t socket,const void *data,uint32_t length,int
 {
     check(socket==42 && !flags && length); now+=io_delay;
     *sent=0; if (send_error) return send_error;
+    if (blocked_sends) { --blocked_sends; return CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK; }
     size_t n=length; if (n>write_limit) n=write_limit;
     check(n<=sizeof(output)-output_size);
+    if (partial_block && n>partial_block) n=partial_block;
     memcpy(output+output_size,data,n); output_size+=n; *sent=(uint32_t)n;
+    if (partial_block) { partial_block=0; return CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK; }
     return 0;
 }
 cy_rslt_t cy_socket_recv(cy_socket_t socket,void *data,uint32_t length,int flags,uint32_t *received)
@@ -80,6 +85,7 @@ static void reset(voice_transport_t *link,bool websocket)
     now=100; input_size=input_position=output_size=0;
     read_limit=write_limit=16384; timeout_with_bytes=eof=nodelay=false; local=true;
     recv_error=send_error=0; io_delay=1; deleted=options=random_calls=0; protocol=0;
+    blocked_sends=partial_block=0;
     voice_transport_init(link); link->socket=42; link->websocket=websocket; link->progress=now;
 }
 static void append(const void *data,size_t length)
@@ -178,6 +184,14 @@ static void sends_are_bounded(void)
     reset(&link,false); write_limit=1; io_delay=100;
     check(!voice_transport_send(&link,&h,pcm)); check(now<=2300 && output_size<664);
     reset(&link,false); write_limit=0; check(!voice_transport_send(&link,&h,pcm));
+    reset(&link,false); blocked_sends=25; partial_block=13;
+    check(voice_transport_send(&link,&h,pcm));
+    check(output_size==VOICE_HEADER+sizeof(pcm));
+    check(!memcmp(output+VOICE_HEADER,pcm,sizeof(pcm))); /* no duplicated partial bytes */
+    reset(&link,false); send_error=CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK;
+    check(!voice_transport_send(&link,&h,pcm)); check(now<=2300 && output_size==0);
+    reset(&link,false); recv_error=CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK;
+    voice_packet_t pending; check(voice_transport_poll(&link,&pending)==0);
     reset(&link,true); check(!voice_transport_send(&link,&h,NULL));
     h.length=641; check(!voice_transport_send(&link,&h,pcm));
 }
@@ -213,9 +227,20 @@ static void upgrade_and_connections(void)
     for(size_t i=0;i<length;++i) decoded[i]=(char)(output[prefix+4+i]^output[prefix+i%4]);
     decoded[length]=0;
     check(strstr(decoded,"\"protocol_version\":2")!=NULL);
+#ifdef TEST_UNPAIRED
+    check(strstr(decoded,"\"device_key\":\"e84-diagnostic-unpaired\"")!=NULL);
+#else
     check(strstr(decoded,"\"device_key\":\"test-device-key\"")!=NULL);
+#endif
     check(strstr(decoded,"\"visit_id\":\"01020304-0506-4708-890a-0b0c0d0e0f10\"")!=NULL);
     check(poll_until(&link,&got,10)==1 && got.header.type==VOICE_READY);
+    reset(&link,false); link.diagnostic=true;
+    append(response,strlen(response)); check(voice_transport_server(&link)); output_size=0;
+    check(voice_transport_send(&link,&hello,NULL));
+    prefix=(output[1]&127)==126?4:2; length=output_size-prefix-4;
+    for(size_t i=0;i<length;++i) decoded[i]=(char)(output[prefix+4+i]^output[prefix+i%4]);
+    decoded[length]=0;
+    check(strstr(decoded,"\"device_key\":\"e84-diagnostic-unpaired\"")!=NULL);
     reset(&link,false); const char denied[]="HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
     append(denied,strlen(denied)); check(!voice_transport_server(&link));
 }

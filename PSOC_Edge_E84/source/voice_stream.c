@@ -17,15 +17,22 @@ typedef struct {
     uint32_t session, turn, input_count, output_count, output_ack, listen_generation;
     uint32_t next_turn, input_report_count;
     bool output_ended, end_after_playback, may_have_answered;
+    const char *io_failure;
     call_state_t state;
     TickType_t began, phase, last_m5, last_server, last_ping, playback_done;
 } call_t;
 static call_t call;
-static volatile bool busy, start_requested, stop_requested;
+static volatile bool busy, start_requested, stop_requested, recovery_required;
+static volatile uint8_t probe_requested;
 
 bool voice_stream_busy(void) { return busy; }
-void voice_stream_request_call(void) { start_requested=true; }
+void voice_stream_request_call(void) {
+    if (!recovery_required) start_requested=true;
+    else printf("[VOICE] Recovery required; check intercom and reset both boards before a new call.\n");
+}
 void voice_stream_request_stop(void) { stop_requested=true; }
+void voice_stream_request_probe(void) { probe_requested=true; }
+void voice_stream_request_api_probe(void) { probe_requested=2; }
 static bool control(voice_transport_t *l, uint8_t type, uint32_t turn, uint32_t sequence)
 {
     voice_header_t h={.type=type,.session=call.session,.turn=turn,.sequence=sequence};
@@ -34,7 +41,11 @@ static bool control(voice_transport_t *l, uint8_t type, uint32_t turn, uint32_t 
 static void phase(call_state_t state)
 { call.state=state; call.phase=xTaskGetTickCount(); }
 static bool relay(voice_transport_t *l, const voice_packet_t *p)
-{ return voice_transport_send(l,&p->header,p->payload); }
+{
+    bool ok=voice_transport_send(l,&p->header,p->payload);
+    if (!ok) call.io_failure=l==&call.m5?"m5_send_failed":"server_send_failed";
+    return ok;
+}
 static bool packet_session(const voice_packet_t *p)
 { return p->header.session==call.session; }
 
@@ -77,6 +88,7 @@ static bool server_packet(const voice_packet_t *p)
         return relay(&call.m5,p);
     case VOICE_NO_REPLY:
         if (call.state!=WAIT_REPLY) return false;
+        printf("[VOICE] No speech recognized for turn %lu; listening again.\n",(unsigned long)call.turn);
         phase(WAIT_LISTEN); return true;
     case VOICE_CALL_END:
         if (call.state!=WAIT_LISTEN && call.state!=WAIT_REPLY) return false;
@@ -103,7 +115,12 @@ static bool m5_packet(const voice_packet_t *p)
         printf("[VOICE] Call button operation complete; now connecting voice agent.\n"); return true;
     case VOICE_AUDIO_ACK:
         if (call.state!=PLAYING || h->sequence<=call.output_ack || h->sequence>call.output_count) return false;
+        uint32_t previous_ack=call.output_ack;
         call.output_ack=h->sequence;
+        if (call.output_ack/50u != previous_ack/50u)
+            printf("[VOICE] Relay progress: sent=%lu ms acknowledged=%lu ms elapsed=%lu ms.\n",
+                (unsigned long)(call.output_count*20u), (unsigned long)(call.output_ack*20u),
+                (unsigned long)((xTaskGetTickCount()-call.phase)*1000u/pdMS_TO_TICKS(1000)));
         return relay(&call.server,p);
     case VOICE_PLAYBACK_DONE:
         if (call.state!=PLAYING || !call.output_ended || h->sequence!=call.output_count ||
@@ -148,6 +165,56 @@ static bool check_m5_alive(void)
         vTaskDelay(pdMS_TO_TICKS(1));
     }
     return false;
+}
+static bool run_m5_probe(uint32_t session)
+{
+    memset(&call,0,sizeof(call)); call.session=session;
+    voice_transport_init(&call.server); voice_transport_init(&call.m5);
+    bool ok=false;
+    const char *reason="connect_failed";
+    printf("[M5 TCP] Checking voice connection; no buttons, microphone or agent started.\n");
+    if (!voice_transport_m5(&call.m5)) goto done;
+    reason="not_accepted";
+    voice_header_t hello={.type=VOICE_HELLO,.session=session,.length=strlen(M5_TOKEN)};
+    if (!voice_transport_send(&call.m5,&hello,M5_TOKEN) || !await_ready(&call.m5)) goto done;
+    reason="pong_missing";
+    if (!check_m5_alive()) goto done;
+    ok=true;
+done:
+    printf("[M5 TCP] %s\n",ok?"OK: authenticated HELLO/READY and PING/PONG; no buttons operated.":reason);
+    voice_transport_close(&call.m5); voice_transport_close(&call.server);
+    return ok;
+}
+static bool run_api_probe(uint32_t session)
+{
+    memset(&call,0,sizeof(call)); call.session=session;
+    voice_transport_init(&call.server); voice_transport_init(&call.m5);
+    call.server.diagnostic=true;
+    bool ok=false, ready=false;
+    const char *reason="connect_failed";
+    printf("[API WSS] checking; no call_started, microphone or buttons.\n");
+    if (!voice_transport_server(&call.server)) goto done;
+    reason="ready_failed";
+    if (!control(&call.server,VOICE_HELLO,0,0) || !await_ready(&call.server)) goto done;
+    ready=true;
+    reason="pong_missing";
+    if (!control(&call.server,VOICE_PING,0,1)) goto done;
+    TickType_t start=xTaskGetTickCount();
+    voice_packet_t p;
+    while (!stop_requested && xTaskGetTickCount()-start<pdMS_TO_TICKS(5000)) {
+        int r=voice_transport_poll(&call.server,&p);
+        if (r<0) break;
+        if (r>0) {
+            ok=packet_session(&p) && p.header.type==VOICE_PONG && p.header.turn==0 && p.header.sequence==1;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+done:
+    if (ready) (void)control(&call.server,VOICE_CANCEL,0,0);
+    printf("[API WSS] %s\n",ok?"OK: TLS, API authorization, relay READY and PING/PONG; no conversation started.":reason);
+    voice_transport_close(&call.server); voice_transport_close(&call.m5);
+    return ok;
 }
 static bool await_call_started(void)
 {
@@ -235,7 +302,11 @@ static bool capture_step(void)
         }
         voice_header_t h={.type=VOICE_INPUT_AUDIO,.session=call.session,.turn=call.turn,
             .sequence=call.input_count,.length=sizeof(pcm)};
-        if (!voice_transport_send(&call.server,&h,pcm)) return false;
+        if (!voice_transport_send(&call.server,&h,pcm)) {
+            printf("[VOICE] Microphone frame send failed: frame=%lu queued=%lu.\n",
+                (unsigned long)call.input_count,(unsigned long)(s->voice_write_seq-s->voice_read_seq));
+            return false;
+        }
         if (!call.input_count) call.phase=xTaskGetTickCount();
         ++call.input_count;
         e84_shared_release(); s->voice_read_seq=read+1u; e84_shared_release();
@@ -286,46 +357,69 @@ static bool run_call(uint32_t session)
 {
     memset(&call,0,sizeof(call)); call.session=session; voice_transport_init(&call.server); voice_transport_init(&call.m5);
     bool success=false, release=false;
+    const char *reason="capture_pause_failed";
     printf("[VOICE] Preparing streaming call.\n");
     if (!pause_capture(true)) goto cleanup;
     /* Complete the physical button operation before starting an agent. */
+    reason="m5_connect_failed";
     if (!voice_transport_m5(&call.m5)) goto cleanup;
     voice_header_t hello={.type=VOICE_HELLO,.session=session,.length=strlen(M5_TOKEN)};
+    reason="m5_auth_failed";
     if (!voice_transport_send(&call.m5,&hello,M5_TOKEN) || !await_ready(&call.m5)) goto cleanup;
+    reason="m5_probe_failed";
     if (!check_m5_alive() || stop_requested) goto cleanup;
     phase(STARTING); call.began=call.last_server=call.last_m5=call.last_ping=xTaskGetTickCount();
     call.may_have_answered=true;
+    reason="call_button_failed";
     if (!control(&call.m5,VOICE_CALL_START,0,0)) goto cleanup;
     printf("[VOICE] Waiting for one call-button press and release; voice agent not started.\n");
     if (!await_call_started() || stop_requested) goto cleanup;
+    reason="server_connect_failed";
     if (!voice_transport_server(&call.server) || !control(&call.server,VOICE_HELLO,0,0) || !await_ready(&call.server)) goto cleanup;
     printf("[VOICE] Server ready: /api/relay protocol %u.\n",voice_transport_legacy(&call.server)?1u:2u);
+    reason="agent_start_failed";
     if (stop_requested || !control(&call.server,VOICE_CALL_START,0,0)) goto cleanup;
     phase(WAIT_REPLY);
     call.last_server=call.last_m5=call.last_ping=xTaskGetTickCount();
     while (!stop_requested && e84_network_voice_ready()) {
         voice_packet_t p;
         int r=voice_transport_poll(&call.m5,&p);
-        if (r<0 || (r>0 && !m5_packet(&p))) break;
-        if (call.state==FINISHED) { success=true; break; }
-        r=voice_transport_poll(&call.server,&p);
-        if (r<0 || (r>0 && !server_packet(&p))) break;
+        if (r<0) { reason="m5_connection_lost"; break; }
+        if (r>0 && !m5_packet(&p)) { reason=call.io_failure?call.io_failure:"m5_protocol_error"; break; }
+        if (call.state==FINISHED) { reason="completed"; success=true; break; }
+        bool server_failed=false;
+        // Drain a bounded burst, then return to M5 acknowledgements and capture.
+        for (unsigned packet=0;packet<4;++packet) {
+            r=voice_transport_poll(&call.server,&p);
+            if (r<0) { reason="server_connection_lost"; server_failed=true; break; }
+            if (!r) break;
+            if (!server_packet(&p)) { reason=call.io_failure?call.io_failure:"server_protocol_error"; server_failed=true; break; }
+        }
+        if (server_failed) break;
         TickType_t now=xTaskGetTickCount();
         if (call.state==LISTEN_DELAY && now-call.playback_done>=pdMS_TO_TICKS(VOICE_SETTLE_MS))
-            if (!begin_listen()) break;
-        if (call.state==LISTENING && !capture_step()) break;
+            if (!begin_listen()) { reason="microphone_start_failed"; break; }
+        if (call.state==LISTENING && !capture_step()) { reason="microphone_or_send_failed"; break; }
         now=xTaskGetTickCount();
-        if (now-call.began>pdMS_TO_TICKS(VOICE_CALL_TIMEOUT_MS) ||
-            now-call.phase>pdMS_TO_TICKS(call.state==LISTENING?VOICE_IDLE_TIMEOUT_MS:VOICE_RESPONSE_TIMEOUT_MS) ||
-            now-call.last_m5>pdMS_TO_TICKS(15000) ||
-            (!voice_transport_legacy(&call.server) && now-call.last_server>pdMS_TO_TICKS(15000))) break;
+        if (now-call.began>pdMS_TO_TICKS(VOICE_CALL_TIMEOUT_MS)) { reason="device_time_limit"; break; }
+        if (now-call.phase>pdMS_TO_TICKS(call.state==LISTENING?VOICE_IDLE_TIMEOUT_MS:VOICE_RESPONSE_TIMEOUT_MS)) {
+            reason=call.state==LISTENING?"speech_wait_timeout":"response_timeout"; break;
+        }
+        if (now-call.last_m5>pdMS_TO_TICKS(15000)) { reason="m5_keepalive_timeout"; break; }
+        if (!voice_transport_legacy(&call.server) && now-call.last_server>pdMS_TO_TICKS(15000)) {
+            reason="server_keepalive_timeout"; break;
+        }
         if (now-call.last_ping>=pdMS_TO_TICKS(5000)) {
-            if (!control(&call.m5,VOICE_PING,call.turn,0) || !control(&call.server,VOICE_PING,call.turn,0)) break;
+            if (!control(&call.m5,VOICE_PING,call.turn,0) || !control(&call.server,VOICE_PING,call.turn,0)) { reason="keepalive_send_failed"; break; }
             call.last_ping=now;
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 cleanup:
+    if (stop_requested) reason="manual_stop";
+    else if (!e84_network_voice_ready()) reason="network_lost";
+    printf("[VOICE] Call ending: reason=%s state=%u turn=%lu input_ms=%lu.\n",
+        reason,(unsigned)call.state,(unsigned long)call.turn,(unsigned long)(call.input_count*20u));
     e84_shared()->voice_record_enabled=0; e84_shared_release();
     release=success || end_on_error();
     voice_transport_close(&call.server); voice_transport_close(&call.m5);
@@ -334,7 +428,9 @@ cleanup:
         return true;
     }
     /* Cannot prove that M5 stopped: hold capture muted until both boards are reset. */
-    printf("[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and reset both boards.\n");
+    recovery_required=true;
+    busy=false; // Closed transports are free for diagnostics; new calls remain inhibited.
+    printf("[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and reset both boards. Diagnostics available.\n");
     return false;
 }
 void voice_stream_task(void *argument)
@@ -351,9 +447,17 @@ void voice_stream_task(void *argument)
         if (!(guard&1) && guard==s->event_guard && event!=observed) {
             observed=event; detected=event && available && available_before;
         }
-        bool manual=start_requested; start_requested=false;
-        if ((detected || manual) && !busy) {
-            if (!available) printf("[VOICE] Wi-Fi, clock, API or M5 configuration not ready.\n");
+        if (recovery_required) detected=false;
+        bool manual=!recovery_required && start_requested; start_requested=false;
+        uint8_t diagnostic=probe_requested; probe_requested=0;
+        if ((detected || manual || diagnostic) && !busy) {
+            bool ready=available;
+            if (diagnostic==2 && !detected && !manual)
+                ready=VOICE_STREAM_ENABLED && e84_network_voice_ready() && s->seed_ready;
+            if (!ready) {
+                if (diagnostic==2) printf("[API WSS] network_not_ready\n");
+                else printf("[VOICE] Wi-Fi, clock, API or M5 configuration not ready.\n");
+            }
             else if (counter==UINT32_MAX) printf("[VOICE] Session ID limit reached; reset required.\n");
             else {
                 uint32_t session=s->seed[0]^(++counter);
@@ -362,8 +466,15 @@ void voice_stream_task(void *argument)
                     session=s->seed[0]^(++counter);
                 }
                 stop_requested=false; busy=true;
-                if (run_call(session)) busy=false;
-                observed=s->event_seq; available_before=false;
+                if (diagnostic && !detected && !manual) {
+                    if (diagnostic==2) (void)run_api_probe(session);
+                    else (void)run_m5_probe(session);
+                    busy=false;
+                }
+                else {
+                    if (run_call(session)) busy=false;
+                    observed=s->event_seq; available_before=false;
+                }
             }
         }
         available_before=available;

@@ -28,6 +28,23 @@ bool e84_network_voice_ready(void)
 /* Console is the sole request writer; the M5 task acknowledges after handling.
  * Keep at most one probe in flight, independently of the CM55 audio mailbox. */
 static volatile uint32_t m5_probe_request, m5_probe_ack;
+static volatile bool api_probe_requested;
+
+static void report_wifi(void)
+{
+    cy_wcm_ip_address_t address={0}, gateway={0};
+    cy_wcm_associated_ap_info_t ap={0};
+    bool associated=cy_wcm_is_connected_to_ap()!=0;
+    bool has_ip=cy_wcm_get_ip_addr(CY_WCM_INTERFACE_TYPE_STA,&address)==CY_RSLT_SUCCESS &&
+        address.version==CY_WCM_IP_VER_V4 && address.ip.v4!=0;
+    (void)cy_wcm_get_gateway_ip_address(CY_WCM_INTERFACE_TYPE_STA,&gateway);
+    bool has_rssi=associated && cy_wcm_get_associated_ap_info(&ap)==CY_RSLT_SUCCESS;
+    const unsigned char *ip=(const unsigned char *)&address.ip.v4;
+    const unsigned char *gw=(const unsigned char *)&gateway.ip.v4;
+    printf("[DIAG] wifi {\"connected\":%s,\"ip\":\"%u.%u.%u.%u\",\"gateway\":\"%u.%u.%u.%u\",\"rssi\":%d,\"rssi_valid\":%s}\n",
+        associated&&has_ip?"true":"false",ip[0],ip[1],ip[2],ip[3],gw[0],gw[1],gw[2],gw[3],
+        has_rssi?ap.signal_strength:0,has_rssi?"true":"false");
+}
 
 /* The producer holds the shared clip until a successful HTTPS ACK. Reuse the
  * original bounded WAV/CRC reader without reserving or erasing XIP flash. */
@@ -196,6 +213,19 @@ void e84_network_task(void *argument)
             }
             wifi_reconnect_attempt_finished(&reconnect, (uint32_t)xTaskGetTickCount());
         }
+        if (api_probe_requested) {
+            api_probe_requested=false;
+            if (voice_stream_busy()) printf("[DIAG] api_https busy\n");
+            else if (!ready) printf("[DIAG] api_https network_not_ready\n");
+            else {
+                printf("[DIAG] api_https checking\n");
+                if (!clock_ready) clock_ready=door_clock_sync();
+                voice_clock_ready=clock_ready;
+                bool ok=clock_ready && door_server_check();
+                printf("[DIAG] api_https ok=%u\n",ok?1u:0u);
+                health_delay=60;
+            }
+        }
         if (ready) {
             if (!health_delay && !voice_stream_busy()) {
                 if (!clock_ready) clock_ready = door_clock_sync();
@@ -227,6 +257,17 @@ void e84_console_task(void *argument)
         while (Cy_SCB_UART_GetNumInRxFifo(CYBSP_DEBUG_UART_HW)) {
             uint32_t input = Cy_SCB_UART_Get(CYBSP_DEBUG_UART_HW);
             if (input == 's') status = true;
+            else if (input == 'u') printf("[DIAG] usb ok=1\n");
+            else if (input == 'n') report_wifi();
+            else if (input == 'a') {
+                if (voice_stream_busy()) printf("[DIAG] api_https busy\n");
+                else if (api_probe_requested) printf("[DIAG] api_https already_running\n");
+                else api_probe_requested=true;
+            }
+            else if (input == 'w') {
+                if (voice_stream_busy()) printf("[API WSS] busy\n");
+                else voice_stream_request_api_probe();
+            }
             else if (input == 'h' || input == '?')
                 printf("[E84] c=streaming call (M5 servo acts); q=end call; t=test M5 Wi-Fi; r=record 5s; x=cancel; e=rearm; s=status. RAM queue is lost on reset.\n");
             else if (input == 'c') {
@@ -234,6 +275,10 @@ void e84_console_task(void *argument)
                 else voice_stream_request_call();
             }
             else if (input == 'q') voice_stream_request_stop();
+            else if (input == 'v') {
+                if (voice_stream_busy()) printf("[M5 TCP] Test unavailable during call/recovery.\n");
+                else voice_stream_request_probe();
+            }
             else if (input == 't') {
                 if (!m5_link_configured())
                     printf("[M5] Configure the M5 IP with python3 configure_m5.py --host <M5_IP>, then rebuild/program.\n");
