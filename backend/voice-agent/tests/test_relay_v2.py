@@ -239,3 +239,33 @@ def test_transcript_event_is_bounded_and_full_history_is_preserved(text):
     assert payload['type'] == 'transcript' and payload['speaker'] == 'visitor'
     assert text.startswith(payload['text']) and payload['text']
     assert len(json.dumps(payload, ensure_ascii=True).encode('utf-8')) <= 1024
+
+
+@pytest.mark.parametrize("turn", [True, -1, 1.0, "0", None, 1])
+def test_invalid_start_generation_keeps_wire_error_and_closes_agent(backend, turn):
+    with TestClient(api.app) as client, connect(client) as ws:
+        start(ws)
+        ws.send_json({"type": "call_started", "turn_id": turn})
+        assert control(ws) == {
+            "type": "error", "code": "invalid_message", "message": "Invalid turn_id.",
+        }
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == 1008
+    assert backend.agents[0].closed
+    assert backend.visits == []
+
+
+def test_empty_input_with_malformed_reason_keeps_input_boundary_error(backend):
+    with TestClient(api.app) as client, connect(client) as ws:
+        start(ws)
+        greeting(ws)
+        input_turn(ws, frames=0, reason=[])
+        assert control(ws) == {
+            "type": "error", "code": "invalid_input_end", "message": "Invalid input boundary.",
+        }
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == 1008
+    assert backend.agents[0].closed
+    assert backend.visits[0][1]["end_code"] == "invalid_input_end"

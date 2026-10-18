@@ -7,7 +7,7 @@ import { NavBar, Screen } from '../../components/Screen';
 import { Card, GroupHeader, LinkRow, Separator } from '../../components/ui';
 import { listMembers } from '../../lib/api';
 import { useAuth, useHousehold } from '../../lib/auth';
-import { errorMessage } from '../../lib/authActions';
+import { errorMessage } from '../../lib/errors';
 import type { Member } from '../../lib/types';
 import { colors } from '../../theme';
 

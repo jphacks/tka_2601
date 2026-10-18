@@ -75,3 +75,51 @@ Deno.test("ticket の結果: 受付、送り直し（MessageRateExceeded）、�
   );
   assertEquals(ticketOutcome(undefined).status, "retry");
 });
+
+Deno.test("malformed successful Expo responses are permanent failures without retries", async () => {
+  for (const response of [
+    new Response("not JSON"),
+    Response.json(null),
+    Response.json({ data: {} }),
+    Response.json({ errors: [{ code: "INVALID_REQUEST" }] }),
+  ]) {
+    const f = fakeFetch([response]);
+    const error = await assertRejects(() => sendBatch([{}], { fetch: f.fetch, ...noSleep }), ExpoError);
+    assertEquals(error.retryable, false);
+    assertEquals(f.calls.length, 1);
+  }
+});
+
+Deno.test("retry exhaustion preserves delays and the last network failure", async () => {
+  const f = fakeFetch([new Error("first"), new Error("second"), new Error("last")]);
+  const delays: number[] = [];
+  const error = await assertRejects(() => sendBatch([{}], {
+    fetch: f.fetch,
+    sleep: (ms) => { delays.push(ms); return Promise.resolve(); },
+  }), ExpoError);
+  assertEquals(delays, [1000, 3000]);
+  assertEquals(error.message, "Expo network error: last");
+  assertEquals(error.retryable, true);
+  assertEquals(f.calls.length, 3);
+});
+
+Deno.test("a permanent response after a temporary failure stops remaining retries", async () => {
+  const f = fakeFetch([new Response("", { status: 503 }), Response.json({ errors: ["unauthorized"] }, { status: 401 })]);
+  const delays: number[] = [];
+  const error = await assertRejects(() => sendBatch([{}], {
+    fetch: f.fetch,
+    sleep: (ms) => { delays.push(ms); return Promise.resolve(); },
+  }), ExpoError);
+  assertEquals(delays, [1000]);
+  assertEquals(error.message, 'Expo HTTP 401 ["unauthorized"]');
+  assertEquals(error.retryable, false);
+  assertEquals(f.calls.length, 2);
+});
+
+Deno.test("no configured retries returns the first transient failure", async () => {
+  const f = fakeFetch([new Response("", { status: 429 })]);
+  const error = await assertRejects(() => sendBatch([{}], { fetch: f.fetch, delaysMs: [] }), ExpoError);
+  assertEquals(error.message, "Expo HTTP 429");
+  assertEquals(error.retryable, true);
+  assertEquals(f.calls.length, 1);
+});

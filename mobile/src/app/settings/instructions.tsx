@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView, 
 import { NavBar, Screen } from '../../components/Screen';
 import { getDevice, updateDevice } from '../../lib/api';
 import { useHousehold } from '../../lib/auth';
-import { errorMessage } from '../../lib/authActions';
+import { errorMessage } from '../../lib/errors';
 import type { Device } from '../../lib/types';
 import { colors, radius } from '../../theme';
 

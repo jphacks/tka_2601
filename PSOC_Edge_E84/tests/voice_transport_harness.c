@@ -8,7 +8,7 @@ static TickType_t now;
 static uint8_t input[16384], output[16384];
 static size_t input_size, input_position, output_size, read_limit, write_limit;
 static bool timeout_with_bytes, eof, local, nodelay;
-static cy_rslt_t recv_error, send_error;
+static cy_rslt_t recv_error, send_error, partial_send_result;
 static uint32_t io_delay;
 static unsigned deleted, options, random_calls;
 static unsigned blocked_sends, partial_block;
@@ -36,7 +36,7 @@ cy_rslt_t cy_socket_send(cy_socket_t socket,const void *data,uint32_t length,int
     check(n<=sizeof(output)-output_size);
     if (partial_block && n>partial_block) n=partial_block;
     memcpy(output+output_size,data,n); output_size+=n; *sent=(uint32_t)n;
-    if (partial_block) { partial_block=0; return CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK; }
+    if (partial_block) { partial_block=0; return partial_send_result; }
     return 0;
 }
 cy_rslt_t cy_socket_recv(cy_socket_t socket,void *data,uint32_t length,int flags,uint32_t *received)
@@ -86,6 +86,7 @@ static void reset(voice_transport_t *link,bool websocket)
     read_limit=write_limit=16384; timeout_with_bytes=eof=nodelay=false; local=true;
     recv_error=send_error=0; io_delay=1; deleted=options=random_calls=0; protocol=0;
     blocked_sends=partial_block=0;
+    partial_send_result=CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK;
     voice_transport_init(link); link->socket=42; link->websocket=websocket; link->progress=now;
 }
 static void append(const void *data,size_t length)
@@ -195,6 +196,36 @@ static void sends_are_bounded(void)
     reset(&link,true); check(!voice_transport_send(&link,&h,NULL));
     h.length=641; check(!voice_transport_send(&link,&h,pcm));
 }
+static void socket_error_classification(void)
+{
+    const cy_rslt_t transient[]={CY_RSLT_MODULE_SECURE_SOCKETS_TIMEOUT,
+        CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK};
+    voice_transport_t link; voice_packet_t got; uint8_t wire[VOICE_PACKET];
+    size_t size=packet(wire,VOICE_OUTPUT_AUDIO,640);
+    voice_header_t h={.type=VOICE_INPUT_AUDIO,.session=1,.turn=1,.length=640};
+    for (size_t i=0;i<sizeof(transient)/sizeof(transient[0]);++i) {
+        reset(&link,false); recv_error=transient[i];
+        check(voice_transport_poll(&link,&got)==0);
+        append(wire,size); read_limit=17;
+        check(poll_until(&link,&got,100)==1);
+        check(got.header.length==640 && !memcmp(got.payload,wire+VOICE_HEADER,640));
+        check(link.message_used==0 && input_position==size);
+
+        reset(&link,false); partial_block=13; partial_send_result=transient[i];
+        check(voice_transport_send(&link,&h,wire+VOICE_HEADER));
+        check(output_size==size && !memcmp(output+VOICE_HEADER,wire+VOICE_HEADER,640));
+
+        reset(&link,false); send_error=transient[i];
+        check(!voice_transport_send(&link,&h,wire+VOICE_HEADER));
+        check(now<=2300 && output_size==0);
+    }
+    reset(&link,false); recv_error=99; append(wire,size);
+    check(voice_transport_poll(&link,&got)==-1);
+    reset(&link,false); send_error=99;
+    check(!voice_transport_send(&link,&h,wire+VOICE_HEADER));
+    check(output_size==0 && now==101);
+}
+
 static void upgrade_and_connections(void)
 {
     voice_transport_t link; voice_packet_t got;
@@ -264,6 +295,6 @@ static void legacy_silence_keeps_vad_clock(void)
 int main(void)
 {
     tcp_partial_reads(); ws_fragmentation_and_ping(); sends_are_bounded(); upgrade_and_connections();
-    legacy_silence_keeps_vad_clock();
+    legacy_silence_keeps_vad_clock(); socket_error_classification();
     printf("E84 voice transport: %u checks passed\n",checks); return 0;
 }

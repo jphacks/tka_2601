@@ -4,7 +4,8 @@ import { Alert, KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from 
 
 import { NavBar, Screen } from '../components/Screen';
 import { PrimaryButton, TextField } from '../components/ui';
-import { errorMessage, signUpWithEmail } from '../lib/authActions';
+import { signUpWithEmail } from '../lib/authActions';
+import { errorMessage } from '../lib/errors';
 import { colors } from '../theme';
 
 // デザインにない画面。ログイン画面と同じ部品で組む

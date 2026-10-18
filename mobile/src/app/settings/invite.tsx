@@ -8,7 +8,7 @@ import { NavBar, Screen } from '../../components/Screen';
 import { PrimaryButton } from '../../components/ui';
 import { getOrCreateInviteToken } from '../../lib/api';
 import { inviteLink } from '../../lib/app';
-import { errorMessage } from '../../lib/authActions';
+import { errorMessage } from '../../lib/errors';
 import { colors, radius } from '../../theme';
 
 export default function InviteScreen() {
