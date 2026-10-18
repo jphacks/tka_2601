@@ -1,0 +1,2 @@
+#pragma once
+#define DOOR_ROOT_CA_PEM "TEST CERTIFICATE PLACEHOLDER"

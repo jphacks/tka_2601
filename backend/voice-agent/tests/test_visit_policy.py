@@ -274,3 +274,23 @@ def test_circular_board_respects_an_explicit_resident_rule():
     )
     assert result.deterministic_reply is None
     assert result.validate("回覧板は玄関前に置いてください。")
+
+
+def test_device_hangup_uses_validated_final_reply_not_delivery_progress():
+    messages = [
+        ('user', '宅配便です。'),
+        ('assistant', '玄関前にお願いします。荷物と置き場所の写真を撮ってください。'),
+        ('user', '荷物を置きました。写真も撮りました。'),
+    ]
+    state = VisitState.from_messages(messages, '玄関前に置いて写真を撮ってください。')
+    assert state.should_end_after_reply('失礼いたします。')
+    assert not state.should_end_after_reply('失礼いたします。別の質問ですが。')
+    follow_up = VisitState.from_messages(messages + [('user', '写真はどこに送ればいいですか。')], state.house_rules)
+    assert not follow_up.should_end_after_reply(follow_up.deterministic_reply or follow_up.fallback())
+
+
+def test_device_sales_and_payment_close_after_policy_valid_refusal():
+    for text in ('プログラミング教室の無料体験のご案内です。', '集金に来ました。'):
+        state = VisitState.from_messages([('user', text)], '')
+        assert state.should_end_after_reply(state.deterministic_reply or state.fallback())
+        assert not state.should_end_after_reply('荷物を玄関に置いてください。')

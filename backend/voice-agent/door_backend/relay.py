@@ -60,6 +60,7 @@ class RelayError(Exception):
 
 class StartMessage(BaseModel):
     type: Literal["start"]
+    protocol_version: Literal[1, 2] = 1
     visit_id: UUID
     mode: Mode
     device_key: str = Field(min_length=1, max_length=512, pattern=r"^[\x21-\x7e]+$")
@@ -349,6 +350,11 @@ async def serve(websocket: WebSocket, dispatch: Dispatch) -> None:
     end_code: str | None = None
     try:
         start = await _receive_start(websocket)
+        if start.protocol_version == 2:
+            from .relay_v2 import serve_v2
+
+            await serve_v2(websocket, start)
+            return
         started_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         logger.info("relay start visit=%s mode=%s room=%s", start.visit_id, start.mode, room)
         outbox: asyncio.Queue[Outbound] = asyncio.Queue()

@@ -85,7 +85,11 @@ Bearer認証が必要です。`thanks`または`compound`の固定文を合成�
 
 ### `WebSocket /api/relay`
 
-PSoC 6用の中継です（`docs/spec.md` 5.4）。中継がPSoC 6の代わりにLiveKitルームへ入り、PSoC 6の音を音声トラックとして流し、エージェントの声と文字起こしをPSoC 6へ返します。接続時に`Authorization: Bearer <DOOR_API_KEY>`を付けてください。キーが違う場合は1008で閉じます。
+PSoC用の中継です。接続時に`Authorization: Bearer <DOOR_API_KEY>`を付けてください。キーが違う場合は1008で閉じます。productionではWSSを使います。開始JSONの`protocol_version`で方式を選び、省略時は従来のv1です。
+
+#### v1: 従来のLiveKitルーム中継
+
+中継がPSoC 6の代わりにLiveKitルームへ入り、PSoC 6の音を音声トラックとして流し、エージェントの声と文字起こしをPSoC 6へ返します（`docs/spec.md` 5.4）。既存クライアントと`scripts/psoc_sim.py`の動作は変わりません。
 
 | 向き | 種類 | 内容 |
 |---|---|---|
@@ -109,6 +113,45 @@ PSoC 6用の中継です（`docs/spec.md` 5.4）。中継がPSoC 6の代わり�
 
 エージェントが話していない間、LiveKitの音声トラックには無音が流れています。中継はこの無音をPSoC 6へ送りません。PSoC 6は再生中にマイクの音を送らないため（`docs/spec.md` 3.7）、無音が届き続けると訪問者の声を送れなくなるためです。
 
+#### v2: E84が発話を区切り、M5の再生完了を待つ
+
+同じ`/api/relay`に次の開始JSONを5秒以内に送ります。`visit_id`は通話ごとに新しいUUID、`mode`は`normal`・`omakase`・`away`、`device_key`は住人設定・訪問履歴用のASCII可視文字1〜512字です。`device_key`とAPI認証用の`DOOR_API_KEY`は別の鍵です。
+
+```json
+{"type":"start","protocol_version":2,"visit_id":"123e4567-e89b-42d3-a456-426614174000","mode":"omakase","device_key":"<デバイス鍵>"}
+```
+
+v2はAPIプロセス内で既存`DoorAgent`とLiveKit Agents SDKの`AgentSession`を使います。発話確定後に既存STTクライアントで認識し、既存の会話ルール・LLM・TTSへ渡します。v2自体はRTCルームへ参加せず、サーバーVADによる二重の発話分割を行いません。ブラウザーとv1のLiveKitルーム経路は維持します。
+
+制御はWebSocketのテキストJSON、音声はヘッダーなしのバイナリPCMです。JSONとPCMは同じソケット上の順番で処理します。`turn_id`と`output_id`は0から始まり、0が冒頭挨拶、1以降が来訪者への返答です。
+
+| 向き | メッセージ | 条件・動作 |
+|---|---|---|
+| サーバー → E84 | `{"type":"ready","protocol_version":2}` | 設定取得とAgentSession準備完了。まだ挨拶しません。E84はv2を確認してからM5に通話ボタン操作を依頼します |
+| E84 → サーバー | `{"type":"call_started","turn_id":0}` | M5の通話ボタン操作完了後。ここから挨拶と通話時間の計測を開始します |
+| サーバー → E84 | `{"type":"output_start","turn_id":0,"output_id":0}` | この後に返答PCMを送ります。E84はM5へ転送し、録音を停止したままにします |
+| サーバー → E84 | PCMバイナリ | 16kHz・PCM16LE・mono、通常640B/20ms。最後のフレームだけ2〜640Bの偶数長を許容します |
+| E84 → サーバー | `{"type":"audio_ack","turn_id":0,"output_id":0,"frames":10}` | M5が受け入れた累計フレーム数。実再生完了ではありません。未ACK音声は最大10フレームです |
+| サーバー → E84 | `{"type":"output_end","turn_id":0,"output_id":0,"frames":10,"samples":3200,"end_call":false}` | 応答全体の送信終了。全フレーム数と実サンプル数を確認します |
+| E84 → サーバー | `{"type":"playback_done","turn_id":0,"output_id":0,"frames":10,"samples":3200}` | M5の音声キュー・スピーカー再生・DMA排出が完了してから送ります。受信するまで次の録音を許可しません |
+| サーバー → E84 | `{"type":"listen","turn_id":1}` | 次の録音を許可。E84はM5再生完了から250msの残響待ちも行います |
+| E84 → サーバー | `{"type":"input_start","turn_id":1}` | マイクの発声待機を開始。最初のPCMを最大60秒待ちます |
+| E84 → サーバー | PCMバイナリ | 同じ16kHz・PCM16LE・mono、必ず640B/20ms。発声を検出するまで送りません |
+| E84 → サーバー | `{"type":"input_end","turn_id":1,"frames":100,"samples":32000,"reason":"silence"}` | 無音1.2秒で確定。30秒到達時は`reason:"max_duration"`、`frames:1500`、`samples:480000`。受信済みの総量を検証してからASRを始めます |
+| サーバー → E84 | `{"type":"no_reply","turn_id":1}` | 認識結果が空、または会話ルールが返答を保留した場合。音声を作らず次の`listen`へ進みます |
+| サーバー → E84 | `{"type":"call_end","turn_id":1,"reason":"completed"}` | 最後の返答をM5が再生し終えてから送信。E84がM5へ終了ボタン操作を依頼します |
+| E84 → サーバー | `{"type":"call_ended","turn_id":1}` | M5の終了操作完了後。サーバーは1000で閉じ、訪問履歴を保存します |
+
+表のフレーム数は例です。ACKと再生完了には実際に受け取った数を使い、ターン番号・出力番号・総量が一致しない通知は拒否します。`output_end`の`end_call:true`は最後の返答を示しますが、終了ボタンを押すのは`playback_done`後の`call_end`を受けてからです。サーボ完了通知はPWM操作完了であり、物理ボタンが押せたことをセンサーで検証するものではありません。
+
+録音の1.2秒判定はE84が行います。30秒には先行バッファと末尾無音を含み、サーバーの入力バッファは最大960,000Bです。入力途中の切断やサイズ不一致ではASRを実行しません。応答待ち・M5再生中は入力PCMを受け付けません。`input_start`を受けただけで録音30秒の時計を始めず、最初のPCMから35秒の転送猶予と、以後の5秒無進捗期限を設けます。
+
+`{"type":"ping","turn_id":1,"seq":7}`には同じ番号の`pong`を返します。モデル処理・再生待ち中も有効です。`cancel`または`end`は通話全体の中断で、録音1回の確定には使いません。異常時は`error`の後に閉じ、E84/M5は再生を止めて終了操作へ進みます。通話上限は既存の`DOOR_RELAY_MAX_SESSION_SECONDS`（既定120秒）、来訪者の発話は最大20ターン、返答1回は最大60秒です。
+
+v2の文字起こしはサーバーの訪問履歴に保存し、E84へ`transcript`は送りません。TTSは既存の品質調整のため返答全体の生成を待ちます。PCMの転送とM5の再生は逐次ですが、TTSの生成途中から再生が始まる仕様ではありません。
+
+端末の設定・ビルド・実機確認は[E84の音声会話手順](../../PSOC_Edge_E84/docs/voice-stream.md)を参照してください。E84はv2対応サーバーを必要とし、URLだけを変更した旧サーバーでは通話を開始しません。
+
 #### 住人ルールの組み立て
 
 中継は会話の開始時に一度だけ、`device_key`を付けてSupabaseのEdge Function（`GET {DOOR_SUPABASE_URL}/functions/v1/device/settings`）から家の設定を読みます。返事は`{"paired": true, "mode": "normal", "away_leave_at_door": false, "auto_away": false, "extra_instructions": ""}`の形で（`supabase/README.md`の「本体が使う API」）、中継が使うのは`away_leave_at_door`と`extra_instructions`だけです。モードは返事の`mode`ではなく、PSoC 6が開始のJSONで送った`mode`を使います。中継は設定と`mode`から住人ルールを組み立て、`/api/connect`の`house_rules`と同じ扱いで会話エージェントへ渡します。
@@ -118,7 +161,7 @@ PSoC 6用の中継です（`docs/spec.md` 5.4）。中継がPSoC 6の代わり�
 - `extra_instructions`（AIへの追加の指示）は、「1〜8とぶつかるときは1〜8を守る」という前置きを付けて規則の後ろに足します。全体が`DOOR_MAX_HOUSE_RULES_CHARS`（既定800字）を超える場合は、追加の指示の末尾を切ります。規則が最も長い`away`の置き配ありでは、追加の指示に使えるのは350字です。Supabaseの`devices.extra_instructions`も350字までに制限しているため、既定の設定では切られません。
 - 設定を読めない場合（`DOOR_SUPABASE_URL`が未設定、`DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS`以内に応答がない、200以外、形が違う）は、設定なしの規則で会話を続けます。
 
-会話が`ready`になった後、終了時に確定した訪問者・AIの文字起こしを1回だけSupabaseの`PUT /functions/v1/device/visits/{visit_id}`へ保存します。開始JSONの`visit_id`と`device_key`を使い、secret/service-role keyは使いません。保存に失敗しても会話には影響しません。音声は保存しません。書き込みのタイムアウトは`DOOR_VISIT_WRITE_TIMEOUT_SECONDS`（既定3秒）です。
+v1は`ready`、v2は`call_started`まで到達した会話について、終了時に確定した訪問者・AIの文字起こしを1回だけSupabaseの`PUT /functions/v1/device/visits/{visit_id}`へ保存します。開始JSONの`visit_id`と`device_key`を使い、secret/service-role keyは使いません。保存に失敗しても会話には影響しません。音声は保存しません。書き込みのタイムアウトは`DOOR_VISIT_WRITE_TIMEOUT_SECONDS`（既定3秒）です。
 
 ## 応答の速さ
 

@@ -58,6 +58,7 @@ class DoorAgent(Agent):
     def __init__(self, house_rules: str) -> None:
         safe_rules = house_rules.strip()[: settings.max_house_rules_chars] or settings.house_rules
         self.house_rules = safe_rules
+        self.last_reply_ends_call = False
         super().__init__(instructions=BASE_INSTRUCTIONS.format(house_rules=safe_rules))
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
@@ -67,6 +68,7 @@ class DoorAgent(Agent):
             raise StopResponse()
 
     async def llm_node(self, chat_ctx, tools, model_settings):
+        self.last_reply_ends_call = False
         messages = [item for item in chat_ctx.items if item.type == "message"]
         state = VisitState.from_messages(
             [(item.role, item.text_content or "") for item in messages], self.house_rules
@@ -90,6 +92,7 @@ class DoorAgent(Agent):
             if not state.validate(reply):
                 reply = state.fallback()
         if reply:
+            self.last_reply_ends_call = state.should_end_after_reply(reply)
             yield reply
 
 
