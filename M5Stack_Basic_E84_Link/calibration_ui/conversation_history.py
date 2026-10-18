@@ -93,9 +93,13 @@ class ConversationHistory:
                     self.current['status'] = 'device_restarted'
                     self.current['ended'] = timestamp
                     changed = True
-                reason = re.search(r'\[VOICE\] Server error code: ([a-z_]+)\.', text)
+                reason = re.search(r'\[VOICE\] Server error code: ([a-z0-9_]+)\.', text)
                 if reason:
                     self.current['reason'] = reason[1]
+                    changed = True
+                ending = re.search(r'\[VOICE\] (?:Call ending: reason=|Server end reason: )([a-z0-9_]+)', text)
+                if ending and ending[1] != 'completed' and self.current['reason'] is None:
+                    self.current['reason'] = ending[1]
                     changed = True
                 if 'Capture aborted:' in text:
                     self.current['reason'] = 'capture_aborted'

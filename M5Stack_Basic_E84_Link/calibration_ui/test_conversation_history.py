@@ -5,6 +5,12 @@ import unittest
 from conversation_history import ConversationHistory
 
 class HistoryTests(unittest.TestCase):
+    def test_m5_reason_keeps_digits(self):
+        history = ConversationHistory()
+        history.record('[VOICE] Preparing streaming call.')
+        history.record('[VOICE] Call ending: reason=m5_auth_failed state=0 turn=0 input_ms=0.')
+        self.assertEqual(history.snapshot()['session']['reason'], 'm5_auth_failed')
+
     def test_actual_transcripts_persist_and_reload(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'history.json'
@@ -40,6 +46,22 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(len(history.snapshot()['session']['messages'][0]['text']),4096)
         self.assertEqual(history.snapshot(first)['session']['messages'][0]['text'],'2')
         self.assertIsNone(history.snapshot('unknown')['session'])
+
+    def test_real_stop_reason_survives_cleanup(self):
+        history=ConversationHistory()
+        history.record('[VOICE] Preparing streaming call.')
+        history.record('[VOICE] Server error code: time_limit.')
+        history.record('[VOICE] Call ending: reason=server_protocol_error state=4 turn=2 input_ms=1600.')
+        history.record('[VOICE] Call stopped; chime detection rearmed.')
+        self.assertEqual(history.snapshot()['session']['reason'],'time_limit')
+        history.record('[VOICE] Preparing streaming call.')
+        history.record('[VOICE] Call ending: reason=microphone_or_send_failed state=6 turn=1 input_ms=300.')
+        history.record('[VOICE] Call stopped; chime detection rearmed.')
+        self.assertEqual(history.snapshot()['session']['reason'],'microphone_or_send_failed')
+        history.record('[VOICE] Preparing streaming call.')
+        history.record('[VOICE] Server end reason: turn_limit.')
+        history.record('[VOICE] Call ended; chime detection rearmed.')
+        self.assertEqual(history.snapshot()['session']['reason'],'turn_limit')
 
     def test_invalid_file_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:

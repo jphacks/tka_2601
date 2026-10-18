@@ -16,10 +16,12 @@ void voice_transport_init(voice_transport_t *l)
     mbedtls_entropy_init(&l->entropy); mbedtls_ctr_drbg_init(&l->random);
 }
 bool voice_transport_legacy(const voice_transport_t *l) { return l->websocket && l->relay.legacy; }
-static const char *device_key(void)
+static const char *device_key(const voice_transport_t *link)
 {
-    // Same diagnostic fallback as the backend's psoc_sim.py. It cannot load
-    // resident settings or save history as a registered household device.
+    // Same diagnostic fallback for both relay versions. The API bearer key
+    // still authenticates the connection. An unpaired ID cannot load resident
+    // settings or save history as a registered household device.
+    if (link->diagnostic) return "e84-diagnostic-unpaired";
     return DOOR_DEVICE_KEY[0] ? DOOR_DEVICE_KEY : "e84-diagnostic-unpaired";
 }
 void voice_transport_close(voice_transport_t *l)
@@ -41,8 +43,23 @@ static bool send_all(voice_transport_t *l, const uint8_t *p, size_t n)
     TickType_t start=xTaskGetTickCount();
     while (n) {
         uint32_t sent=0;
-        if (xTaskGetTickCount()-start>pdMS_TO_TICKS(2000) ||
-            cy_socket_send(l->socket,p,(uint32_t)n,0,&sent)!=CY_RSLT_SUCCESS || !sent || sent>n) return false;
+        if (xTaskGetTickCount()-start>pdMS_TO_TICKS(2000)) {
+            printf("[VOICE] %s send stalled for 2 seconds.\n",l->websocket?"Server":"M5");
+            return false;
+        }
+        cy_rslt_t result=cy_socket_send(l->socket,p,(uint32_t)n,0,&sent);
+        if (sent>n) return false;
+        if (result==CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK ||
+            result==CY_RSLT_MODULE_SECURE_SOCKETS_TIMEOUT) {
+            p+=sent; n-=sent;
+            if (n) vTaskDelay(1); /* bounded backpressure, not a disconnect */
+            continue;
+        }
+        if (result!=CY_RSLT_SUCCESS || !sent) {
+            printf("[VOICE] %s send failed: result=0x%08lx bytes=%lu remaining=%lu.\n",
+                l->websocket?"Server":"M5",(unsigned long)result,(unsigned long)sent,(unsigned long)n);
+            return false;
+        }
         p+=sent; n-=sent;
     }
     return true;
@@ -55,8 +72,15 @@ static int receive(voice_transport_t *l, uint8_t *p, size_t wanted, size_t *used
     if (n>wanted-*used) return -1;
     *used+=n;
     if (n) l->progress=xTaskGetTickCount();
-    if (result!=CY_RSLT_SUCCESS && result!=CY_RSLT_MODULE_SECURE_SOCKETS_TIMEOUT) return -1;
-    if (result==CY_RSLT_SUCCESS && !n) return -1;
+    if (result!=CY_RSLT_SUCCESS && result!=CY_RSLT_MODULE_SECURE_SOCKETS_TIMEOUT &&
+        result!=CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK) {
+        printf("[VOICE] %s receive failed: result=0x%08lx.\n",l->websocket?"Server":"M5",(unsigned long)result);
+        return -1;
+    }
+    if (result==CY_RSLT_SUCCESS && !n) {
+        printf("[VOICE] %s socket closed by peer.\n",l->websocket?"Server":"M5");
+        return -1;
+    }
     return *used==wanted ? 1 : 0;
 }
 static bool connect_socket(voice_transport_t *l, const char *host, uint16_t port, bool tls)
@@ -90,7 +114,7 @@ static bool connect_socket(voice_transport_t *l, const char *host, uint16_t port
 }
 static bool poll_timeout(voice_transport_t *l)
 {
-    uint32_t timeout=5;
+    uint32_t timeout=1;
     l->progress=xTaskGetTickCount();
     return option(l,CY_SOCKET_SOL_SOCKET,CY_SOCKET_SO_RCVTIMEO,&timeout,sizeof(timeout));
 }
@@ -101,10 +125,12 @@ bool voice_transport_m5(voice_transport_t *l)
 }
 bool voice_transport_server(voice_transport_t *l)
 {
-    if (!voice_relay_settings_valid(DOOR_RELAY_MODE,VOICE_RELAY_PROTOCOL==1?device_key():DOOR_DEVICE_KEY)) {
+    if (!voice_relay_settings_valid(DOOR_RELAY_MODE,device_key(l))) {
         printf("[VOICE] Relay settings missing/invalid: set DOOR_DEVICE_KEY and DOOR_RELAY_MODE in .env, run python3 configure_api.py, then rebuild/program.\n");
         return false;
     }
+    if (l->diagnostic || !DOOR_DEVICE_KEY[0])
+        printf("[VOICE] Unpaired diagnostic session; resident settings/history unavailable.\n");
     if (!DOOR_API_HOST[0] || strlen(DOOR_API_HOST)>127 || strlen(DOOR_API_KEY)<32 || strlen(DOOR_API_KEY)>511)
         return false;
     for (const char *p=DOOR_API_KEY;*p;++p) if ((unsigned char)*p<33 || (unsigned char)*p>126) return false;
@@ -176,7 +202,7 @@ bool voice_transport_send(voice_transport_t *l, const voice_header_t *h, const v
         }
         size_t length; uint8_t opcode;
         if (!voice_relay_encode(&l->relay,h,payload,uuid,DOOR_RELAY_MODE,
-                l->relay.allow_legacy?device_key():DOOR_DEVICE_KEY,
+                device_key(l),
                 wire,sizeof(wire),&length,&opcode)) return false;
         bool sent=!length || websocket_send(l,opcode,wire,length);
         memset(wire,0,sizeof(wire)); /* start contains the private device key */
@@ -197,7 +223,10 @@ int voice_transport_poll(voice_transport_t *l, voice_packet_t *p)
 {
     if (l->socket==CY_SOCKET_INVALID_HANDLE) return -1;
     if ((l->header_used || l->message_used || l->frame_used || l->fragmented) &&
-        xTaskGetTickCount()-l->progress>pdMS_TO_TICKS(5000)) return -1;
+        xTaskGetTickCount()-l->progress>pdMS_TO_TICKS(5000)) {
+        printf("[VOICE] %s partial receive stalled for 5 seconds.\n",l->websocket?"Server":"M5");
+        return -1;
+    }
     if (!l->websocket) {
         int r;
         if (l->message_used<VOICE_HEADER) {

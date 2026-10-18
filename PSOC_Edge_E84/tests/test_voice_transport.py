@@ -18,12 +18,19 @@ class VoiceTransportTests(unittest.TestCase):
             for name in ("voice_transport.c", "voice_transport.h", "voice_protocol.c",
                          "voice_protocol.h", "voice_settings.h", "relay_protocol.c", "relay_protocol.h"):
                 shutil.copyfile(ROOT / "source" / name, work / name)
-            binary = work / "transport_test"
-            subprocess.run([
-                "clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-g", "-DVOICE_RELAY_PROTOCOL=2",
-                "-fsanitize=address,undefined", "-I", str(work),
-                str(ROOT / "tests/voice_transport_harness.c"),
-                str(work / "voice_transport.c"), str(work / "voice_protocol.c"), str(work / "relay_protocol.c"),
-                "-o", str(binary),
-            ], check=True)
-            subprocess.run([str(binary)], check=True)
+            for paired in (True, False):
+                with self.subTest(paired=paired):
+                    extra = []
+                    if not paired:
+                        config=work / "api_settings.h"
+                        config.write_text(config.read_text().replace('"test-device-key"','""'))
+                        extra = ["-DTEST_UNPAIRED"]
+                    binary = work / ("transport_paired" if paired else "transport_unpaired")
+                    subprocess.run([
+                        "clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-g", *extra,
+                        "-fsanitize=address,undefined", "-I", str(work),
+                        str(ROOT / "tests/voice_transport_harness.c"),
+                        str(work / "voice_transport.c"), str(work / "voice_protocol.c"), str(work / "relay_protocol.c"),
+                        "-o", str(binary),
+                    ], check=True)
+                    subprocess.run([str(binary)], check=True)

@@ -113,9 +113,9 @@ static bool integer(json_t *j, uint32_t *out)
     *out=n; return true;
 }
 enum { F_TYPE=1, F_VERSION=2, F_TURN=4, F_OUTPUT=8, F_FRAMES=16, F_SAMPLES=32, F_END=64, F_SEQ=128,
-       F_STATE=256, F_SPEAKER=512, F_TEXT=1024, F_CODE=2048 };
+       F_STATE=256, F_SPEAKER=512, F_TEXT=1024, F_CODE=2048, F_REASON=4096 };
 typedef struct {
-    char type[32], state[16], speaker[16], code[48]; unsigned fields; bool goodbye;
+    char type[32], state[16], speaker[16], code[48], reason[48]; unsigned fields; bool goodbye;
     const uint8_t *text; size_t text_length;
     uint32_t version, turn, output, frames, samples, seq; bool end;
 } fields_t;
@@ -146,6 +146,7 @@ static bool fields(const uint8_t *wire, size_t n, fields_t *f)
         else if(!strcmp(key,"speaker")) bit=F_SPEAKER;
         else if(!strcmp(key,"text")) bit=F_TEXT;
         else if(!strcmp(key,"code")) bit=F_CODE;
+        else if(!strcmp(key,"reason")) bit=F_REASON;
         if(bit && (f->fields&bit)) return false;
         f->fields|=bit;
         if(value) { if(!integer(&j,value)) return false; }
@@ -153,6 +154,7 @@ static bool fields(const uint8_t *wire, size_t n, fields_t *f)
         else if(bit==F_STATE) { if(!string(&j,f->state,sizeof(f->state))) return false; }
         else if(bit==F_SPEAKER) { if(!string(&j,f->speaker,sizeof(f->speaker))) return false; }
         else if(bit==F_CODE) { if(!string(&j,f->code,sizeof(f->code))) return false; }
+        else if(bit==F_REASON) { if(!string(&j,f->reason,sizeof(f->reason))) return false; }
         else if(bit==F_TEXT) {
             const uint8_t *start=j.p;
             if(!string(&j,NULL,0)) return false;
@@ -328,7 +330,14 @@ int voice_relay_decode(voice_relay_t *r, uint8_t opcode,
         h->type=VOICE_OUTPUT_END; h->sequence=f.frames; h->flags=f.end?1:0;
     } else if(!strcmp(f.type,"listen")) { h->type=VOICE_LISTEN; }
     else if(!strcmp(f.type,"no_reply")) { h->type=VOICE_NO_REPLY; }
-    else if(!strcmp(f.type,"call_end")) { h->type=VOICE_CALL_END; }
+    else if(!strcmp(f.type,"call_end")) {
+        const char *reason=!strcmp(f.reason,"completed")?"completed":
+            !strcmp(f.reason,"time_limit")?"time_limit":
+            !strcmp(f.reason,"turn_limit")?"turn_limit":
+            !strcmp(f.reason,"silence_timeout")?"silence_timeout":"other";
+        printf("[VOICE] Server end reason: %s.\n",reason);
+        h->type=VOICE_CALL_END;
+    }
     else if(!strcmp(f.type,"ping") || !strcmp(f.type,"pong")) {
         if(!(f.fields&F_SEQ)) return -1;
         h->type=!strcmp(f.type,"ping")?VOICE_PING:VOICE_PONG; h->sequence=f.seq;

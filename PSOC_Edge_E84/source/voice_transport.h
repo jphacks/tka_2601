@@ -9,7 +9,7 @@
 
 typedef struct {
     cy_socket_t socket;
-    bool websocket, fragmented, final;
+    bool websocket, fragmented, final, diagnostic;
     uint8_t opcode, message_opcode, frame_header[4], frame[VOICE_PACKET], message[VOICE_PACKET];
     size_t header_used, frame_used, frame_length, message_used;
     TickType_t progress;

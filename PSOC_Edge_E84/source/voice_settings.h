@@ -6,10 +6,11 @@
 #ifndef VOICE_STREAM_PATH
 #define VOICE_STREAM_PATH "/api/relay"
 #endif
-// 1 matches GitHub backend/voice-agent and the currently deployed server.
-// Set to 2 only when that server explicitly supports protocol_version:2.
+// The deployed server now explicitly advertises ready/protocol_version:2.
+// V2 submits a completed utterance directly to ASR, without a second VAD.
+// Set to 1 only for older servers without version 2 support.
 #ifndef VOICE_RELAY_PROTOCOL
-#define VOICE_RELAY_PROTOCOL 1
+#define VOICE_RELAY_PROTOCOL 2
 #endif
 #ifndef VOICE_RMS_GATE
 #define VOICE_RMS_GATE 600u

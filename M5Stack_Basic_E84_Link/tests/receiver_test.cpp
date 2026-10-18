@@ -3,8 +3,11 @@
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <assert.h>
+#include <errno.h>
+static bool blockReply = false;
 
 int e84FakeSend(int, const void* data, size_t size, int) {
+  if (blockReply) { errno = ENOBUFS; return -1; }
   const auto* bytes = static_cast<const uint8_t*>(data);
   fake::current->output.insert(fake::current->output.end(), bytes, bytes + size);
   return static_cast<int>(size);
@@ -143,6 +146,16 @@ void isolatedServoDiagnostics() {
   check(fake::servoPins.size() == operations);
   // Subsequent full call/playback tests below exercise normal operation again.
 }
+void transientReplyPressure() {
+  auto s = connect(95);
+  blockReply = true;
+  enqueue(s, Type::Ping, 95, 0, 7); tick();
+  check(s->connected && s->output.empty());
+  tick(1000); check(s->connected);
+  blockReply = false; tick();
+  check(saw(replies(s), Type::Pong));
+  s->connected = false; tick();
+}
 void completedPlayback() {
   auto s = connect(100);
   startCall(s, 100);
@@ -152,23 +165,26 @@ void completedPlayback() {
   check(saw(replies(s), Type::CallStarted) && fake::servoPins.size() == before);
   enqueue(s, Type::OutputStart, 100); tick();
   uint8_t pcm[640] = {};
-  for (unsigned i = 0; i < 9; ++i) { pcm[0] = i; enqueue(s, Type::OutputAudio, 100, 0, i, pcm, 640); tick(); }
+  for (unsigned i = 0; i < kPrebufferFrames - 1; ++i) { pcm[0] = i; enqueue(s, Type::OutputAudio, 100, 0, i, pcm, 640); tick(); }
   check(M5.Speaker.requests.empty()); // not enough prebuffer
-  pcm[0] = 9; enqueue(s, Type::OutputAudio, 100, 0, 9, pcm, 640); tick(); tick();
+  pcm[0] = kPrebufferFrames - 1; enqueue(s, Type::OutputAudio, 100, 0, kPrebufferFrames - 1, pcm, 640); tick(); tick();
   check(!M5.Speaker.requests.empty());
   auto accepted = replies(s);
-  check(accepted.size() == 10 && accepted.back().type == Type::AudioAck && accepted.back().sequence == 10);
+  check(accepted.size() == kPrebufferFrames && accepted.back().sequence == kPrebufferFrames);
   // Drain input without END: never report playback complete.
   unsigned played = 0;
   while (!M5.Speaker.requests.empty()) {
     check(M5.Speaker.requests.front().data[0] == static_cast<int16_t>(played++));
     M5.Speaker.requests.pop_front(); tick(20);
   }
-  check(played == 10);
-  tick(100); check(!saw(replies(s), Type::PlaybackDone));
-  enqueue(s, Type::OutputEnd, 100, 0, 10); tick(); tick();
+  check(played == kPrebufferFrames);
+  tick(100);
+  accepted = replies(s);
+  check(accepted.empty()); // Already credited within the bounded jitter buffer.
+  check(!saw(accepted, Type::PlaybackDone));
+  enqueue(s, Type::OutputEnd, 100, 0, kPrebufferFrames); tick(); tick();
   check(!saw(replies(s), Type::PlaybackDone));
-  tick(29); check(!saw(replies(s), Type::PlaybackDone));
+  tick(59); check(!saw(replies(s), Type::PlaybackDone));
   tick(1); check(saw(replies(s), Type::PlaybackDone));
   // API-driven TCP CALL_END uses the same fixed GPIO17 calibration and timing
   // as the isolated USB end test; acknowledge only after return and detach.
@@ -199,12 +215,12 @@ void backpressureAndDisconnect() {
   for (unsigned i = 0; i < 65; ++i) enqueue(s, Type::OutputAudio, 101, 0, i, pcm, 640);
   for (unsigned i = 0; i < 40; ++i) tick();
   auto accepted = replies(s);
-  check(accepted.size() == 64 && accepted.back().sequence == 64);
+  check(!accepted.empty() && accepted.back().sequence == kCreditFrames); // Credit stops before ring capacity.
   check(s->input.size() - s->offset == 664); // frame65 remains in TCP
   check(M5.Speaker.requests.size() == 2);
   M5.Speaker.requests.pop_front(); tick(); tick();
   accepted = replies(s);
-  check(accepted.size() == 1 && accepted[0].sequence == 65);
+  check(accepted.size() == 1 && accepted[0].sequence == kCreditFrames + 1);
   const unsigned stops = M5.Speaker.ends;
   s->connected = false; tick();
   check(M5.Speaker.ends > stops && M5.Speaker.requests.empty());
@@ -236,7 +252,7 @@ void shortPlaybackAndStall() {
   enqueue(s, Type::OutputEnd, 103, 0, 1); tick(); tick();
   check(M5.Speaker.requests.size() == 1 && M5.Speaker.requests.front().count == 1);
   check(M5.Speaker.requests.front().data[0] == -2);
-  M5.Speaker.requests.pop_front(); tick(); tick(30);
+  M5.Speaker.requests.pop_front(); tick(); tick(60);
   check(saw(replies(s), Type::PlaybackDone));
   enqueue(s, Type::OutputStart, 103, 1); tick();
   enqueue(s, Type::OutputAudio, 103, 1, 0, pcm, 2); tick();
@@ -292,6 +308,7 @@ int main() {
   for (const char* cmd : {"@begin", "@time d 0", "@time c 500", "@time e 500", "@time r 500", "@save"})
     calibrationCommand(cmd);
   isolatedServoDiagnostics();
+  transientReplyPressure();
   completedPlayback(); backpressureAndDisconnect(); incompleteAndMalformed(); shortPlaybackAndStall();
   acknowledgedCancellation();
   disconnectDuringCallPress();

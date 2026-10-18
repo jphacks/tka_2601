@@ -51,21 +51,30 @@ def connect(client):
 
 def start(ws):
     ws.send_json({'type': 'start', 'protocol_version': 2, 'visit_id': str(uuid4()), 'mode': 'away', 'device_key': 'device-key'})
-    assert ws.receive_json() == {'type': 'ready', 'protocol_version': 2}
+    assert control(ws) == {'type': 'ready', 'protocol_version': 2}
+
+def control(ws):
+    while True:
+        payload = ws.receive_json()
+        if payload.get('type') != 'transcript':
+            return payload
+        if not hasattr(ws, 'transcripts'):
+            ws.transcripts = []
+        ws.transcripts.append(payload)
 
 def reply(ws, turn, frames=2, finish=True, end=False):
-    assert ws.receive_json() == {'type': 'output_start', 'turn_id': turn, 'output_id': turn}
+    assert control(ws) == {'type': 'output_start', 'turn_id': turn, 'output_id': turn}
     for index in range(frames):
         assert ws.receive_bytes() == PCM
         ws.send_json({'type': 'audio_ack', 'turn_id': turn, 'output_id': turn, 'frames': index + 1})
-    assert ws.receive_json() == {'type': 'output_end', 'turn_id': turn, 'output_id': turn, 'frames': frames, 'samples': frames * 320, 'end_call': end}
+    assert control(ws) == {'type': 'output_end', 'turn_id': turn, 'output_id': turn, 'frames': frames, 'samples': frames * 320, 'end_call': end}
     if finish:
         ws.send_json({'type': 'playback_done', 'turn_id': turn, 'output_id': turn, 'frames': frames, 'samples': frames * 320})
 
 def greeting(ws):
     ws.send_json({'type': 'call_started', 'turn_id': 0})
     reply(ws, 0)
-    assert ws.receive_json() == {'type': 'listen', 'turn_id': 1}
+    assert control(ws) == {'type': 'listen', 'turn_id': 1}
 
 def input_turn(ws, turn=1, frames=2, reason='silence'):
     ws.send_json({'type': 'input_start', 'turn_id': turn})
@@ -82,13 +91,15 @@ def test_two_turns_only_listen_after_physical_playback_and_save_history(backend)
             input_turn(ws, turn)
             reply(ws, turn, finish=False)
             ws.send_json({'type': 'ping', 'turn_id': turn, 'seq': 7})
-            assert ws.receive_json() == {'type': 'pong', 'turn_id': turn, 'seq': 7}
+            assert control(ws) == {'type': 'pong', 'turn_id': turn, 'seq': 7}
             assert not agent.played_event.is_set()
             ws.send_json({'type': 'playback_done', 'turn_id': turn, 'output_id': turn, 'frames': 2, 'samples': 640})
-            assert ws.receive_json() == {'type': 'listen', 'turn_id': turn + 1}
+            assert control(ws) == {'type': 'listen', 'turn_id': turn + 1}
         ws.send_json({'type': 'end'})
     assert agent.recognized == [PCM * 2, PCM * 2]
     assert agent.closed
+    assert [u['speaker'] for u in ws.transcripts] == ['ai', 'visitor', 'ai', 'visitor', 'ai']
+    assert ws.transcripts[1]['text'] == '宅配便です。'
     assert [u['speaker'] for u in backend.visits[0][1]['utterances']] == ['ai', 'visitor', 'ai', 'visitor', 'ai']
 
 def test_final_reply_waits_for_playback_then_end_button(backend):
@@ -97,11 +108,11 @@ def test_final_reply_waits_for_playback_then_end_button(backend):
         backend.agents[0].end = True
         input_turn(ws); reply(ws, 1, finish=False, end=True)
         ws.send_json({'type': 'ping', 'turn_id': 1, 'seq': 3})
-        assert ws.receive_json()['type'] == 'pong'
+        assert control(ws)['type'] == 'pong'
         ws.send_json({'type': 'playback_done', 'turn_id': 1, 'output_id': 1, 'frames': 2, 'samples': 640})
-        assert ws.receive_json() == {'type': 'call_end', 'turn_id': 1, 'reason': 'completed'}
+        assert control(ws) == {'type': 'call_end', 'turn_id': 1, 'reason': 'completed'}
         ws.send_json({'type': 'call_ended', 'turn_id': 1})
-        with pytest.raises(WebSocketDisconnect) as error: ws.receive_json()
+        with pytest.raises(WebSocketDisconnect) as error: control(ws)
         assert error.value.code == 1000
 
 def test_no_reply_has_no_fabricated_audio_and_resumes(backend):
@@ -109,8 +120,8 @@ def test_no_reply_has_no_fabricated_audio_and_resumes(backend):
         start(ws); greeting(ws)
         backend.agents[0].no_reply = True
         input_turn(ws)
-        assert ws.receive_json() == {'type': 'no_reply', 'turn_id': 1}
-        assert ws.receive_json() == {'type': 'listen', 'turn_id': 2}
+        assert control(ws) == {'type': 'no_reply', 'turn_id': 1}
+        assert control(ws) == {'type': 'listen', 'turn_id': 2}
         ws.send_json({'type': 'cancel'})
 
 @pytest.mark.parametrize('payload', [
@@ -122,7 +133,7 @@ def test_rejects_state_and_generation_mismatch(backend, payload):
     with TestClient(api.app) as client, connect(client) as ws:
         start(ws); greeting(ws)
         ws.send_json(payload)
-        assert ws.receive_json()['type'] == 'error'
+        assert control(ws)['type'] == 'error'
 
 @pytest.mark.parametrize('frames,samples,reason', [(1, 320, 'silence'), (2, 639, 'silence'), (2, 640, 'max_duration'), (2, 640, 'other')])
 def test_input_end_validates_exact_consumed_audio(backend, frames, samples, reason):
@@ -131,7 +142,7 @@ def test_input_end_validates_exact_consumed_audio(backend, frames, samples, reas
         ws.send_json({'type': 'input_start', 'turn_id': 1})
         ws.send_bytes(PCM); ws.send_bytes(PCM)
         ws.send_json({'type': 'input_end', 'turn_id': 1, 'frames': frames, 'samples': samples, 'reason': reason})
-        assert ws.receive_json()['type'] == 'error'
+        assert control(ws)['type'] == 'error'
     assert backend.agents[0].recognized == []
 
 def test_accepts_exact_thirty_seconds_and_rejects_overrun(backend):
@@ -139,10 +150,10 @@ def test_accepts_exact_thirty_seconds_and_rejects_overrun(backend):
         start(ws); greeting(ws)
         input_turn(ws, frames=1500, reason='max_duration')
         reply(ws, 1)
-        assert ws.receive_json()['turn_id'] == 2
+        assert control(ws)['turn_id'] == 2
         ws.send_json({'type': 'input_start', 'turn_id': 2})
         for _ in range(1501): ws.send_bytes(PCM)
-        assert ws.receive_json()['code'] == 'input_limit'
+        assert control(ws)['code'] == 'input_limit'
     assert len(backend.agents[0].recognized) == 1
     assert len(backend.agents[0].recognized[0]) == 960000
 
@@ -152,7 +163,7 @@ def test_pcm_is_forbidden_while_m5_is_playing(backend):
         ws.send_json({'type': 'call_started', 'turn_id': 0})
         reply(ws, 0, finish=False)
         ws.send_bytes(PCM)
-        assert ws.receive_json()['code'] == 'invalid_audio'
+        assert control(ws)['code'] == 'invalid_audio'
     assert backend.agents[0].closed
 
 def test_large_output_is_bounded_by_ack_window_but_keepalive_works(backend):
@@ -160,13 +171,13 @@ def test_large_output_is_bounded_by_ack_window_but_keepalive_works(backend):
         start(ws)
         backend.agents[0].frames = 15
         ws.send_json({'type': 'call_started', 'turn_id': 0})
-        assert ws.receive_json()['type'] == 'output_start'
+        assert control(ws)['type'] == 'output_start'
         for _ in range(10): assert ws.receive_bytes() == PCM
         ws.send_json({'type': 'ping', 'turn_id': 0, 'seq': 1})
-        assert ws.receive_json()['type'] == 'pong'
+        assert control(ws)['type'] == 'pong'
         ws.send_json({'type': 'audio_ack', 'turn_id': 0, 'output_id': 0, 'frames': 10})
         for _ in range(5): assert ws.receive_bytes() == PCM
-        assert ws.receive_json()['frames'] == 15
+        assert control(ws)['frames'] == 15
         ws.send_json({'type': 'cancel'})
     assert backend.agents[0].closed
 
@@ -174,10 +185,10 @@ def test_unacknowledged_playback_done_is_rejected(backend):
     with TestClient(api.app) as client, connect(client) as ws:
         start(ws)
         ws.send_json({'type': 'call_started', 'turn_id': 0})
-        assert ws.receive_json()['type'] == 'output_start'
-        ws.receive_bytes(); ws.receive_bytes(); ws.receive_json()
+        assert control(ws)['type'] == 'output_start'
+        ws.receive_bytes(); ws.receive_bytes(); control(ws)
         ws.send_json({'type': 'playback_done', 'turn_id': 0, 'output_id': 0, 'frames': 2, 'samples': 640})
-        assert ws.receive_json()['code'] == 'invalid_playback'
+        assert control(ws)['code'] == 'invalid_playback'
 
 def test_input_start_waits_for_first_speech_before_recording_deadline():
     class Socket:
@@ -209,3 +220,22 @@ def test_turn_limit_hangs_up_with_current_generation():
         assert call.turn == 20
     asyncio.run(scenario())
     assert messages == [{'type': 'call_end', 'turn_id': 20, 'reason': 'turn_limit'}]
+
+
+@pytest.mark.parametrize('text', ['荷物を玄関に置きました。', '日' * 2000, '😀\\\n"' * 1000])
+def test_transcript_event_is_bounded_and_full_history_is_preserved(text):
+    import json
+    messages = []
+    class Socket:
+        async def send_json(self, payload): messages.append(payload)
+    async def scenario():
+        start = relay_v2.StartMessage(type='start', protocol_version=2, visit_id=uuid4(), mode='normal', device_key='key')
+        call = relay_v2.DeviceConversation(Socket(), start)
+        await call.transcript('visitor', text)
+        assert call.utterances[0]['text'] == text
+    asyncio.run(scenario())
+    assert len(messages) == 1
+    payload = messages[0]
+    assert payload['type'] == 'transcript' and payload['speaker'] == 'visitor'
+    assert text.startswith(payload['text']) and payload['text']
+    assert len(json.dumps(payload, ensure_ascii=True).encode('utf-8')) <= 1024

@@ -10,6 +10,7 @@ typedef struct { cy_socket_ip_address_t ip_address; uint16_t port; } cy_socket_s
 #define CY_SOCKET_INVALID_HANDLE (-1)
 #define CY_RSLT_SUCCESS 0u
 #define CY_RSLT_MODULE_SECURE_SOCKETS_TIMEOUT 1u
+#define CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK 26u
 #define CY_SOCKET_IP_VER_V4 4
 #define CY_SOCKET_DOMAIN_AF_INET 2
 #define CY_SOCKET_TYPE_STREAM 1

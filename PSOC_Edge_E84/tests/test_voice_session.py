@@ -28,7 +28,7 @@ typedef uint32_t TickType_t;
 #define pdMS_TO_TICKS(ms) ((TickType_t)(ms))
 TickType_t xTaskGetTickCount(void);
 void vTaskDelay(TickType_t ticks);
-typedef struct { bool websocket, legacy; } voice_transport_t;
+typedef struct { bool websocket, legacy, diagnostic; } voice_transport_t;
 static inline bool voice_transport_legacy(const voice_transport_t *link) { return link->websocket && link->legacy; }
 typedef struct { voice_header_t header; uint8_t payload[VOICE_PAYLOAD]; } voice_packet_t;
 void voice_transport_init(voice_transport_t *link);
@@ -44,7 +44,10 @@ int voice_transport_poll(voice_transport_t *link, voice_packet_t *packet);
                 "-fsanitize=address,undefined", "-I", str(temp),
                 str(temp / "harness.c"), "-o", str(binary),
             ], check=True)
-            subprocess.run([str(binary)], check=True)
+            result=subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            self.assertIn('Call ending: reason=manual_stop',result.stdout)
+            self.assertIn('Call ending: reason=m5_probe_failed',result.stdout)
+            print(result.stdout,end='')
 
 
 if __name__ == "__main__":

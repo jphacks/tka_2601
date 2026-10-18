@@ -198,6 +198,7 @@ void setup() {
   }
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false); // Keep low-latency bidirectional audio on phone hotspots.
   WiFi.setAutoReconnect(true);
   WiFi.begin(M5_LINK_WIFI_SSID, M5_LINK_WIFI_PASSWORD);
   e84stream::beginReceiver(static_cast<uint16_t>(M5_LINK_PORT + 1), M5_LINK_TOKEN);
@@ -227,7 +228,12 @@ void loop() {
       if (command == '\n' || command == '\r') {
         if (!calibrationOverflow) {
           calibrationLine[calibrationUsed] = 0;
-          e84stream::calibrationCommand(calibrationLine);
+          if (!strcmp(calibrationLine,"@net")) {
+            Serial.printf("[CAL] {\"ok\":true,\"diagnostic\":\"wifi\",\"connected\":%s,\"ip\":\"%s\",\"gateway\":\"%s\",\"rssi\":%ld,\"udp_ready\":%s,\"tcp_ready\":%s}\n",
+                WiFi.status()==WL_CONNECTED?"true":"false",WiFi.localIP().toString().c_str(),
+                WiFi.gatewayIP().toString().c_str(),static_cast<long>(WiFi.RSSI()),
+                udpReady?"true":"false",e84stream::receiverReady()?"true":"false");
+          } else e84stream::calibrationCommand(calibrationLine);
         }
         calibrationUsed = 0; calibrationOverflow = false; paintNeeded = true;
       } else if (calibrationUsed < sizeof(calibrationLine) - 1) {
