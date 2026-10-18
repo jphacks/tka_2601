@@ -6,22 +6,31 @@
 #include <deque>
 #include <vector>
 #include <cassert>
+#include <string>
 
 namespace fake {
 inline uint32_t now = 10000;
 inline std::vector<int> servoPins;
 inline std::vector<uint32_t> servoDuties;
 inline int attachedPin = -1;
+inline bool failNextServoAttach = false, failNextServoWrite = false;
+inline std::vector<std::string> serialLines;
 }
 inline uint32_t millis() { return fake::now; }
 inline bool ledcAttachChannel(uint8_t pin, uint32_t, uint8_t, uint8_t) {
+  if (fake::failNextServoAttach) { fake::failNextServoAttach = false; return false; }
   fake::attachedPin = pin; fake::servoPins.push_back(pin); return true;
 }
 inline bool ledcWrite(uint8_t pin, uint32_t duty) {
+  if (fake::failNextServoWrite) { fake::failNextServoWrite = false; return false; }
   assert(fake::attachedPin == pin); fake::servoDuties.push_back(duty); return true;
 }
 inline bool ledcDetach(uint8_t pin) { assert(fake::attachedPin == pin); fake::attachedPin = -1; return true; }
-struct SerialFake { template<typename... Args> void printf(const char*, Args...) {} };
+struct SerialFake {
+void printf(const char* text) { fake::serialLines.emplace_back(text); }
+template<typename... Args> void printf(const char* format, Args... args) {
+  char text[1024]; snprintf(text, sizeof(text), format, args...); fake::serialLines.emplace_back(text);
+} };
 inline SerialFake Serial;
 struct SpeakerFake {
   struct Config { uint32_t sample_rate = 48000; size_t dma_buf_len = 0, dma_buf_count = 0; };

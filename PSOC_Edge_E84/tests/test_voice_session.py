@@ -28,7 +28,8 @@ typedef uint32_t TickType_t;
 #define pdMS_TO_TICKS(ms) ((TickType_t)(ms))
 TickType_t xTaskGetTickCount(void);
 void vTaskDelay(TickType_t ticks);
-typedef struct { bool websocket; } voice_transport_t;
+typedef struct { bool websocket, legacy; } voice_transport_t;
+static inline bool voice_transport_legacy(const voice_transport_t *link) { return link->websocket && link->legacy; }
 typedef struct { voice_header_t header; uint8_t payload[VOICE_PAYLOAD]; } voice_packet_t;
 void voice_transport_init(voice_transport_t *link);
 bool voice_transport_server(voice_transport_t *link);

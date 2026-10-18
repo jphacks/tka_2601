@@ -17,8 +17,10 @@ typedef struct { cy_socket_ip_address_t ip_address; uint16_t port; } cy_socket_s
 #define CY_SOCKET_IPPROTO_TCP 6
 #define CY_SOCKET_SOL_SOCKET 1
 #define CY_SOCKET_SOL_TLS 2
+#define CY_SOCKET_SOL_TCP 3
 #define CY_SOCKET_SO_RCVTIMEO 1
 #define CY_SOCKET_SO_SNDTIMEO 2
+#define CY_SOCKET_SO_TCP_NODELAY 25
 #define CY_SOCKET_SO_TLS_AUTH_MODE 3
 #define CY_SOCKET_SO_TRUSTED_ROOTCA_CERTIFICATE 4
 #define CY_SOCKET_SO_SERVER_NAME_INDICATION 5
