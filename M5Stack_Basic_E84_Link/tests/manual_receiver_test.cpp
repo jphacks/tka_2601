@@ -37,6 +37,8 @@ std::shared_ptr<fake::Socket> connect(uint32_t id) {
 }
 int main() {
   beginReceiver(8769, kToken);
+  assert(!requestServoTest(false) && !requestServoTest(true));
+  assert(!servoTestBusy() && !cancelServoTest());
   auto s = connect(200);
   enqueue(s, Type::CallStart, 200); tick();
 #ifdef TEST_DISABLED

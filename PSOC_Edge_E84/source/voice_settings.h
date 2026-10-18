@@ -6,6 +6,11 @@
 #ifndef VOICE_STREAM_PATH
 #define VOICE_STREAM_PATH "/api/relay"
 #endif
+// 1 matches GitHub backend/voice-agent and the currently deployed server.
+// Set to 2 only when that server explicitly supports protocol_version:2.
+#ifndef VOICE_RELAY_PROTOCOL
+#define VOICE_RELAY_PROTOCOL 1
+#endif
 #ifndef VOICE_RMS_GATE
 #define VOICE_RMS_GATE 600u
 #endif

@@ -29,6 +29,9 @@ uint32_t lastPaint = 0;
 const char* lastStreamStatus = nullptr;
 bool paintNeeded = true;
 const char* lastEvent = "Waiting for E84";
+char calibrationLine[80];
+size_t calibrationUsed = 0;
+bool calibrationOverflow = false;
 
 bool elapsed(uint32_t now, uint32_t then, uint32_t period) {
   return static_cast<uint32_t>(now - then) >= period;
@@ -66,7 +69,7 @@ void showStatus() {
   M5.Display.setCursor(8, 196);
   M5.Display.println(e84stream::receiverStatus());
   M5.Display.setCursor(8, 220);
-  M5.Display.println("A / serial s: status");
+  M5.Display.println("A/s: status  USB 1/2: servo  x: return");
 }
 
 void logStatus() {
@@ -172,6 +175,9 @@ void receivePackets() {
 }  // namespace
 
 void setup() {
+  // A calibration response is larger than the default UART TX buffer. Queue
+  // it without blocking the servo timer while USB state polling is active.
+  Serial.setTxBufferSize(2048);
   auto cfg = M5.config();
   cfg.serial_baudrate = 115200;
   cfg.fallback_board = m5::board_t::board_M5Stack;
@@ -197,7 +203,8 @@ void setup() {
   e84stream::beginReceiver(static_cast<uint16_t>(M5_LINK_PORT + 1), M5_LINK_TOKEN);
   lastConnectAttempt = millis();
   Serial.println("[Wi-Fi] Connecting to configured 2.4 GHz network...");
-  Serial.println("[HELP] s / h or button A: status");
+  Serial.println("[HELP] s/h or A: status; USB 1: call servo test, 2: end servo test, x: return test servo");
+  Serial.println("[HELP] USB @get/@begin/@set c|e r|p 0..180/@save/@cancel (newline terminated)");
   showStatus();
 }
 
@@ -206,19 +213,39 @@ void loop() {
   if (configured) {
     maintainConnection(millis());
     if (udpReady) receivePackets();
-    e84stream::pollReceiver(udpReady, M5.BtnA.wasPressed(), M5.BtnC.wasPressed());
-    if (lastStreamStatus != e84stream::receiverStatus()) {
-      lastStreamStatus = e84stream::receiverStatus();
-      paintNeeded = true;
-    }
+  }
+  // Local servo tests also finish their return interval while Wi-Fi is offline.
+  e84stream::pollReceiver(configured && udpReady, M5.BtnA.wasPressed(), M5.BtnC.wasPressed());
+  if (lastStreamStatus != e84stream::receiverStatus()) {
+    lastStreamStatus = e84stream::receiverStatus();
+    paintNeeded = true;
   }
   if (M5.BtnA.wasPressed()) logStatus();
   for (unsigned i = 0; i < 16 && Serial.available(); ++i) {
     const int command = Serial.read();
+    if (calibrationUsed || command == '@') {
+      if (command == '\n' || command == '\r') {
+        if (!calibrationOverflow) {
+          calibrationLine[calibrationUsed] = 0;
+          e84stream::calibrationCommand(calibrationLine);
+        }
+        calibrationUsed = 0; calibrationOverflow = false; paintNeeded = true;
+      } else if (calibrationUsed < sizeof(calibrationLine) - 1) {
+        calibrationLine[calibrationUsed++] = static_cast<char>(command);
+      } else calibrationOverflow = true;
+      continue;
+    }
     if (command == 's' || command == 'h') logStatus();
+    else if (command == '1' || command == '2') {
+      e84stream::requestServoTest(command == '2');
+      paintNeeded = true;
+    } else if (command == 'x') {
+      e84stream::cancelServoTest();
+      paintNeeded = true;
+    }
   }
   // SPI display traffic can couple into the Basic's analog speaker output.
-  if (paintNeeded && !e84stream::speakerBusy() && elapsed(millis(), lastPaint, 250)) {
+  if (paintNeeded && !e84stream::speakerBusy() && !e84stream::servoMotionBusy() && elapsed(millis(), lastPaint, 250)) {
     lastPaint = millis();
     paintNeeded = false;
     showStatus();

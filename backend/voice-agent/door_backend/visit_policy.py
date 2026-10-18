@@ -48,6 +48,29 @@ _CORRECTED_CLOSE_ACK = re.compile(
     r".+(?:じゃなくて|ではなくて|というか)(?:はい|ええ|うん)?(?:わかりました|分かりました|承知しました|かしこまりました)$"
 )
 
+_PLACED = re.compile(
+    r"置(?:きました|き終わりました|き終えました|き終えた|いた|いておきました|いてきました|いて来ました|"
+    r"いてまいりました|いてきた|いておいた|いてあります|かせていただきました)|"
+    r"入れ(?:ました|た|ておきました|てきました|ておいた|てあります|終わりました)|"
+    r"設置(?:しました|済み)"
+)
+_NOT_PLACED = re.compile(
+    r"(?:置(?:いておき|いてあり|いて|け|か|き)|入れ(?:て|られ)?|設置(?:して|できて)?)"
+    r"(?:は|も)?(?:いませんでした|おりませんでした|いなかった|いません|おりません|いない|ません|なかった|ない)"
+)
+
+
+def _placement_result(value: str) -> bool | None:
+    """Recognize completed actions, keeping future/question/negative forms distinct."""
+    negative = list(_NOT_PLACED.finditer(value))
+    last_negative = negative[-1].end() if negative else -1
+    completed = [match for match in _PLACED.finditer(value) if not re.match(
+        r"(?:か|っけ|ら|場合|ほうが|方が|ことに)", value[match.end():]
+    )]
+    if completed and completed[-1].start() >= last_negative:
+        return True
+    return False if negative else None
+
 
 @dataclass(slots=True)
 class VisitState:
@@ -69,6 +92,7 @@ class VisitState:
     name_confirmation: bool = False
     presence_question: bool = False
     mailbox_does_not_fit: bool = False
+    placement_confirmation: bool = False
 
     @classmethod
     def from_messages(cls, messages: list[tuple[str, str]], house_rules: str = "") -> "VisitState":
@@ -96,6 +120,8 @@ class VisitState:
                     state.pending_question = "purpose"
                 elif re.search(r"どちらに置|どこに置|置き場所", text):
                     state.pending_question = "placement"
+                elif re.search(r"置き終わった.{0,20}よろしい", text):
+                    state.pending_question = "placement_confirmation"
                 elif "写真" in text and re.search(r"(?:撮|送|保管|お願|ください)", text):
                     state.pending_question = "photo"
                 if re.search(r"失礼(?:いた)?します|さようなら|お気をつけて", text):
@@ -116,7 +142,14 @@ class VisitState:
 
             state.latest_user_text = text
             state.placement_just_completed = False
+            state.placement_confirmation = False
             value = _compact(text)
+            confirms_placement = state.pending_question == "placement_confirmation" and bool(
+                re.fullmatch(r"(?:はい|ええ|そうです|その通りです|合っています|置きました)+", value)
+            )
+            denies_placement = state.pending_question == "placement_confirmation" and bool(
+                re.fullmatch(r"(?:いいえ|違います|まだです|まだ置いていません)+", value)
+            )
             prior_assistant = previous_assistant
             previous_assistant = ""
             state.name_confirmation = False
@@ -176,7 +209,10 @@ class VisitState:
             if state.delivery_allowed:
                 if _WILL_PLACE.search(value):
                     state.visitor_will_place = True
-                if re.search(r"(?:置|入れ)(?:きました|き終わりました|いた|ました)|設置しました", value) or (
+                completion = True if confirms_placement else False if denies_placement else _placement_result(value)
+                if completion is False:
+                    state.placed = state.photographed = False
+                if (completion is True or (
                     state.asked_delivery_placement and re.search(r"起きました", value)
                 ) or (
                     state.asked_delivery_placement
@@ -185,9 +221,15 @@ class VisitState:
                         r"(?:はい)?(?:お?荷物(?:が|を)?)?(?:来ました|きました)(?:お?荷物(?:を)?)?",
                         value,
                     )
-                ):
+                )) and completion is not False:
                     state.placed = True
                     state.placement_just_completed = True
+                if completion is None and state.asked_delivery_placement and re.search(
+                    r"売って(?:き|おき)?ました|通っておきました", value
+                ):
+                    # A likely ASR error is a clarification, never a silent
+                    # rewrite of what the visitor actually said.
+                    state.placement_confirmation = True
                 if re.search(r"写真.*(?:撮りました|撮った|撮影しました|撮影済み)", value):
                     state.photographed = True
         return state
@@ -256,6 +298,8 @@ class VisitState:
             return "回覧板はポストに入れてください。入らない場合はお知らせください。"
         if not self.delivery_allowed:
             return None
+        if self.placement_confirmation:
+            return "荷物は指定の場所に置き終わった、ということでよろしいでしょうか。"
         if self.placement_just_completed and not self.photographed:
             return "恐れ入りますが、荷物と置き場所の写真を撮ってください。"
         asks_photo_follow_up = bool(_PHOTO_QUESTION.search(value)) or bool(
@@ -350,6 +394,10 @@ class VisitState:
         if self.closing and re.search(r"(?:伺|教え|お名前|ご用件|写真|宅配|荷物)|[?？]", reply):
             return False
         if not self.delivery_allowed and re.search(r"宅配|荷物|置き場所|写真|ボックス|お届け", reply):
+            return False
+        if self.delivery_allowed and self.asked_delivery_placement and re.search(
+            r"ご用件|どのような用件|どちら様|宅配便ですか", reply
+        ):
             return False
         if self.deterministic_reply and reply.strip() != self.deterministic_reply:
             return False

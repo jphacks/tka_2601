@@ -8,6 +8,18 @@ ROOT = Path(__file__).parents[1]
 
 
 class RelayProtocolTests(unittest.TestCase):
+    def test_legacy_github_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "relay_legacy"
+            subprocess.run([
+                "clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-g",
+                "-fsanitize=address,undefined", "-I", str(ROOT / "source"),
+                str(ROOT / "tests/relay_legacy_harness.c"),
+                str(ROOT / "source/relay_protocol.c"),
+                str(ROOT / "source/voice_protocol.c"), "-o", str(binary),
+            ], check=True)
+            subprocess.run([str(binary)], check=True)
+
     def test_protocol(self):
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / "relay_protocol"

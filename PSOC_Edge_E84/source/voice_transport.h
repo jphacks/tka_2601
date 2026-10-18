@@ -23,6 +23,7 @@ void voice_transport_init(voice_transport_t *link);
 bool voice_transport_server(voice_transport_t *link);
 bool voice_transport_m5(voice_transport_t *link);
 void voice_transport_close(voice_transport_t *link);
+bool voice_transport_legacy(const voice_transport_t *link);
 bool voice_transport_send(voice_transport_t *link, const voice_header_t *header, const void *payload);
 /* 1 packet, 0 incomplete/no data, -1 closed or malformed. */
 int voice_transport_poll(voice_transport_t *link, voice_packet_t *packet);

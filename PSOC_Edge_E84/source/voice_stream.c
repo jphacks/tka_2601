@@ -10,12 +10,12 @@
 #include <string.h>
 #include <limits.h>
 
-typedef enum { STARTING, WAIT_REPLY, PLAYING, WAIT_LISTEN, LISTEN_DELAY,
+typedef enum { STARTING, CONNECT_AGENT, WAIT_REPLY, PLAYING, WAIT_LISTEN, LISTEN_DELAY,
                LISTENING, ENDING, FINISHED } call_state_t;
 typedef struct {
     voice_transport_t server, m5;
     uint32_t session, turn, input_count, output_count, output_ack, listen_generation;
-    uint32_t next_turn;
+    uint32_t next_turn, input_report_count;
     bool output_ended, end_after_playback, may_have_answered;
     call_state_t state;
     TickType_t began, phase, last_m5, last_server, last_ping, playback_done;
@@ -55,7 +55,12 @@ static bool server_packet(const voice_packet_t *p)
     if (h->turn!=call.turn) return false;
     switch (h->type) {
     case VOICE_OUTPUT_START:
-        if (call.state!=WAIT_REPLY) return false;
+        if (call.state!=WAIT_REPLY && !(voice_transport_legacy(&call.server) && call.state==LISTENING)) return false;
+        if (voice_transport_legacy(&call.server)) {
+            // LiveKit's VAD may respond before the endpoint's longer silence
+            // boundary. Stop publishing input as soon as output arrives.
+            e84_shared()->voice_record_enabled=0; e84_shared_release();
+        }
         call.output_count=call.output_ack=0;
         call.output_ended=call.end_after_playback=false;
         if (!relay(&call.m5,p)) return false;
@@ -68,6 +73,7 @@ static bool server_packet(const voice_packet_t *p)
     case VOICE_OUTPUT_END:
         if (call.state!=PLAYING || call.output_ended || !call.output_count || h->sequence!=call.output_count) return false;
         call.output_ended=true; call.end_after_playback=(h->flags&1)!=0;
+        printf("[VOICE] Output ended: %lu frames; waiting for M5 playback completion.\n",(unsigned long)call.output_count);
         return relay(&call.m5,p);
     case VOICE_NO_REPLY:
         if (call.state!=WAIT_REPLY) return false;
@@ -93,8 +99,8 @@ static bool m5_packet(const voice_packet_t *p)
     switch (h->type) {
     case VOICE_CALL_STARTED:
         if (call.state!=STARTING || h->turn) return false;
-        if (!control(&call.server,VOICE_CALL_START,0,0)) return false;
-        phase(WAIT_REPLY); printf("[VOICE] Call button operation complete; waiting for greeting.\n"); return true;
+        phase(CONNECT_AGENT);
+        printf("[VOICE] Call button operation complete; now connecting voice agent.\n"); return true;
     case VOICE_AUDIO_ACK:
         if (call.state!=PLAYING || h->sequence<=call.output_ack || h->sequence>call.output_count) return false;
         call.output_ack=h->sequence;
@@ -143,6 +149,25 @@ static bool check_m5_alive(void)
     }
     return false;
 }
+static bool await_call_started(void)
+{
+    /* M5 allows up to 30 s before its single press, 2 s holding and 3 s
+     * returning. No agent session exists until it acknowledges release. */
+    TickType_t start=xTaskGetTickCount(), last_ping=start;
+    while (!stop_requested && e84_network_voice_ready() &&
+           xTaskGetTickCount()-start<pdMS_TO_TICKS(65000)) {
+        voice_packet_t p;
+        int r=voice_transport_poll(&call.m5,&p);
+        if (r<0 || (r>0 && !m5_packet(&p))) return false;
+        if (call.state==CONNECT_AGENT) return true;
+        if (xTaskGetTickCount()-last_ping>=pdMS_TO_TICKS(5000)) {
+            if (!control(&call.m5,VOICE_PING,0,0)) return false;
+            last_ping=xTaskGetTickCount();
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    return false;
+}
 static bool pause_capture(bool active)
 {
     volatile e84_shared_t *s=e84_shared();
@@ -162,9 +187,14 @@ static bool begin_listen(void)
 {
     volatile e84_shared_t *s=e84_shared();
     e84_shared_acquire();
+    if (voice_transport_legacy(&call.server)) {
+        // Any frames still being published when LiveKit began its response
+        // belong to the previous turn, not to the next microphone window.
+        s->voice_read_seq=s->voice_write_seq; e84_shared_release();
+    }
     if (!s->voice_call_ack || s->voice_listen_seq==UINT32_MAX ||
         s->voice_write_seq!=s->voice_read_seq) return false;
-    call.turn=call.next_turn; call.input_count=0;
+    call.turn=call.next_turn; call.input_count=call.input_report_count=0;
     if (!control(&call.server,VOICE_INPUT_START,call.turn,0)) return false;
     s->voice_listen_turn=call.turn;
     s->voice_rms_gate=VOICE_RMS_GATE;
@@ -184,7 +214,11 @@ static bool capture_step(void)
     uint32_t end_generation=s->voice_end_listen_seq;
     e84_shared_acquire();
     if (end_generation==call.listen_generation && s->voice_end_reason>=3) {
-        printf("[VOICE] Capture aborted (reason %lu); incomplete turn discarded.\n",(unsigned long)s->voice_end_reason);
+        const char *reason=s->voice_end_reason==3?"send buffer overflow":
+            s->voice_end_reason==4?"microphone capture gap":"cancelled";
+        printf("[VOICE] Capture aborted: %s (reason %lu); sent=%lu ms queued=%lu frames; incomplete turn discarded.\n",
+            reason,(unsigned long)s->voice_end_reason,(unsigned long)(call.input_count*20u),
+            (unsigned long)(s->voice_write_seq-s->voice_read_seq));
         return false;
     }
     /* Bounded catch-up pass: still service both network peers every iteration. */
@@ -205,6 +239,13 @@ static bool capture_step(void)
         if (!call.input_count) call.phase=xTaskGetTickCount();
         ++call.input_count;
         e84_shared_release(); s->voice_read_seq=read+1u; e84_shared_release();
+        if (call.input_count==1u || call.input_count-call.input_report_count>=50u) {
+            call.input_report_count=call.input_count;
+            printf("[VOICE] Input streaming: sent=%lu ms queued=%lu frames rms=%lu.\n",
+                (unsigned long)(call.input_count*20u),
+                (unsigned long)(s->voice_write_seq-s->voice_read_seq),
+                (unsigned long)s->last_rms);
+        }
     }
     e84_shared_acquire();
     if (s->voice_end_listen_seq==call.listen_generation) {
@@ -247,16 +288,21 @@ static bool run_call(uint32_t session)
     bool success=false, release=false;
     printf("[VOICE] Preparing streaming call.\n");
     if (!pause_capture(true)) goto cleanup;
-    /* SDK TCP connect is blocking. Connect the local peer first so an offline
-     * M5 cannot outlive the server's CALL_START deadline and then actuate. */
+    /* Complete the physical button operation before starting an agent. */
     if (!voice_transport_m5(&call.m5)) goto cleanup;
     voice_header_t hello={.type=VOICE_HELLO,.session=session,.length=strlen(M5_TOKEN)};
     if (!voice_transport_send(&call.m5,&hello,M5_TOKEN) || !await_ready(&call.m5)) goto cleanup;
-    if (!voice_transport_server(&call.server) || !control(&call.server,VOICE_HELLO,0,0) || !await_ready(&call.server)) goto cleanup;
     if (!check_m5_alive() || stop_requested) goto cleanup;
     phase(STARTING); call.began=call.last_server=call.last_m5=call.last_ping=xTaskGetTickCount();
     call.may_have_answered=true;
     if (!control(&call.m5,VOICE_CALL_START,0,0)) goto cleanup;
+    printf("[VOICE] Waiting for one call-button press and release; voice agent not started.\n");
+    if (!await_call_started() || stop_requested) goto cleanup;
+    if (!voice_transport_server(&call.server) || !control(&call.server,VOICE_HELLO,0,0) || !await_ready(&call.server)) goto cleanup;
+    printf("[VOICE] Server ready: /api/relay protocol %u.\n",voice_transport_legacy(&call.server)?1u:2u);
+    if (stop_requested || !control(&call.server,VOICE_CALL_START,0,0)) goto cleanup;
+    phase(WAIT_REPLY);
+    call.last_server=call.last_m5=call.last_ping=xTaskGetTickCount();
     while (!stop_requested && e84_network_voice_ready()) {
         voice_packet_t p;
         int r=voice_transport_poll(&call.m5,&p);
@@ -271,7 +317,8 @@ static bool run_call(uint32_t session)
         now=xTaskGetTickCount();
         if (now-call.began>pdMS_TO_TICKS(VOICE_CALL_TIMEOUT_MS) ||
             now-call.phase>pdMS_TO_TICKS(call.state==LISTENING?VOICE_IDLE_TIMEOUT_MS:VOICE_RESPONSE_TIMEOUT_MS) ||
-            now-call.last_m5>pdMS_TO_TICKS(15000) || now-call.last_server>pdMS_TO_TICKS(15000)) break;
+            now-call.last_m5>pdMS_TO_TICKS(15000) ||
+            (!voice_transport_legacy(&call.server) && now-call.last_server>pdMS_TO_TICKS(15000))) break;
         if (now-call.last_ping>=pdMS_TO_TICKS(5000)) {
             if (!control(&call.m5,VOICE_PING,call.turn,0) || !control(&call.server,VOICE_PING,call.turn,0)) break;
             call.last_ping=now;

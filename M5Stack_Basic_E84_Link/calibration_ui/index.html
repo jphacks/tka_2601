@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>E84 会話テスト・サーボ調整</title>
+<style>
+:root{font:16px/1.7 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;color:#1c2828;background:#f2f5f3}*{box-sizing:border-box}body{max-width:840px;margin:auto;padding:40px 24px}h1{font-size:30px;letter-spacing:-1px;margin:8px 0}h2{font-size:20px;margin:0 0 22px}.eyebrow{font-size:12px;letter-spacing:2px;color:#47736a}.intro{color:#586863;margin-bottom:28px}.card{background:white;border:1px solid #dce5df;border-radius:16px;padding:26px;margin:18px 0}.field{margin:24px 0}.label{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.num{width:80px;font:inherit;border:1px solid #c2d4c9;border-radius:8px;padding:5px;text-align:right}input[type=range]{width:100%;accent-color:#187562;cursor:pointer}input:disabled{cursor:default}.scale{display:flex;justify-content:space-between;color:#82928c;font-size:12px}.actions{display:flex;gap:12px;flex-wrap:wrap}button{font:inherit;border:1px solid #bdccc5;border-radius:9px;background:white;padding:10px 20px;cursor:pointer}button.primary{background:#176c59;color:white;border-color:#176c59}button:disabled{opacity:.45;cursor:default}#status{padding:13px 16px;background:#e4ece7;border-radius:9px;min-height:53px;white-space:pre-wrap}#status.error{background:#fbe9e3;color:#9f3523}.note{font-size:13px;color:#63756b}.badge{font-size:12px;background:#edf3ef;border-radius:5px;padding:4px 8px;margin-left:10px}
+</style>
+<style>
+#conversation-select{font:inherit;max-width:100%;padding:8px 12px;border:1px solid #c2d4c9;border-radius:8px;display:block;margin-top:6px}#conversation-messages{max-height:430px;overflow:auto;padding:4px 0}.utterance{margin:12px 36px 12px 0;padding:13px 17px;border-radius:12px;background:#f0f3f1}.utterance.ai{margin:12px 0 12px 36px;background:#e0eee8}.utterance-caption{font-size:12px;color:#567367}.utterance p{margin:5px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}.live-head button{font-size:13px;padding:7px 12px}
+</style>
+<style>
+.live-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.live-head h2{margin:0}.connection{font-size:13px;color:#58716a}.connected{color:#16705b}#voice-stage{font-weight:600;margin:18px 0 12px}#live-log{background:#142620;color:#dfebe5;border-radius:10px;padding:16px;height:310px;overflow:auto;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 0}.log-time{color:#88a99c}.log-detected{color:#f8dc84}.log-voice{color:#95d9c1}.log-error{color:#ffa99c}.log-actions button{font-size:13px;padding:7px 12px}
+</style>
+<div class="eyebrow">E84 + M5STACK / LIVE TEST</div>
+<h1>チャイム・音声会話テスト</h1>
+<p class="intro">チャイムの検知から会話開始まで、実機のログをここに表示します。</p>
+<section class="card" aria-label="会話ログ">
+ <div class="live-head"><h2>会話ログ</h2><button id="export-conversation" disabled>この会話を書き出す</button></div>
+ <label for="conversation-select" class="note">表示する会話</label>
+ <select id="conversation-select"><option value="">最新の会話</option></select>
+ <p id="conversation-state" class="note" role="status">履歴を読み込んでいます…</p>
+ <div id="conversation-messages" role="log" aria-label="来訪者とAIの会話" aria-live="polite"></div>
+ <p class="note">来訪者の欄は音声認識の結果です。直近20会話をこのMacに保存します。</p>
+</section>
+<section class="card" aria-label="E84ライブログ">
+ <div class="live-head"><h2>実機ライブログ（E84・M5）</h2><span id="log-connection" class="connection">接続を確認中</span></div>
+ <p id="voice-stage" role="status" aria-live="polite">E84のログ監視を開始しています…</p>
+ <div class="actions log-actions"><button data-console="s">状態確認</button><button data-console="t">M5通信確認</button><button data-console="e">チャイム検知を再待機</button><button data-console="q">通話を終了</button></div>
+ <pre id="live-log" role="log" aria-label="E84・M5 USBシリアルログ" aria-live="off"></pre>
+ <p class="note" id="log-note">実機のログを1秒ごとに更新します。チャイム検知 → 待機 → ボタンを1回押して戻す → agent接続の順に動きます。</p>
+</section>
+<h2>ボタンの位置・タイミング調整</h2>
+<p class="intro">「調整開始」後、角度と秒数を合わせて「本体に保存」を押してください。角度はスライダーから指を離すとプレビューします。秒数の変更だけでは動きません。</p>
+<p id="status" role="status" aria-live="polite">M5の保存済み角度を取得しています…</p>
+<section class="card" aria-label="本体に保存されている設定"><h2>本体に保存されている設定</h2><p id="settings-source" role="status">本体から確認中…</p><p id="saved-call" class="note"></p><p id="saved-end" class="note"></p><p id="saved-timing" class="note"></p><p class="note">押下中は「押す位置」の指令を固定し、押下時間が終わると「待機位置」へ戻します。角度をさらに増減する追い押しは行いません。</p></section>
+<div class="actions"><button id="begin" class="primary" disabled>調整開始</button><button id="save" class="primary" disabled>本体に保存</button><button id="cancel" disabled>変更を取り消す</button></div>
+<section class="card"><h2>通話ボタン <span class="badge">GPIO 26</span></h2><div id="call"></div></section>
+<section class="card"><h2>終了ボタン <span class="badge">GPIO 17</span></h2><div id="end"></div><div class="actions"><button id="mirror-end" disabled>終了側の向きを反転</button></div><p class="note">取り付けが逆向きの場合、待機位置と押す位置の両方を反転できます。反転ボタンだけでは動きません。位置を確かめてから「本体に保存」を押してください。</p></section>
+<p class="note">通常のテストは本体保存値を使います。調整中は編集中の値で試せます。各テストは1回だけ押して戻し、agentとの会話は始まりません。角度のスライダーは指を離した位置で1回プレビューします。</p>
+<div class="actions"><button id="stop-test" disabled>テストを中止して戻す</button></div>
+<section class="card"><h2>ボタンを戻す時間</h2><div id="timing"></div><p class="note">押した後は必ず待機位置へ戻し、この秒数だけPWMを出してから停止します。通話ボタンが戻り終わってからagentに接続します。</p><p id="sequence" class="note"></p></section>
+<p class="note">移動量は「押す位置 − 待機位置」です。角度はPWMの指示値（0〜180°）です。保存した角度と秒数はM5本体に残ります。角度調整で押す位置を試すときも、設定した時間だけ押して戻します。待機位置のプレビューは1.5秒後に戻ります。調整中は通話を開始しません。2分間操作がなければ、未保存の変更を取り消します。</p>
+<script>
+const $=s=>document.querySelector(s), fields={}, sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let active=false, busy=false, moving=false, debounce, pendingError=null;
+let testRunning=false, testSupported=false, mirrorSupported=false, receiverInCall=false, testCancelled=false, testPoll=null;
+const pending=new Map();
+const errors={receiver_busy:'通話中またはサーボ動作中です。終了してから再試行してください。',begin_required:'調整が終了しています。「調整開始」を押してください。',storage_unavailable:'本体の保存領域を開けませんでした。',save_failed:'保存できませんでした。もう一度お試しください。',servo_configuration_required:'サーボが無効です。本体の設定を確認してください。',pwm_unavailable:'サーボのPWMを開始できませんでした。',pwm_write_failed:'PWMの出力に失敗しました。',returning_previous_servo:'前のサーボが待機位置へ戻っています。'};
+function message(s,error=false){$('#status').textContent=s;$('#status').classList.toggle('error',error)}
+Object.assign(errors,{servo_test_busy:'ボタンのテスト中です。戻り終わるまでお待ちください。',servo_busy:'サーボが戻るまでお待ちください。',test_not_running:'動作中のボタンテストはありません。'});
+function controls(){for(const f of Object.values(fields)){f.range.disabled=f.number.disabled=!active||busy||testRunning}$('#begin').disabled=active||busy||testRunning;$('#save').disabled=$('#cancel').disabled=!active||busy||testRunning;for(const b of document.querySelectorAll('[data-test]'))b.disabled=!testSupported||busy||testRunning||receiverInCall;$('#stop-test').disabled=!testRunning;$('#mirror-end').disabled=!active||busy||testRunning||!mirrorSupported}
+function travel(){for(const group of ['call','end']){const delta=+fields[group+'_press'].number.value-Number(fields[group+'_rest'].number.value);$('#'+group+'_delta').textContent='押すときの移動量：'+(delta>0?'+':delta<0?'−':'')+Math.abs(delta)+'°'}if(fields.call_delay_ms)$('#sequence').textContent=`動作順：M5への通話指示 → ${fields.call_delay_ms.number.value}秒待つ → ${fields.call_hold_ms.number.value}秒だけ通話ボタンを押す → 待機位置へ戻して${fields.return_ms.number.value}秒待つ → agent接続・挨拶`}
+function showSettings(d){const s=d.saved;$('#settings-source').textContent=d.settings_source==='saved'?'使用中：本体保存値（保存後の読み戻し確認済み）':d.settings_source==='editing'?'使用中：編集中の値（未保存）。下は前回の保存値です。':d.settings_source==='defaults'?'初期設定を使用中です。本体に保存してください。':'本体ファームウェアの更新後、保存値を表示します。';if(s){$('#saved-call').textContent=`通話：待機 ${s.call_rest}° → 押す ${s.call_press}° → 待機 ${s.call_rest}° ／ 押下 ${s.call_hold_ms/1000}秒`;$('#saved-end').textContent=`終了：待機 ${s.end_rest}° → 押す ${s.end_press}° → 待機 ${s.end_rest}° ／ 押下 ${s.end_hold_ms/1000}秒`;$('#saved-timing').textContent=`通話前待機 ${s.call_delay_ms/1000}秒 ／ 復帰 ${s.return_ms/1000}秒`}}
+function apply(d){active=d.active;mirrorSupported=d.end_mirror_supported===true;testSupported=typeof d.test_busy==='boolean';testRunning=!!d.test_busy;for(const [key,f]of Object.entries(fields)){if(typeof d[key]!=='number')throw Error('M5のファームウェアを更新してください。');f.range.value=f.number.value=d[key]/(f.scale||1)}showSettings(d);for(const b of document.querySelectorAll('[data-test]'))b.textContent=(b.dataset.test==='c'?'通話':'終了')+'ボタンを1回押す'+(d.active?'（編集中）':d.settings_source==='saved'?'（本体保存値）':'');travel();controls()}
+async function api(action,body={}){const r=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!d.ok){const e=new Error(errors[d.error]||d.error);e.code=d.error;throw e}return d}
+for(const [group,target]of [['call','c'],['end','e']])for(const [position,label]of [['rest','待機位置'],['press','押す位置']]){
+ const key=group+'_'+position, row=document.createElement('div');row.className='field';
+ row.innerHTML=`<div class="label"><label for="${key}">${label}</label><span><input class="num" type="number" min="0" max="180" id="${key}_number" aria-label="${group==='call'?'通話':'終了'} ${label} 角度" disabled> °</span></div><input id="${key}" type="range" min="0" max="180" step="1" aria-label="${group==='call'?'通話':'終了'} ${label}" disabled><div class="scale"><span>0°</span><span>90°</span><span>180°</span></div>`;
+ $('#'+group).append(row);const range=row.querySelector('[type=range]'),number=row.querySelector('[type=number]');fields[key]={range,number};
+ function change(value){if(value===''||!Number.isInteger(+value)||+value<0||+value>180)return;range.value=number.value=value;travel();pending.set(key,{action:'preview',body:{target,position:position[0],angle:+value},label:`${group==='call'?'通話':'終了'}ボタン：${label} ${value}°`});clearTimeout(debounce);debounce=setTimeout(pump,100)}
+ range.oninput=()=>{number.value=range.value;travel()};range.onchange=()=>change(range.value);number.onchange=()=>change(number.value);
+}
+for(const group of ['call','end']){const label=document.createElement('p');label.className='note';label.id=group+'_delta';$('#'+group).append(label)}
+for(const [key,group,label,min,max,initial]of [['call_delay_ms','call','通話ボタンを押すまで待つ',0,30,3],['call_hold_ms','call','通話ボタンを押している時間',.1,2,.3],['end_hold_ms','end','終了ボタンを押している時間',.1,2,.3],['return_ms','timing','待機位置へ戻す時間',.1,3,1]]){
+ const row=document.createElement('div');row.className='field';row.innerHTML=`<div class="label"><label for="${key}">${label}</label><span><input class="num" type="number" min="${min}" max="${max}" step="0.1" value="${initial}" id="${key}_number" aria-label="${label} 秒数" disabled> 秒</span></div><input id="${key}" type="range" min="${min}" max="${max}" step="0.1" value="${initial}" aria-label="${label}" disabled><div class="scale"><span>${min}秒</span><span>${max}秒</span></div>`;
+ $('#'+group).append(row);const range=row.querySelector('[type=range]'),number=row.querySelector('[type=number]');fields[key]={range,number,scale:1000};
+ function change(value){if(value===''||!Number.isFinite(+value)||+value<min||+value>max)return;const ms=Math.round(+value*1000);range.value=number.value=ms/1000;travel();pending.set(key,{action:'timing',body:{field:key,value:ms},label:`${label}：${ms/1000}秒`});clearTimeout(debounce);debounce=setTimeout(pump,100)}range.oninput=()=>change(range.value);number.onchange=()=>change(number.value);
+}
+async function pump(){if(moving||!pending.size)return;moving=true;pendingError=null;try{while(pending.size){const [key,p]=pending.entries().next().value;pending.delete(key);let done=false;for(let i=0;i<31&&!done;i++){try{showSettings(await api(p.action,p.body));done=true;message(p.label+'（未保存）')}catch(e){if(['returning_previous_servo','servo_busy'].includes(e.code)&&i<30){await sleep(200)}else throw e}}}}catch(e){pendingError=e;pending.clear();message(e.message,true);if(e.code==='begin_required'){active=false;controls()}}finally{moving=false}}
+$('#begin').onclick=async()=>{busy=true;controls();try{apply(await api('begin'));message('調整中。スライダーを動かして位置を合わせてください。')}catch(e){message(e.message,true)}finally{busy=false;controls()}};
+async function finish(action){busy=true;controls();clearTimeout(debounce);if(action==='cancel')pending.clear();try{await pump();while(moving)await sleep(30);if(action==='save'&&pendingError)throw pendingError;apply(await api(action));pendingError=null;message(action==='save'?'角度と秒数をM5本体に保存しました。次の通話から使われます。':'変更を取り消して、保存済みの設定に戻しました。')}catch(e){message(e.message,true)}finally{busy=false;controls()}}
+$('#save').onclick=()=>finish('save');$('#cancel').onclick=()=>finish('cancel');
+$('#mirror-end').onclick=async()=>{
+ busy=true;controls();clearTimeout(debounce);
+ try{
+  await pump();while(moving)await sleep(30);if(pendingError)throw pendingError;
+  let result;for(let i=0;i<31;i++){try{result=await api('mirror',{target:'e'});break}catch(e){if(e.code==='servo_busy'&&i<30)await sleep(200);else throw e}}
+  apply(result);message('終了側の待機位置・押す位置を反転しました（未保存）。位置を確認してから本体に保存してください。');
+ }catch(e){try{const r=await fetch('/api/state'),d=await r.json();if(d.ok)apply(d)}catch(_){}message(e.message,true)}finally{busy=false;controls()}
+};
+for(const [group,target,label]of [['call','c','通話ボタンを1回押す'],['end','e','終了ボタンを1回押す']]){
+ const button=document.createElement('button');button.dataset.test=target;button.textContent=label;button.disabled=true;$('#'+group).append(button);
+ button.onclick=()=>testButton(target);
+}
+async function pollTest(){
+ try{const r=await fetch('/api/state'),d=await r.json();if(!d.ok)throw Error(d.error);apply(d);if(!testRunning){message(testCancelled?'テストを中止し、待機位置へ戻しました。':'1回の押下と復帰が完了しました。');return}}
+ catch(e){message(e.message,true)}
+ testPoll=setTimeout(pollTest,400);
+}
+async function testButton(target){
+ if(busy||testRunning)return;busy=true;testCancelled=false;controls();clearTimeout(debounce);
+ try{
+  await pump();while(moving)await sleep(30);if(pendingError)throw pendingError;
+  let result;for(let i=0;i<31;i++){try{result=await api('test',{target});break}catch(e){if(e.code==='receiver_busy'&&i<30)await sleep(200);else throw e}}
+  apply(result);message(`${target==='c'?'通話':'終了'}ボタンを1回だけ押して戻します。`);clearTimeout(testPoll);testPoll=setTimeout(pollTest,300);
+ }catch(e){message(e.message,true)}finally{busy=false;controls()}
+}
+$('#stop-test').onclick=async()=>{try{testCancelled=true;apply(await api('stop_test'));message('テストを中止して待機位置へ戻しています。');clearTimeout(testPoll);testPoll=setTimeout(pollTest,300)}catch(e){message(e.message,true)}};
+fetch('/api/state').then(r=>r.json()).then(d=>{if(!d.ok)throw Error(d.error);apply(d);if(testRunning)testPoll=setTimeout(pollTest,300);message(d.active?'調整中の角度を表示しています。':'M5に接続しました。調整開始を押してください。')}).catch(e=>message(e.message,true));
+let logAfter=0, logEpoch=null, networkReady=false;
+async function pollLogs(){try{
+ const r=await fetch('/api/logs?after='+logAfter), d=await r.json();if(!d.ok)throw Error(d.error);
+ const log=$('#live-log'), atEnd=log.scrollHeight-log.scrollTop-log.clientHeight<45;
+ if(logEpoch&&logEpoch!==d.epoch){log.textContent='';logAfter=0;networkReady=false}logEpoch=d.epoch;
+ $('#log-connection').textContent=d.connected?'USB接続中':'USB未接続・再接続待ち';$('#log-connection').classList.toggle('connected',d.connected);
+
+ for(const line of d.lines){if(line.id<=logAfter)continue;if(line.text.includes('[BOOT] Network task running'))networkReady=false;if(line.text.includes('Authenticated HTTPS status check passed'))networkReady=true;const row=document.createElement('div'),stamp=document.createElement('span'),text=document.createElement('span');stamp.className='log-time';stamp.textContent=line.time+'  ';text.textContent=line.text;text.className=line.text.includes('[DETECTED]')?'log-detected':/ERROR|failed|uncertain|aborted|rejected/i.test(line.text)?'log-error':line.text.includes('[VOICE]')?'log-voice':'';row.append(stamp,text);log.append(row);logAfter=line.id}
+ const stage=d.stage==='E84起動中・ネットワーク接続待ち'&&networkReady?'チャイム待機中（Wi-Fi・サーバー接続OK）':d.stage;$('#voice-stage').textContent=active?'角度調整中：保存または取消で自動通話を再開します':stage;
+ receiverInCall=!!d.voice_active;controls();
+ while(log.children.length>500)log.firstElementChild.remove();if(atEnd)log.scrollTop=log.scrollHeight;
+ for(const b of document.querySelectorAll('[data-console]'))b.disabled=!d.connected;
+ }catch(e){$('#log-connection').textContent='ログ接続エラー';$('#log-connection').classList.remove('connected');$('#voice-stage').textContent=e.message;for(const b of document.querySelectorAll('[data-console]'))b.disabled=true}finally{setTimeout(pollLogs,1000)}}
+for(const button of document.querySelectorAll('[data-console]'))button.onclick=async()=>{button.disabled=true;try{await api('console',{command:button.dataset.console})}catch(e){$('#voice-stage').textContent=e.message}finally{button.disabled=false}};
+pollLogs();
+let conversationRevision=-1, selectedConversation=null;
+const conversationStatuses={active:'通話中',ended:'会話終了',stopped:'通話停止',needs_attention:'通話状態の確認が必要',monitor_restarted:'ログ監視を再起動',interrupted:'中断',device_restarted:'本体を再起動'};
+const localTime=value=>new Date(value).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+async function pollConversations(){
+ try{
+  const selected=$('#conversation-select').value;
+  const response=await fetch('/api/conversations?after='+conversationRevision+(selected?'&id='+encodeURIComponent(selected):'')),data=await response.json();if(!data.ok)throw Error(data.error);
+  if($('#conversation-select').value!==selected){conversationRevision=-1;return}
+  if(data.changed){
+   conversationRevision=data.revision;selectedConversation=data.session;
+   const select=$('#conversation-select');select.replaceChildren(new Option('最新の会話',''));
+   for(const session of data.sessions)select.add(new Option(`${localTime(session.started)}（${session.count}件）`,session.id));
+   select.value=selected;if(select.value!==selected){select.value='';conversationRevision=-1}
+   const container=$('#conversation-messages'),atEnd=container.scrollHeight-container.scrollTop-container.clientHeight<45;container.replaceChildren();
+   if(!data.session){const empty=document.createElement('p');empty.className='note';empty.textContent='会話が始まると、認識した発話とAIの返答がここに表示されます。';container.append(empty)}
+   else for(const item of data.session.messages){
+    const row=document.createElement('article');row.className='utterance '+item.speaker;
+    const caption=document.createElement('div');caption.className='utterance-caption';caption.textContent=(item.speaker==='visitor'?'来訪者（認識結果）':'AIの返答')+' · '+localTime(item.time);
+    const text=document.createElement('p');text.textContent=item.text;row.append(caption,text);container.append(row);
+   }
+   if(atEnd)container.scrollTop=container.scrollHeight;
+  }
+  const session=selectedConversation;$('#export-conversation').disabled=!session;
+  $('#conversation-state').textContent=data.error?'履歴の保存エラー：'+data.error:session?(conversationStatuses[session.status]||session.status)+(session.reason==='time_limit'?'・サーバーの時間上限で終了':session.reason?'・'+session.reason:''):'会話の開始を待っています';
+ }catch(e){$('#conversation-state').textContent='会話ログの接続エラー：'+e.message}finally{setTimeout(pollConversations,1500)}
+}
+$('#conversation-select').onchange=()=>{conversationRevision=-1};
+$('#export-conversation').onclick=()=>{if(!selectedConversation)return;const url=URL.createObjectURL(new Blob([JSON.stringify(selectedConversation,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='conversation-'+selectedConversation.id+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+pollConversations();
+</script>
+</html>

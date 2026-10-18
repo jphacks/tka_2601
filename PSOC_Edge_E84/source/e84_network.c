@@ -270,11 +270,12 @@ void e84_console_task(void *argument)
         bool periodic = now - last_status >= pdMS_TO_TICKS(10000);
         if (status || periodic) {
             e84_shared_acquire();
-            printf("[AUDIO] state=%lu detected=%lu queued=%lu discarded=%lu rms=%.0f distance=%.3f gaps=%lu drops=%lu\n",
+            printf("[AUDIO] state=%lu detected=%lu queued=%lu discarded=%lu rms=%.0f distance=%.3f gaps=%lu drops=%lu pcm=%ld..%ld\n",
                 (unsigned long)s->audio_status, (unsigned long)s->detected_count,
                 (unsigned long)s->queued_count, (unsigned long)s->dropped_clips,
                 (double)s->last_rms, (double)s->last_score,
-                (unsigned long)s->capture_errors, (unsigned long)s->capture_drops);
+                (unsigned long)s->capture_errors, (unsigned long)s->capture_drops,
+                (long)s->pcm_min,(long)s->pcm_max);
             if (periodic) {
                 if (s->audio_status == 1 && s->heartbeat == last_heartbeat)
                     printf("[ERROR] Audio heartbeat stopped; inspect capture/core startup and reset.\n");

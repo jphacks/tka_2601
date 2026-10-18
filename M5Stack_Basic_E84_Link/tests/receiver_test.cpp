@@ -13,6 +13,17 @@ using namespace e84stream;
 namespace {
 unsigned checks = 0;
 const char kToken[] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+#ifdef TEST_LEGACY_SERVO_CONFIG
+constexpr uint32_t kCallPressDuty = 4096; // 1250 us
+constexpr uint32_t kCallRestDuty = 3276;  // 1000 us, quantized at 16 bits
+constexpr uint32_t kEndPressDuty = 4096;
+constexpr uint32_t kEndRestDuty = 3276;
+#else
+constexpr uint32_t kCallPressDuty = 3276; // reversed 180 -> 0, 1000 us
+constexpr uint32_t kCallRestDuty = 6553;  // reversed 0 -> 180, 2000 us
+constexpr uint32_t kEndPressDuty = 3820; // opposite mounting: 30, 1166 us
+constexpr uint32_t kEndRestDuty = 3276;  // opposite mounting: 0, 1000 us
+#endif
 void check(bool value) { ++checks; assert(value); }
 void tick(uint32_t ms = 2) { fake::now += ms; pollReceiver(true, false, false); }
 void enqueue(const std::shared_ptr<fake::Socket>& s, Type type, uint32_t session,
@@ -48,9 +59,89 @@ std::shared_ptr<fake::Socket> connect(uint32_t id) {
 }
 void startCall(const std::shared_ptr<fake::Socket>& s, uint32_t id) {
   enqueue(s, Type::CallStart, id); tick();
+  check(fake::attachedPin == 26 && fake::servoDuties.back() == kCallPressDuty);
   check(!saw(replies(s), Type::CallStarted));
-  tick(500); check(!saw(replies(s), Type::CallStarted));
-  tick(500); check(saw(replies(s), Type::CallStarted));
+  tick(499);
+  check(fake::servoDuties.back() == kCallPressDuty && !saw(replies(s), Type::CallStarted));
+  tick(1); check(!saw(replies(s), Type::CallStarted));
+  check(fake::attachedPin == 26 && fake::servoDuties.back() == kCallRestDuty);
+  tick(499); check(fake::attachedPin == 26 && !saw(replies(s), Type::CallStarted));
+  tick(1); check(fake::attachedPin == -1 && saw(replies(s), Type::CallStarted));
+}
+void isolatedServoDiagnostics() {
+  check(fake::servoPins.empty() && !servoTestBusy()); // never moves on boot
+  check(!cancelServoTest());
+  const uint32_t before = millis();
+  check(requestServoTest(false));
+  check(millis() == before && servoTestBusy()); // nonblocking request
+  check(fake::servoPins.size() == 1 && fake::attachedPin == 26);
+  const uint32_t pressDuty = fake::servoDuties.back();
+  check(pressDuty == kCallPressDuty);
+  check(!requestServoTest(true)); // cannot overlap two servos
+  auto blocked = std::make_shared<fake::Socket>(); fake::candidate = blocked;
+  enqueue(blocked, Type::Hello, 90, 0, 0, kToken, 64);
+  tick(499);
+  check(!blocked->connected && blocked->output.empty()); // no call acknowledgements
+  check(fake::servoDuties.size() == 1 && fake::attachedPin == 26);
+  tick(1);
+  check(servoTestBusy() && fake::servoDuties.size() == 2);
+  check(fake::servoDuties.back() == kCallRestDuty); // same transform for return
+  check((fake::servoDuties.back() > pressDuty) == (kCallRestDuty > kCallPressDuty));
+  tick(499); check(fake::attachedPin == 26);
+  tick(1);
+  check(!servoTestBusy() && fake::attachedPin == -1);
+  check(strcmp(receiverStatus(), "Servo test complete: call") == 0);
+  tick(5000); check(fake::servoPins.size() == 1); // no follow-up end press
+
+  check(requestServoTest(true));
+  check(fake::attachedPin == 17);
+  check(fake::servoDuties.back() == kEndPressDuty); // GPIO17 uses its fixed direction
+  // A local diagnostic returns and detaches even while Wi-Fi is unavailable.
+  fake::now += 499; pollReceiver(false, false, false);
+  check(servoTestBusy() && fake::servoDuties.back() == kEndPressDuty);
+  fake::now += 1; pollReceiver(false, false, false);
+  check(servoTestBusy() && fake::attachedPin == 17);
+  check(fake::servoDuties.back() == kEndRestDuty);
+  fake::now += 499; pollReceiver(false, false, false);
+  check(servoTestBusy() && fake::attachedPin == 17);
+  fake::now += 1; pollReceiver(false, false, false);
+  check(!servoTestBusy() && fake::attachedPin == -1);
+  check(strcmp(receiverStatus(), "Servo test complete: end") == 0);
+
+  check(requestServoTest(false)); tick(100);
+  check(cancelServoTest());
+  check(fake::servoDuties.back() == kCallRestDuty);
+  const auto duties = fake::servoDuties.size();
+  tick(450); check(cancelServoTest());
+  check(fake::servoDuties.size() == duties); // repeated cancel doesn't restart return
+  tick(50);
+  check(!servoTestBusy() && fake::attachedPin == -1);
+  check(strcmp(receiverStatus(), "Servo test cancelled: call") == 0);
+  check(!cancelServoTest());
+
+  fake::failNextServoAttach = true;
+  check(!requestServoTest(false));
+  check(!servoTestBusy() && fake::attachedPin == -1);
+  fake::failNextServoWrite = true;
+  check(!requestServoTest(false));
+  check(servoTestBusy() && fake::attachedPin == 26);
+  check(fake::servoDuties.back() == kCallRestDuty);
+  tick(500); // partial PWM setup still returns/detaches only the selected servo
+  check(!servoTestBusy() && fake::attachedPin == -1);
+  check(strcmp(receiverStatus(), "Servo test cancelled: call") == 0);
+
+  // Neither the diagnostic nor its cancellation changes call/failsafe flags.
+  const auto operations = fake::servoPins.size();
+  auto unauthenticated = std::make_shared<fake::Socket>(); fake::candidate = unauthenticated;
+  tick(); check(!requestServoTest(false));
+  unauthenticated->connected = false; tick(); tick(1000);
+  check(fake::servoPins.size() == operations);
+  auto s = connect(91);
+  check(!requestServoTest(false) && !requestServoTest(true));
+  check(s->connected && s->output.empty());
+  s->connected = false; tick(); tick(1000);
+  check(fake::servoPins.size() == operations);
+  // Subsequent full call/playback tests below exercise normal operation again.
 }
 void completedPlayback() {
   auto s = connect(100);
@@ -79,8 +170,18 @@ void completedPlayback() {
   check(!saw(replies(s), Type::PlaybackDone));
   tick(29); check(!saw(replies(s), Type::PlaybackDone));
   tick(1); check(saw(replies(s), Type::PlaybackDone));
-  enqueue(s, Type::CallEnd, 100); tick(); tick(500); tick(500);
-  check(saw(replies(s), Type::CallEnded));
+  // API-driven TCP CALL_END uses the same fixed GPIO17 calibration and timing
+  // as the isolated USB end test; acknowledge only after return and detach.
+  enqueue(s, Type::CallEnd, 100); tick();
+  check(fake::attachedPin == 17 && fake::servoDuties.back() == kEndPressDuty);
+  check(!saw(replies(s), Type::CallEnded));
+  tick(499);
+  check(fake::servoDuties.back() == kEndPressDuty && !saw(replies(s), Type::CallEnded));
+  tick(1);
+  check(fake::attachedPin == 17 && fake::servoDuties.back() == kEndRestDuty);
+  check(!saw(replies(s), Type::CallEnded));
+  tick(499); check(fake::attachedPin == 17 && !saw(replies(s), Type::CallEnded));
+  tick(1); check(fake::attachedPin == -1 && saw(replies(s), Type::CallEnded));
   check(fake::servoPins.back() == 17);
   const auto after = fake::servoPins.size();
   enqueue(s, Type::CallEnd, 100); tick();
@@ -108,6 +209,7 @@ void backpressureAndDisconnect() {
   s->connected = false; tick();
   check(M5.Speaker.ends > stops && M5.Speaker.requests.empty());
   check(!saw(replies(s), Type::PlaybackDone));
+  check(!requestServoTest(false)); // pending disconnect failsafe owns the servo
   tick(); tick(500); tick(500); // failed call triggers one end operation
   check(fake::servoPins.back() == 17);
 }
@@ -155,9 +257,11 @@ void acknowledgedCancellation() {
   s = connect(105);
   enqueue(s, Type::CallStart, 105); tick();
   enqueue(s, Type::Cancel, 105); tick(); // abort while pressing call
+  check(fake::servoDuties.back() == kCallRestDuty);
   check(!saw(replies(s), Type::CallEnded));
   tick(500); // call servo returns, then end press begins
   check(fake::servoPins.back() == 17);
+  check(fake::servoDuties.back() == kEndPressDuty);
   enqueue(s, Type::Cancel, 105); tick(); // repeated cancel does not restart it
   const auto operations = fake::servoPins.size();
   tick(500); tick(500);
@@ -167,10 +271,29 @@ void acknowledgedCancellation() {
   check(saw(replies(s), Type::CallEnded) && fake::servoPins.size() == operations);
   s->connected = false; tick();
 }
+void disconnectDuringCallPress() {
+  auto s = connect(106);
+  enqueue(s, Type::CallStart, 106); tick();
+  check(fake::attachedPin == 26 && fake::servoDuties.back() == kCallPressDuty);
+  s->connected = false; tick();
+  check(fake::attachedPin == 26 && fake::servoDuties.back() == kCallRestDuty);
+  tick(500); tick(); // call returns before the existing failsafe end operation
+  check(fake::attachedPin == 17 && fake::servoDuties.back() == kEndPressDuty);
+  tick(500);
+  check(fake::servoDuties.back() == kEndRestDuty);
+  tick(500); check(fake::attachedPin == -1);
+  for (auto duty : fake::servoDuties) check(duty >= 3276 && duty <= 6553);
+}
 }
 int main() {
   beginReceiver(8769, kToken);
+  // Existing transport regressions use a short, deterministic servo cycle.
+  // The separate timing tests cover the shipped defaults and delayed start.
+  for (const char* cmd : {"@begin", "@time d 0", "@time c 500", "@time e 500", "@time r 500", "@save"})
+    calibrationCommand(cmd);
+  isolatedServoDiagnostics();
   completedPlayback(); backpressureAndDisconnect(); incompleteAndMalformed(); shortPlaybackAndStall();
   acknowledgedCancellation();
+  disconnectDuringCallPress();
   printf("M5 streaming receiver: %u checks passed\n", checks);
 }

@@ -20,7 +20,7 @@ class VoiceTransportTests(unittest.TestCase):
                 shutil.copyfile(ROOT / "source" / name, work / name)
             binary = work / "transport_test"
             subprocess.run([
-                "clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-g",
+                "clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-g", "-DVOICE_RELAY_PROTOCOL=2",
                 "-fsanitize=address,undefined", "-I", str(work),
                 str(ROOT / "tests/voice_transport_harness.c"),
                 str(work / "voice_transport.c"), str(work / "voice_protocol.c"), str(work / "relay_protocol.c"),
