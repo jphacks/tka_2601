@@ -32,13 +32,6 @@ export type Notice = {
   body: string;
 };
 
-const MODE_LABELS: Record<Visit["mode"], string> = {
-  normal: "通常",
-  omakase: "おまかせ",
-  away: "外出",
-  off: "停止",
-};
-
 const INTENT_LABELS: Record<NonNullable<Visit["intent"]>, string> = {
   delivery: "宅配",
   sales: "営業・勧誘",
@@ -85,7 +78,7 @@ export function chimeNotice(visit: Visit): Notice {
   return {
     kind: "chime",
     title: "来客があります",
-    body: `${time} にチャイムが鳴りました（${MODE_LABELS[visit.mode]}モード）`,
+    body: `${time} にチャイムが鳴りました`,
   };
 }
 

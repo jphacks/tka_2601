@@ -32,11 +32,11 @@ Deno.test("終話済みの来客が初めて届いたときは対応後の通知
   assertEquals(noticeKind(payload("INSERT", { ...visit, status: "missed" }, null)), "chime");
 });
 
-Deno.test("来客時の通知は時刻（東京）とモードを載せる", () => {
+Deno.test("来客時の通知は時刻（東京）を載せる", () => {
   assertEquals(chimeNotice(visit), {
     kind: "chime",
     title: "来客があります",
-    body: "10:32 にチャイムが鳴りました（おまかせモード）",
+    body: "10:32 にチャイムが鳴りました",
   });
 });
 
