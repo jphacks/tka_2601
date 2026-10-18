@@ -18,6 +18,9 @@ MONBANは、今あるインターホンに後付けし、不在時の来客対�
 
 <!-- 写真：CADでの設計、3Dプリントした部品、配線、組み立てた試作機 -->
 
+<img width="3360" height="2100" alt="image" src="https://github.com/user-attachments/assets/75ae23cf-cfe3-4f85-aa74-4bfeb87bf410" />
+
+
 ### ボイスエージェント：聞く、考える、話す仕組みを実装
 
 音声を文字にするSTT、返答を考えるローカルLLM、返答を声にするTTSを組み合わせ、来客と会話するシステムを設計・実装しました。音声認識にはKotoba-Whisper、返答の生成にはOllamaで動かすGemma 4、音声合成にはIrodori-TTSを使っています。各モデルは自分たちのサーバーで動かします。
@@ -33,6 +36,14 @@ ExpoとReact Nativeでスマホアプリを開発し、Supabaseにつなぎま�
 家族で使うための招待機能も実装しました。不在時のAI応答と、スマホでの状況確認をつなぐアプリです。
 
 <!-- 画像：来客一覧、会話の詳細、動作モード・AIへの指示の設定 -->
+
+<img width="400" alt="image" src="https://github.com/user-attachments/assets/0c5175a3-7c73-4a9d-9987-b232c3dcf7b7" />
+
+<img width="400" alt="Screenshot iPhone 17 2026-10-18 at 12 19 38" src="https://github.com/user-attachments/assets/6ae8c03c-a449-4384-a043-dade78ac8b9d" />
+
+<img width="400" alt="image" src="https://github.com/user-attachments/assets/9aa2fd7a-6a1e-476e-8796-81a05ca6e8ad" />
+
+
 
 # 競合との違い
 
