@@ -2,7 +2,7 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert@1.0.19";
 import { buildMessages, ExpoError, sendBatch, ticketOutcome } from "./expo.ts";
 
-const notice = { kind: "chime" as const, title: "来客があります", body: "10:32 にチャイムが鳴りました（通常モード）" };
+const notice = { kind: "chime" as const, title: "来客があります", body: "10:32 にチャイムが鳴りました" };
 
 // 決めた順に応答を返す fetch。呼ばれた回数を数える
 function fakeFetch(responses: (Response | Error)[]) {
@@ -23,7 +23,7 @@ Deno.test("通知は来客時も対応後も優先度 high で、data に visit_
   assertEquals(buildMessages(["ExponentPushToken[a]"], notice, "v1"), [{
     to: "ExponentPushToken[a]",
     title: "来客があります",
-    body: "10:32 にチャイムが鳴りました（通常モード）",
+    body: "10:32 にチャイムが鳴りました",
     sound: "default",
     priority: "high",
     data: { visit_id: "v1", kind: "chime" },
