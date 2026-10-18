@@ -8,7 +8,7 @@ import { ConfirmDialog, MenuPopover } from '../../components/overlays';
 import { NavBar, Screen } from '../../components/Screen';
 import { CenterMessage, IntentBadge } from '../../components/ui';
 import { deleteVisit, getVisit } from '../../lib/api';
-import { errorMessage } from '../../lib/authActions';
+import { errorMessage } from '../../lib/errors';
 import { callSeconds, durationLabel, hourMinute, hourMinuteSecond, monthDay } from '../../lib/format';
 import { endReasonLabel, intentLabel, MODE_LABELS, outcomeLabel, SPEAKER_LABELS, visitTitle } from '../../lib/labels';
 import type { Visit, VisitMessage } from '../../lib/types';

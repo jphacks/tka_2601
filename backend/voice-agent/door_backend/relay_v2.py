@@ -18,7 +18,15 @@ from starlette.websockets import WebSocketDisconnect
 
 from .config import settings
 from .house_rules import build_house_rules
-from .relay import CLOSE_NORMAL, CLOSE_SERVER_ERROR, RelayError, StartMessage, fetch_house_settings, _send_error
+from .relay import (
+    CLOSE_NORMAL,
+    CLOSE_SERVER_ERROR,
+    RelayError,
+    RelayErrorCode,
+    StartMessage,
+    fetch_house_settings,
+    _send_error,
+)
 from .relay_agent import DeviceAgent
 from .supabase_history import write_visit
 
@@ -39,8 +47,10 @@ def now() -> str:
 
 def integer(payload: dict, key: str, expected: int | None = None) -> int:
     value = payload.get(key)
-    if type(value) is not int or value < 0 or (expected is not None and value != expected):
-        raise RelayError("invalid_message", f"Invalid {key}.")
+    if type(value) is not int or value < 0:
+        raise RelayError(RelayErrorCode.INVALID_MESSAGE, f"Invalid {key}.")
+    if expected is not None and value != expected:
+        raise RelayError(RelayErrorCode.INVALID_MESSAGE, f"Invalid {key}.")
     return value
 
 
@@ -86,10 +96,20 @@ class DeviceConversation:
         await self.send(payload)
 
     async def write_audio(self, pcm: bytes) -> None:
-        if self.state != "processing" or self.output_ended or not pcm or len(pcm) % 2 or len(pcm) > 640:
-            raise RelayError("invalid_output", "Invalid agent audio boundary.", CLOSE_SERVER_ERROR)
+        output_open = self.state == "processing" and not self.output_ended
+        if not output_open:
+            raise RelayError(
+                RelayErrorCode.INVALID_OUTPUT, "Invalid agent audio boundary.", CLOSE_SERVER_ERROR
+            )
+        valid_pcm = bool(pcm) and len(pcm) % 2 == 0 and len(pcm) <= FRAME_BYTES
+        if not valid_pcm:
+            raise RelayError(
+                RelayErrorCode.INVALID_OUTPUT, "Invalid agent audio boundary.", CLOSE_SERVER_ERROR
+            )
         if self.output_samples + len(pcm) // 2 > MAX_OUTPUT_SAMPLES:
-            raise RelayError("output_limit", "Agent audio exceeds 60 seconds.", CLOSE_SERVER_ERROR)
+            raise RelayError(
+                RelayErrorCode.OUTPUT_LIMIT, "Agent audio exceeds 60 seconds.", CLOSE_SERVER_ERROR
+            )
         async with self._ack_changed:
             await asyncio.wait_for(self._ack_changed.wait_for(
                 lambda: self.output_frames - self.ack_frames < OUTPUT_WINDOW
@@ -102,7 +122,9 @@ class DeviceConversation:
 
     async def finish_audio(self) -> None:
         if self.state != "processing" or self.output_ended or not self.output_frames:
-            raise RelayError("invalid_output", "Invalid agent output completion.", CLOSE_SERVER_ERROR)
+            raise RelayError(
+                RelayErrorCode.INVALID_OUTPUT, "Invalid agent output completion.", CLOSE_SERVER_ERROR
+            )
         assert self.runtime
         self.end_call = self.turn > 0 and self.runtime.end_after_reply()
         # State is updated before send: an immediate peer acknowledgement is valid.
@@ -151,9 +173,11 @@ class DeviceConversation:
         pcm = message.get("bytes")
         if pcm is not None:
             if self.state != "input" or len(pcm) != FRAME_BYTES:
-                raise RelayError("invalid_audio", "Input PCM must be 640 bytes during an input turn.")
+                raise RelayError(
+                    RelayErrorCode.INVALID_AUDIO, "Input PCM must be 640 bytes during an input turn."
+                )
             if self._input_frames >= MAX_INPUT_FRAMES:
-                raise RelayError("input_limit", "Input audio exceeds 30 seconds.")
+                raise RelayError(RelayErrorCode.INPUT_LIMIT, "Input audio exceeds 30 seconds.")
             if not self._input_frames:
                 self._input_deadline = asyncio.get_running_loop().time() + 35
                 self._deadline = self._input_deadline
@@ -163,12 +187,12 @@ class DeviceConversation:
             return False
         try:
             if len((message.get("text") or "").encode("utf-8")) > 1024:
-                raise RelayError("invalid_message", "Control message is too large.")
+                raise RelayError(RelayErrorCode.INVALID_MESSAGE, "Control message is too large.")
             payload = json.loads(message.get("text") or "")
         except ValueError as exc:
-            raise RelayError("invalid_message", "Expected a JSON object.") from exc
+            raise RelayError(RelayErrorCode.INVALID_MESSAGE, "Expected a JSON object.") from exc
         if not isinstance(payload, dict):
-            raise RelayError("invalid_message", "Expected a JSON object.")
+            raise RelayError(RelayErrorCode.INVALID_MESSAGE, "Expected a JSON object.")
         kind = payload.get("type")
         if kind in {"cancel", "end"}:
             return True
@@ -176,7 +200,7 @@ class DeviceConversation:
             ping_turn = integer(payload, "turn_id")
             seq = integer(payload, "seq")
             if ping_turn > self.turn or ping_turn < max(0, self.turn - 1):
-                raise RelayError("invalid_message", "Stale keepalive generation.")
+                raise RelayError(RelayErrorCode.INVALID_MESSAGE, "Stale keepalive generation.")
             if kind == "ping":
                 await self.send({"type": "pong", "turn_id": ping_turn, "seq": seq})
             return False
@@ -200,10 +224,14 @@ class DeviceConversation:
             integer(payload, "frames", self._input_frames)
             integer(payload, "samples", self._input_frames * 320)
             reason = payload.get("reason")
-            if not self._input_frames or reason not in {"silence", "max_duration"} or (
+            if not self._input_frames:
+                raise RelayError(RelayErrorCode.INVALID_INPUT_END, "Invalid input boundary.")
+            valid_reason = reason in {"silence", "max_duration"}
+            truncated_max_duration = (
                 reason == "max_duration" and self._input_frames != MAX_INPUT_FRAMES
-            ):
-                raise RelayError("invalid_input_end", "Invalid input boundary.")
+            )
+            if not valid_reason or truncated_max_duration:
+                raise RelayError(RelayErrorCode.INVALID_INPUT_END, "Invalid input boundary.")
             # Single receive loop consumed all binary messages before this JSON.
             pcm = bytes(self._pcm)
             self._pcm.clear()
@@ -212,7 +240,9 @@ class DeviceConversation:
             integer(payload, "output_id", self.turn)
             frames = integer(payload, "frames")
             if frames < self.ack_frames or frames > self.output_frames:
-                raise RelayError("invalid_ack", "Audio acknowledgement is out of range.")
+                raise RelayError(
+                    RelayErrorCode.INVALID_ACK, "Audio acknowledgement is out of range."
+                )
             async with self._ack_changed:
                 self.ack_frames = frames
                 self._ack_changed.notify_all()
@@ -221,7 +251,9 @@ class DeviceConversation:
             integer(payload, "frames", self.output_frames)
             integer(payload, "samples", self.output_samples)
             if not self.output_ended or self.ack_frames != self.output_frames:
-                raise RelayError("invalid_playback", "All output must be acknowledged before playback completion.")
+                raise RelayError(
+                    RelayErrorCode.INVALID_PLAYBACK, "All output must be acknowledged before playback completion."
+                )
             self.state = "played"
             self._deadline = asyncio.get_running_loop().time() + 10
             assert self.runtime
@@ -229,7 +261,9 @@ class DeviceConversation:
         elif kind == "call_ended" and self.state == "ending":
             return True
         else:
-            raise RelayError("invalid_state", "Message is invalid for the current turn.")
+            raise RelayError(
+                RelayErrorCode.INVALID_STATE, "Message is invalid for the current turn."
+            )
         return False
 
     async def run(self) -> None:
@@ -252,7 +286,9 @@ class DeviceConversation:
                     waits.add(self._model)
                 done, _ = await asyncio.wait(waits, timeout=max(0, deadline - current), return_when=asyncio.FIRST_COMPLETED)
                 if not done:
-                    raise RelayError("time_limit", "Conversation or state deadline expired.")
+                    raise RelayError(
+                        RelayErrorCode.TIME_LIMIT, "Conversation or state deadline expired."
+                    )
                 if receive in done:
                     if await self.received(receive.result()):
                         await self.websocket.close(CLOSE_NORMAL)
@@ -263,11 +299,15 @@ class DeviceConversation:
                     task.result()
                     if not self.output_frames:
                         if self.turn == 0:
-                            raise RelayError("empty_greeting", "Greeting audio is unavailable.", CLOSE_SERVER_ERROR)
+                            raise RelayError(
+                                RelayErrorCode.EMPTY_GREETING, "Greeting audio is unavailable.", CLOSE_SERVER_ERROR
+                            )
                         await self.send({"type": "no_reply", "turn_id": self.turn})
                         await self.listen()
                     elif self.state != "played":
-                        raise RelayError("invalid_output", "Agent completed before physical playout.", CLOSE_SERVER_ERROR)
+                        raise RelayError(
+                            RelayErrorCode.INVALID_OUTPUT, "Agent completed before physical playout.", CLOSE_SERVER_ERROR
+                        )
                     elif self.end_call:
                         await self.hangup("completed")
                     else:
@@ -296,7 +336,7 @@ async def serve_v2(websocket: WebSocket, start: StartMessage) -> None:
     except WebSocketDisconnect:
         end_code = "disconnected"
     except Exception as exc:
-        end_code = "agent_unavailable"
+        end_code = RelayErrorCode.AGENT_UNAVAILABLE
         logger.warning("relay v2 failed: %s", type(exc).__name__)
         await _send_error(websocket, RelayError(end_code, "Voice processing failed.", CLOSE_SERVER_ERROR))
     finally:

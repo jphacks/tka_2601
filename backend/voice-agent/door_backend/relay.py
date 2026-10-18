@@ -11,8 +11,9 @@ import asyncio
 import json
 import logging
 import secrets
-from datetime import UTC, datetime
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -50,10 +51,28 @@ Outbound = tuple[Literal["audio", "json", "closed"], Any]
 Dispatch = Callable[[str, str], Awaitable[None]]
 
 
+class RelayErrorCode(StrEnum):
+    START_TIMEOUT = "start_timeout"
+    INVALID_START = "invalid_start"
+    INVALID_AUDIO = "invalid_audio"
+    INVALID_MESSAGE = "invalid_message"
+    LIVEKIT_DISCONNECTED = "livekit_disconnected"
+    TIME_LIMIT = "time_limit"
+    AGENT_UNAVAILABLE = "agent_unavailable"
+    INVALID_OUTPUT = "invalid_output"
+    OUTPUT_LIMIT = "output_limit"
+    INPUT_LIMIT = "input_limit"
+    INVALID_INPUT_END = "invalid_input_end"
+    INVALID_ACK = "invalid_ack"
+    INVALID_PLAYBACK = "invalid_playback"
+    INVALID_STATE = "invalid_state"
+    EMPTY_GREETING = "empty_greeting"
+
+
 class RelayError(Exception):
     def __init__(self, code: str, message: str, close_code: int = CLOSE_POLICY) -> None:
-        super().__init__(code)
-        self.code = code
+        super().__init__(str(code))
+        self.code = str(code)
         self.message = message
         self.close_code = close_code
 
@@ -186,7 +205,7 @@ class LiveKitLink:
         self._spawn(drain())
 
     def _on_disconnected(self, _reason) -> None:
-        self._outbox.put_nowait(("closed", "livekit_disconnected"))
+        self._outbox.put_nowait(("closed", RelayErrorCode.LIVEKIT_DISCONNECTED))
 
 
 def participant_token(room: str, identity: str) -> str:
@@ -264,13 +283,13 @@ async def _receive_start(websocket: WebSocket) -> StartMessage:
             websocket.receive(), timeout=settings.relay_start_timeout_seconds
         )
     except asyncio.TimeoutError as exc:
-        raise RelayError("start_timeout", "開始の JSON が届きません。") from exc
+        raise RelayError(RelayErrorCode.START_TIMEOUT, "開始の JSON が届きません。") from exc
     if message["type"] == "websocket.disconnect":
         raise WebSocketDisconnect(message.get("code", CLOSE_NORMAL))
     try:
         return StartMessage.model_validate_json(message.get("text") or "")
     except ValidationError as exc:
-        raise RelayError("invalid_start", "開始の JSON の形が違います。") from exc
+        raise RelayError(RelayErrorCode.INVALID_START, "開始の JSON の形が違います。") from exc
 
 
 async def _pump_inbound(websocket: WebSocket, link: AgentLink) -> str:
@@ -281,15 +300,17 @@ async def _pump_inbound(websocket: WebSocket, link: AgentLink) -> str:
         data = message.get("bytes")
         if data is not None:
             if not data or len(data) % 2 or len(data) > MAX_AUDIO_MESSAGE_BYTES:
-                raise RelayError("invalid_audio", "音声は 16bit の PCM を 100 ms 以下ずつ送ってください。")
+                raise RelayError(
+                    RelayErrorCode.INVALID_AUDIO, "音声は 16bit の PCM を 100 ms 以下ずつ送ってください。"
+                )
             await link.send_audio(data)
             continue
         try:
             payload = json.loads(message.get("text") or "")
         except ValueError as exc:
-            raise RelayError("invalid_message", "テキストのメッセージは JSON にしてください。") from exc
+            raise RelayError(RelayErrorCode.INVALID_MESSAGE, "テキストのメッセージは JSON にしてください。") from exc
         if not isinstance(payload, dict):
-            raise RelayError("invalid_message", "テキストのメッセージは JSON のオブジェクトにしてください。")
+            raise RelayError(RelayErrorCode.INVALID_MESSAGE, "テキストのメッセージは JSON のオブジェクトにしてください。")
         if payload.get("type") == "end":
             return "end"
 
@@ -323,7 +344,7 @@ async def _converse(websocket: WebSocket, link: AgentLink, outbox: asyncio.Queue
             return_when=asyncio.FIRST_COMPLETED,
         )
         if not done:
-            raise RelayError("time_limit", "会話の上限時間を過ぎました。")
+            raise RelayError(RelayErrorCode.TIME_LIMIT, "会話の上限時間を過ぎました。")
         for task in done:
             task.result()
     finally:
@@ -370,7 +391,7 @@ async def serve(websocket: WebSocket, dispatch: Dispatch) -> None:
         except Exception as exc:
             logger.warning("relay could not start the agent: %s", type(exc).__name__)
             raise RelayError(
-                "agent_unavailable", "音声エージェントを開始できません。", CLOSE_SERVER_ERROR
+                RelayErrorCode.AGENT_UNAVAILABLE, "音声エージェントを開始できません。", CLOSE_SERVER_ERROR
             ) from exc
         await websocket.send_json({"type": "ready"})
         answered_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")

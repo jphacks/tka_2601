@@ -9,7 +9,7 @@ import { CenterMessage, Separator } from '../components/ui';
 import { VisitRow } from '../components/VisitRow';
 import { listVisits, VISITS_PAGE_SIZE } from '../lib/api';
 import { useHousehold } from '../lib/auth';
-import { errorMessage } from '../lib/authActions';
+import { errorMessage } from '../lib/errors';
 import { dayKey, sectionTitle } from '../lib/format';
 import type { VisitSummary } from '../lib/types';
 import { colors, radius } from '../theme';

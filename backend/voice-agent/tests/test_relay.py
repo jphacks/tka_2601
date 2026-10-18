@@ -386,3 +386,26 @@ def test_house_settings_are_skipped_without_supabase_url(monkeypatch):
     values["supabase_url"] = ""
     monkeypatch.setattr(relay, "settings", SimpleNamespace(**values))
     assert asyncio.run(relay.fetch_house_settings(DEVICE_KEY)) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("{", "テキストのメッセージは JSON にしてください。"),
+        ("[]", "テキストのメッセージは JSON のオブジェクトにしてください。"),
+    ],
+)
+def test_invalid_control_preserves_wire_error_and_closes_link(livekit, text, message):
+    with TestClient(api.app) as client:
+        with client.websocket_connect("/api/relay", headers=auth_headers()) as ws:
+            ws.send_json(start_message())
+            assert ws.receive_json() == {"type": "ready"}
+            ws.send_text(text)
+            assert ws.receive_json() == {
+                "type": "error", "code": "invalid_message", "message": message,
+            }
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+            assert closed.value.code == 1008
+    assert livekit.links[0].closed
+    assert len(livekit.deleted) == 1

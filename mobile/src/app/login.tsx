@@ -7,7 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BackgroundShapes } from '../components/Screen';
 import { PrimaryButton, TextField } from '../components/ui';
 import { APP_NAME } from '../lib/app';
-import { errorMessage, signInWithApple, signInWithEmail, signInWithGoogle } from '../lib/authActions';
+import { signInWithApple, signInWithEmail, signInWithGoogle } from '../lib/authActions';
+import { errorMessage } from '../lib/errors';
 import { colors } from '../theme';
 
 export default function LoginScreen() {

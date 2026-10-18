@@ -7,7 +7,7 @@ import { Screen } from '../components/Screen';
 import { PrimaryButton, TextField, TintButton } from '../components/ui';
 import { createHousehold } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { errorMessage } from '../lib/authActions';
+import { errorMessage } from '../lib/errors';
 import { colors, radius } from '../theme';
 
 // 初回: グループを作るか、家族のグループに参加する

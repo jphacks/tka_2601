@@ -38,6 +38,18 @@ static bool option(voice_transport_t *l, int level, int name, const void *p, siz
             level,name,(unsigned long)result);
     return result==CY_RSLT_SUCCESS;
 }
+typedef enum {
+    RECEIVE_FAILED = -1,
+    RECEIVE_PENDING = 0,
+    RECEIVE_COMPLETE = 1
+} receive_result_t;
+
+static bool socket_would_retry(cy_rslt_t result)
+{
+    return result==CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK ||
+        result==CY_RSLT_MODULE_SECURE_SOCKETS_TIMEOUT;
+}
+
 static bool send_all(voice_transport_t *l, const uint8_t *p, size_t n)
 {
     TickType_t start=xTaskGetTickCount();
@@ -49,8 +61,7 @@ static bool send_all(voice_transport_t *l, const uint8_t *p, size_t n)
         }
         cy_rslt_t result=cy_socket_send(l->socket,p,(uint32_t)n,0,&sent);
         if (sent>n) return false;
-        if (result==CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK ||
-            result==CY_RSLT_MODULE_SECURE_SOCKETS_TIMEOUT) {
+        if (socket_would_retry(result)) {
             p+=sent; n-=sent;
             if (n) vTaskDelay(1); /* bounded backpressure, not a disconnect */
             continue;
@@ -65,23 +76,22 @@ static bool send_all(voice_transport_t *l, const uint8_t *p, size_t n)
     return true;
 }
 /* Preserve partial bytes even when the SDK's exact-length TLS read times out. */
-static int receive(voice_transport_t *l, uint8_t *p, size_t wanted, size_t *used)
+static receive_result_t receive(voice_transport_t *l, uint8_t *p, size_t wanted, size_t *used)
 {
     uint32_t n=0;
     cy_rslt_t result=cy_socket_recv(l->socket,p+*used,(uint32_t)(wanted-*used),0,&n);
-    if (n>wanted-*used) return -1;
+    if (n>wanted-*used) return RECEIVE_FAILED;
     *used+=n;
     if (n) l->progress=xTaskGetTickCount();
-    if (result!=CY_RSLT_SUCCESS && result!=CY_RSLT_MODULE_SECURE_SOCKETS_TIMEOUT &&
-        result!=CY_RSLT_MODULE_SECURE_SOCKETS_WOULDBLOCK) {
+    if (result!=CY_RSLT_SUCCESS && !socket_would_retry(result)) {
         printf("[VOICE] %s receive failed: result=0x%08lx.\n",l->websocket?"Server":"M5",(unsigned long)result);
-        return -1;
+        return RECEIVE_FAILED;
     }
     if (result==CY_RSLT_SUCCESS && !n) {
         printf("[VOICE] %s socket closed by peer.\n",l->websocket?"Server":"M5");
-        return -1;
+        return RECEIVE_FAILED;
     }
-    return *used==wanted ? 1 : 0;
+    return *used==wanted ? RECEIVE_COMPLETE : RECEIVE_PENDING;
 }
 static bool connect_socket(voice_transport_t *l, const char *host, uint16_t port, bool tls)
 {
@@ -161,9 +171,9 @@ bool voice_transport_server(voice_transport_t *l)
     TickType_t start=xTaskGetTickCount();
     while (used<sizeof(response)-1 && xTaskGetTickCount()-start<pdMS_TO_TICKS(15000)) {
         size_t one=0;
-        int r=receive(l,(uint8_t *)response+used,1,&one);
+        receive_result_t r=receive(l,(uint8_t *)response+used,1,&one);
         used+=one;
-        if (r<0) return false;
+        if (r==RECEIVE_FAILED) return false;
         if (used>=4 && !memcmp(response+used-4,"\r\n\r\n",4)) break;
     }
     response[used]=0;
@@ -228,14 +238,14 @@ int voice_transport_poll(voice_transport_t *l, voice_packet_t *p)
         return -1;
     }
     if (!l->websocket) {
-        int r;
+        receive_result_t r;
         if (l->message_used<VOICE_HEADER) {
-            r=receive(l,l->message,VOICE_HEADER,&l->message_used); if (r<=0) return r;
+            r=receive(l,l->message,VOICE_HEADER,&l->message_used); if (r!=RECEIVE_COMPLETE) return r;
         }
         voice_header_t h;
         if (!voice_header_decode(l->message,&h)) return -1;
         if (l->message_used<VOICE_HEADER+h.length) {
-            r=receive(l,l->message,VOICE_HEADER+h.length,&l->message_used); if (r<=0) return r;
+            r=receive(l,l->message,VOICE_HEADER+h.length,&l->message_used); if (r!=RECEIVE_COMPLETE) return r;
         }
         return unpack(l,p);
     }
@@ -254,19 +264,19 @@ int voice_transport_poll(voice_transport_t *l, voice_packet_t *p)
         l->relay.last_input_ms=l->relay.clock_ms;
     }
     if (l->header_used<2) {
-        int r=receive(l,l->frame_header,2,&l->header_used);
-        if (r<=0) {
-            if (!r && !l->header_used && !l->fragmented)
+        receive_result_t r=receive(l,l->frame_header,2,&l->header_used);
+        if (r!=RECEIVE_COMPLETE) {
+            if (r==RECEIVE_PENDING && !l->header_used && !l->fragmented)
                 return voice_relay_pending(&l->relay,l->relay.clock_ms,&p->header,p->payload);
             return r;
         }
     }
     if ((l->frame_header[1]&127)==126 && l->header_used<4) {
-        int r=receive(l,l->frame_header,4,&l->header_used); if (r<=0) return r;
+        receive_result_t r=receive(l,l->frame_header,4,&l->header_used); if (r!=RECEIVE_COMPLETE) return r;
     }
     if (voice_ws_header(l->frame_header,l->header_used,&l->opcode,&l->final,&l->frame_length)<=0) return -1;
     if (l->frame_used<l->frame_length) {
-        int r=receive(l,l->frame,l->frame_length,&l->frame_used); if (r<=0) return r;
+        receive_result_t r=receive(l,l->frame,l->frame_length,&l->frame_used); if (r!=RECEIVE_COMPLETE) return r;
     }
     l->header_used=l->frame_used=0;
     if (l->opcode==8) { (void)websocket_send(l,8,l->frame,l->frame_length); return -1; }

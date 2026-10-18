@@ -8,7 +8,7 @@ import { BackgroundShapes } from '../components/Screen';
 import { CenterMessage, PrimaryButton, TextButton } from '../components/ui';
 import { acceptInvite, getInvitePreview } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { errorMessage } from '../lib/authActions';
+import { errorMessage } from '../lib/errors';
 import { setPendingInvite } from '../lib/pendingInvite';
 import type { InvitePreview } from '../lib/types';
 import { colors } from '../theme';

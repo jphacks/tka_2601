@@ -54,24 +54,38 @@ export async function sendBatch(messages: unknown[], options: SendOptions = {}):
   if (options.accessToken) headers["Authorization"] = `Bearer ${options.accessToken}`;
 
   for (let attempt = 0;; attempt++) {
-    let failure: ExpoError;
-    try {
-      const res = await doFetch(EXPO_PUSH_URL, { method: "POST", headers, body: JSON.stringify(messages) });
-      const json = await res.json().catch(() => null);
-      if (res.status === 429 || res.status >= 500) {
-        failure = new ExpoError(`Expo HTTP ${res.status}`, true);
-      } else if (!res.ok || !json || json.errors || !Array.isArray(json.data)) {
-        // 認証（UNAUTHORIZED）や形式の誤りは、試し直しても届かない
-        throw new ExpoError(`Expo HTTP ${res.status} ${JSON.stringify(json?.errors ?? json)}`, false);
-      } else {
-        return json.data as ExpoTicket[];
-      }
-    } catch (e) {
-      if (e instanceof ExpoError) throw e;
-      failure = new ExpoError(`Expo network error: ${e instanceof Error ? e.message : String(e)}`, true);
-    }
-    if (attempt >= delays.length) throw failure;
+    const result = await sendAttempt(messages, doFetch, headers);
+    if (result.ok) return result.tickets;
+    if (!result.error.retryable || attempt >= delays.length) throw result.error;
     await sleep(delays[attempt]);
+  }
+}
+
+type SendAttempt =
+  | { ok: true; tickets: ExpoTicket[] }
+  | { ok: false; error: ExpoError };
+
+async function sendAttempt(
+  messages: unknown[],
+  doFetch: typeof fetch,
+  headers: Record<string, string>,
+): Promise<SendAttempt> {
+  try {
+    const res = await doFetch(EXPO_PUSH_URL, { method: "POST", headers, body: JSON.stringify(messages) });
+    const json = await res.json().catch(() => null);
+    if (res.status === 429 || res.status >= 500) {
+      return { ok: false, error: new ExpoError(`Expo HTTP ${res.status}`, true) };
+    }
+    if (!res.ok || !json || json.errors || !Array.isArray(json.data)) {
+      return { ok: false, error: new ExpoError(`Expo HTTP ${res.status} ${JSON.stringify(json?.errors ?? json)}`, false) };
+    }
+    return { ok: true, tickets: json.data as ExpoTicket[] };
+  } catch (error) {
+    if (error instanceof ExpoError) throw error;
+    return {
+      ok: false,
+      error: new ExpoError(`Expo network error: ${error instanceof Error ? error.message : String(error)}`, true),
+    };
   }
 }
 
