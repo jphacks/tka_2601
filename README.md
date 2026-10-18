@@ -4,11 +4,7 @@
 
 ## 製品概要
 
-料理中、入浴中、オンライン会議中。家にいても、インターホンに出られないことがあります。MONBANは、そんなときに住人に代わって来客と会話するAIデバイスです。
-
-室内親機のそばに取り付け、チャイムを検知すると通話ボタンを押します。AIが訪問者の話を聞き、住人が決めた方針に沿って返答し、終話まで行う仕組みです。配達員に置き場所を伝えたり、置き配を断られたら別の対応を相談したりと、相手の話に合わせて応答します。会話の内容と対応結果はスマートフォンで確認できます。
-
-既存の親機を分解せず、配線も変えない構成です。集合住宅でも、共用玄関の設備を交換せずに室内親機から応答する使い方を想定しています。対応機種は今後広げていきます。
+MONBANは、今あるインターホンに後付けし、不在時の来客対応を任せられるAIデバイスです。住人に代わってAIが訪問者と会話し、来客をスマホにすぐ通知します。外出先でも、会話の内容や対応結果を確認できます。
 
 # この2日間でつくったもの
 
@@ -30,37 +26,25 @@
 
 <!-- 画像・動画：音声対話の流れ、実際の会話、割り込みの様子 -->
 
-### スマホアプリ：来客への対応を後から確認
+### スマホアプリ：外出先でも来客をすぐに把握
 
-ExpoとReact Nativeでスマホアプリを開発し、Supabaseにつなぎました。来客の一覧、会話の内容、対応結果を確認でき、動作モードやAIへの指示もアプリから設定できます。
+ExpoとReact Nativeでスマホアプリを開発し、Supabaseにつなぎました。来客をプッシュ通知で知らせ、外出先でも会話の内容や対応結果を確認できます。動作モードやAIへの指示もアプリから設定できます。
 
-家族で使うための招待機能や来客通知も実装しています。インターホンの前で応答するだけでなく、その後にスマホで確認するところまで含めてつくりました。
+家族で使うための招待機能も実装しました。不在時のAI応答と、スマホでの状況確認をつなぐアプリです。
 
 <!-- 画像：来客一覧、会話の詳細、動作モード・AIへの指示の設定 -->
 
 # 競合との違い
 
-比較の軸は、既存のインターホンを使い、室内への後付けで来客との対話まで任せられることです。以下は2026年10月18日時点の公式情報に基づきます。
+MONBANの特長は、既存の室内親機への後付けで、不在時の来客との対話まで任せられることです。
 
-### SwitchBot：ボタン操作に加え、来客との会話も任せる
+| 競合 | 来客への対応方法 | MONBANとの違い |
+|---|---|---|
+| SwitchBot（[ボット](https://www.switchbot.jp/products/switchbot-bot)・[ドアホン](https://www.switchbot.jp/products/switchbot-smart-video-doorbell)） | ボットは物理ボタンを押し、ドアホンは[登録音声で自動応答](https://support.switch-bot.com/hc/ja/articles/31601503495319)する。 | MONBANは既存親機を操作し、訪問者の返答に合わせた対話まで自動で行う。 |
+| [Alexa+ Greetings](https://www.aboutamazon.com/news/devices/alexa-ring-doorbell-ai-greetings)（比較機種：[Ring Wired Doorbell 4K Pro](https://ring.com/products/wired-doorbell-pro)） | [有線給電の屋外ドアベルを設置](https://ring.com/gb/en/support/articles/2guno/installing-wired-doorbell-4k-pro-hardwired)し、AIが会話する。 | MONBANは屋外機器の交換や既存配線の変更をせず、室内への後付けでAI応答を追加する。 |
+| [SwannShield](https://us.swann.com/pages/swannshield) | [対応する専用ドアベル](https://support.swann.com/hc/en-us/articles/41122689903385-SwannShield-Concierge-How-It-Works)でAIが会話する。 | MONBANは室内親機を使うため、集合住宅の共用玄関に別のドアベルを追加しない構成。 |
 
-[SwitchBot ボット](https://www.switchbot.jp/products/switchbot-bot)は、既存のボタンを物理的に押す製品です。本製品は、押下に加えて訪問者の話を聞き、内容に応じて返答するところまで扱います。
-
-[SwitchBot スマートテレビドアホン](https://www.switchbot.jp/products/switchbot-smart-video-doorbell)は、専用の玄関子機とモニターを設置する方式です。配線工事は不要で、本体は19,980円（税込）。[おまかせ応答](https://support.switch-bot.com/hc/ja/articles/31601503495319)では登録した音声を自動再生できます。本製品は今ある親機を使い、相手の返答に合わせて会話を続ける点で異なります。
-
-### Alexa+ Greetings：有線の上位モデルに対し、屋外機器の交換を省く
-
-[Alexa+ Greetings](https://www.aboutamazon.com/news/devices/alexa-ring-doorbell-ai-greetings)も、配達指示や追加の質問に応じてAIが会話するサービスです。ここでは、対応する有線上位モデルの[Ring Wired Doorbell 4K Pro](https://ring.com/products/wired-doorbell-pro)を比較対象にします。
-
-本体は米国価格でUS$249.99。有線給電と屋外本体の設置が必要で、[設置手順](https://ring.com/gb/en/support/articles/2guno/installing-wired-doorbell-4k-pro-hardwired)には既存のボタンの取り外しや配線接続が含まれます。公式の業者設置サービスは約US$130からで、追加作業は別料金です。利用には[対応するRing契約とAlexa+](https://ring.com/support/articles/kc57h/alexa-plus-greetings?hasLangChanged=true)も必要です。
-
-本製品では、屋外のドアベルを交換せず、既存の室内親機に取り付ける構成で、設置に伴う設備変更を減らします。共用玄関の機器を個人で交換しにくい集合住宅も、想定する利用先です。
-
-### SwannShield：専用ドアベルの追加に対し、既存の呼び出し経路を使う
-
-[SwannShield](https://us.swann.com/pages/swannshield)は、対応するSwann製ドアベルで訪問者とAIが会話する機能です。配達指示や会話の文字記録にも対応し、追加の月額料金は不要です。[対応機種と動作条件](https://support.swann.com/hc/en-us/articles/41122689903385-SwannShield-Concierge-How-It-Works)が定められています。
-
-対応機種の一つである[Swann EVO](https://support.swann.com/hc/en-us/articles/36636058628633-SWIFI-SEVDBC-Swann-EVO-Wireless-Video-Doorbell)は、独立した無線ドアベルです。本製品は、専用ドアベルを追加せず、既存インターホンの呼び出しと音声の経路を使います。集合住宅の各戸の玄関に別のベルを設置する代わりに、共用玄関から室内親機に届く呼び出しへの対応を目指します。
+競合の記載は2026年10月18日時点の公式情報に基づきます。MONBANの対応機種は今後広げていきます。
 
 # 実際の動作
 
