@@ -118,7 +118,7 @@ def test_development_visit_save_passes_test_device_key_and_transcript(monkeypatc
     monkeypatch.setattr(
         api,
         "settings",
-        replace(api.settings, environment="development", supabase_url="https://example.supabase.co"),
+        replace(api.settings, environment="development", supabase_url="https://example.supabase.co", supabase_anon_key="test-public-api-key"),
     )
     written = {}
 

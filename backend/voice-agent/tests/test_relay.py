@@ -312,7 +312,7 @@ def run_with_settings_server(handler, scenario, monkeypatch, **overrides):
         await site.start()
         port = site._server.sockets[0].getsockname()[1]
         values = asdict(relay.settings)
-        values.update(supabase_url=f"http://127.0.0.1:{port}", house_settings_timeout_seconds=0.5)
+        values.update(supabase_url=f"http://127.0.0.1:{port}", supabase_anon_key="test-public-api-key", house_settings_timeout_seconds=0.5)
         values.update(overrides)
         monkeypatch.setattr(relay, "settings", SimpleNamespace(**values))
         try:
@@ -328,6 +328,7 @@ def test_house_settings_are_read_with_the_device_key(monkeypatch):
 
     async def handler(request):
         seen["authorization"] = request.headers.get("Authorization")
+        seen["apikey"] = request.headers.get("apikey")
         # The Edge Function also returns fields the relay does not use (supabase/README.md).
         return web.json_response(
             {
@@ -344,6 +345,7 @@ def test_house_settings_are_read_with_the_device_key(monkeypatch):
     )
     assert result == HouseSettings(away_leave_at_door=True, extra_instructions="犬がいます。")
     assert seen["authorization"] == f"Bearer {DEVICE_KEY}"
+    assert seen["apikey"] == "test-public-api-key"
 
 
 @pytest.mark.parametrize(

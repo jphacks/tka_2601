@@ -224,15 +224,18 @@ async def delete_room(room: str) -> None:
 
 async def fetch_house_settings(device_key: str) -> HouseSettings | None:
     """Read the resident's settings once with the device key. Any failure means no settings."""
-    if not settings.supabase_url:
-        logger.warning("DOOR_SUPABASE_URL is not set; using rules without house settings")
+    if not (settings.supabase_url and settings.supabase_anon_key):
+        logger.warning("Supabase URL or public API key is not set; using rules without house settings")
         return None
     timeout = aiohttp.ClientTimeout(total=settings.house_settings_timeout_seconds)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as http:
             async with http.get(
                 f"{settings.supabase_url}/functions/v1/device/settings",
-                headers={"Authorization": f"Bearer {device_key}"},
+                headers={
+                    "apikey": settings.supabase_anon_key,
+                    "Authorization": f"Bearer {device_key}",
+                },
             ) as response:
                 if response.status != 200:
                     logger.warning("house settings request failed: status=%s", response.status)

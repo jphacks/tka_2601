@@ -373,7 +373,7 @@ async def status() -> dict:
         "ready": all(item["ready"] for item in components.values()),
         "test_environment": settings.environment == "development",
         "admin_settings_available": True,
-        "history_write_available": settings.environment == "development" and bool(settings.supabase_url),
+        "history_write_available": settings.environment == "development" and bool(settings.supabase_url and settings.supabase_anon_key),
     }
 
 
@@ -398,8 +398,11 @@ async def test_save_visit(body: TestVisitRequest) -> dict[str, bool]:
     """Optionally save an explicitly selected development UI call to Supabase."""
     if settings.environment != "development":
         raise HTTPException(status_code=404, detail="テスト履歴保存は開発環境だけで使えます。")
-    if not settings.supabase_url:
-        raise HTTPException(status_code=503, detail="DOOR_SUPABASE_URLが設定されていません。")
+    if not (settings.supabase_url and settings.supabase_anon_key):
+        raise HTTPException(
+            status_code=503,
+            detail="SupabaseのURLと公開APIキー（DOOR_SUPABASE_URL / DOOR_SUPABASE_ANON_KEY）が必要です。",
+        )
     result = await write_visit(
         settings,
         body.device_key,

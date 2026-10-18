@@ -59,7 +59,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\windows\install
 
 更新スクリプトは`deploy/windows/auto-update.ps1`です。デプロイ状態とエラーは `C:\Users\stu23-oba-shion\door-voice-deploy.log` に残り、音声や会話本文は記録しません。
 
-WebUI (`http://localhost:8093/`またはデプロイ先) では、認証後に「管理者設定」パネルが現れます。通常・おまかせ・外出中のモード、外出中の置き配許可、追加指示（350字まで）を設定し、「設定を保存」でこのブラウザーに保存できます。設定は次のWeb UI通話から適用され、この Web UI の通話に限られます。住人APIキーで保護され、家全体の Supabase 設定は変更しません。「適用される住人ルールを確認」で通話前に内容を確認できます。`DOOR_ENV=development`かつ`DOOR_SUPABASE_URL`設定時のみ、任意の「このテスト会話の履歴をSupabaseに保存」欄が表示されます。チェックを入れ、テスト用デバイス鍵を入力して通話を終了したときだけ文字起こしを保存します。対応する住人宅に実データが追加されるため、テスト用の鍵を使ってください。
+WebUI (`http://localhost:8093/`またはデプロイ先) では、認証後に「管理者設定」パネルが現れます。通常・おまかせ・外出中のモード、外出中の置き配許可、追加指示（350字まで）を設定し、「設定を保存」でこのブラウザーに保存できます。設定は次のWeb UI通話から適用され、この Web UI の通話に限られます。住人APIキーで保護され、家全体の Supabase 設定は変更しません。「適用される住人ルールを確認」で通話前に内容を確認できます。`DOOR_ENV=development`かつSupabaseのURLと公開APIキー設定時のみ、任意の「このテスト会話の履歴をSupabaseに保存」欄が表示されます。チェックを入れ、テスト用デバイス鍵を入力して通話を終了したときだけ文字起こしを保存します。対応する住人宅に実データが追加されるため、テスト用の鍵を使ってください。
 
 開発用LiveKitの公開ポートはホストのループバックだけにバインドされます。`.env` はGit管理外です。開発用のLiveKit `devkey` / `secret` はローカル開発に限って使います。
 
@@ -111,14 +111,14 @@ PSoC 6用の中継です（`docs/spec.md` 5.4）。中継がPSoC 6の代わり�
 
 #### 住人ルールの組み立て
 
-中継は会話の開始時に一度だけ、`device_key`を付けてSupabaseのEdge Function（`GET {DOOR_SUPABASE_URL}/functions/v1/device/settings`）から家の設定を読みます。返事は`{"paired": true, "mode": "normal", "away_leave_at_door": false, "auto_away": false, "extra_instructions": ""}`の形で（`supabase/README.md`の「本体が使う API」）、中継が使うのは`away_leave_at_door`と`extra_instructions`だけです。モードは返事の`mode`ではなく、PSoC 6が開始のJSONで送った`mode`を使います。中継は設定と`mode`から住人ルールを組み立て、`/api/connect`の`house_rules`と同じ扱いで会話エージェントへ渡します。
+中継は会話の開始時に一度だけ、公開APIキーを`apikey`ヘッダーに、`device_key`を`Authorization: Bearer`ヘッダーに付けてSupabaseのEdge Function（`GET {DOOR_SUPABASE_URL}/functions/v1/device/settings`）から家の設定を読みます。返事は`{"paired": true, "mode": "normal", "away_leave_at_door": false, "auto_away": false, "extra_instructions": ""}`の形で（`supabase/README.md`の「本体が使う API」）、中継が使うのは`away_leave_at_door`と`extra_instructions`だけです。モードは返事の`mode`ではなく、PSoC 6が開始のJSONで送った`mode`を使います。中継は設定と`mode`から住人ルールを組み立て、`/api/connect`の`house_rules`と同じ扱いで会話エージェントへ渡します。
 
 - 基本の規則は`docs/spec.md` 5.6のものです。規則2は、`normal`と`omakase`では置き配を、`away`では不在票を頼む文です。
 - `mode`が`away`で`away_leave_at_door`が`true`のときは、規則2を「置き配の指定があればその場所に置き、なければ不在票」の文に替えます。ほかのモードでは`away_leave_at_door`を使いません。
 - `extra_instructions`（AIへの追加の指示）は、「1〜8とぶつかるときは1〜8を守る」という前置きを付けて規則の後ろに足します。全体が`DOOR_MAX_HOUSE_RULES_CHARS`（既定800字）を超える場合は、追加の指示の末尾を切ります。規則が最も長い`away`の置き配ありでは、追加の指示に使えるのは350字です。Supabaseの`devices.extra_instructions`も350字までに制限しているため、既定の設定では切られません。
-- 設定を読めない場合（`DOOR_SUPABASE_URL`が未設定、`DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS`以内に応答がない、200以外、形が違う）は、設定なしの規則で会話を続けます。
+- URLまたは公開APIキーが未設定、`DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS`以内に応答しない、200以外、返答形式が違う場合は、設定なしの規則で会話を続けます。
 
-会話が`ready`になった後、終了時に確定した訪問者・AIの文字起こしを1回だけSupabaseの`PUT /functions/v1/device/visits/{visit_id}`へ保存します。開始JSONの`visit_id`と`device_key`を使い、secret/service-role keyは使いません。保存に失敗しても会話には影響しません。音声は保存しません。書き込みのタイムアウトは`DOOR_VISIT_WRITE_TIMEOUT_SECONDS`（既定3秒）です。
+会話が`ready`になった後、終了時に確定した訪問者・AIの文字起こしを1回だけSupabaseの`PUT /functions/v1/device/visits/{visit_id}`へ保存します。公開APIキーは`apikey`ヘッダー、開始JSONの`device_key`は`Authorization`ヘッダーに使います。secret/service-role keyは使いません。保存に失敗しても会話には影響しません。音声は保存しません。書き込みのタイムアウトは`DOOR_VISIT_WRITE_TIMEOUT_SECONDS`（既定3秒）です。
 
 ## 応答の速さ
 
@@ -148,7 +148,7 @@ PSoC 6用の中継です（`docs/spec.md` 5.4）。中継がPSoC 6の代わり�
 - `DOOR_TTS_VOICE` / `DOOR_TTS_SAMPLE_RATE`: 合成音声の声とPCMサンプルレート
 - `DOOR_HOUSE_RULES`: セッションに初期適用する住人ルール
 - `DOOR_TURN_DETECTOR`: `vad`が既定値。`mini`はLiveKitの追加モデル条件を確認したうえで明示的に選択
-- `DOOR_SUPABASE_URL`: 家の設定を読むSupabaseのURL。このプロジェクトのクラウドは`https://bqdvxzvezecunnkbcyoy.supabase.co`です。未設定なら設定を読みません。productionではHTTPSが必要です。
+- `DOOR_SUPABASE_URL` / `DOOR_SUPABASE_ANON_KEY`: SupabaseのプロジェクトURLと公開APIキー。`SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_PUBLISHABLE_KEY`も読み取ります。URLとキーの両方が設定されているときだけEdge Functionを呼び出します。productionではHTTPSが必要です。`service_role` / secret keyは設定しないでください。
 - `DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS`: 家の設定を待つ時間。既定は1.5秒
 - `DOOR_RELAY_LIVEKIT_URL`: 中継が入るLiveKitのURL。既定は`LIVEKIT_URL`の`http`を`ws`に替えたものです。
 - `DOOR_MAX_RELAY_SESSIONS` / `DOOR_RELAY_START_TIMEOUT_SECONDS` / `DOOR_RELAY_MAX_SESSION_SECONDS`: 同時に中継する会話の数、開始のJSONを待つ時間、1回の会話の上限時間
