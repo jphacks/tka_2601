@@ -4,6 +4,7 @@
 
 <img width="1160" height="654" alt="image" src="https://github.com/user-attachments/assets/e1c3c289-fec1-4a8c-88f4-4864dab0afc5" />
 
+https://www.youtube.com/watch?v=Ceq0b2-rC6Y
 
 ## 製品概要
 
