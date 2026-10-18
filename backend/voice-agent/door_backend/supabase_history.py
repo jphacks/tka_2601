@@ -105,6 +105,9 @@ async def put_visit(
     supabase_settings: Settings, device_key: str, visit_id: UUID, payload: dict[str, Any]
 ) -> dict[str, Any] | None:
     """PUT one visit to the device API; return the response or None. Never raises."""
+    if not (supabase_settings.supabase_url and supabase_settings.supabase_anon_key):
+        logger.warning("Supabase URL or public API key is not set; visit history was not written")
+        return None
     url = f"{supabase_settings.supabase_url}/functions/v1/device/visits/{visit_id}"
     timeout = aiohttp.ClientTimeout(total=supabase_settings.visit_write_timeout_seconds)
     try:
@@ -112,7 +115,10 @@ async def put_visit(
             async with http.put(
                 url,
                 json=payload,
-                headers={"Authorization": f"Bearer {device_key}"},
+                headers={
+                    "apikey": supabase_settings.supabase_anon_key,
+                    "Authorization": f"Bearer {device_key}",
+                },
             ) as response:
                 if response.status != 200:
                     logger.warning("visit history PUT failed: status=%s", response.status)
