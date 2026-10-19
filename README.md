@@ -86,7 +86,9 @@ NHKの集金を名乗る訪問者には、AIでは支払いができないこと
 
 > 「家主に代わってAIが応対しています。この場ではお支払いできません。」
 
-[▶ 会話を再生（MP4）](docs/audio/shukin.mp4) ／ [音声（MP3）](docs/audio/shukin.mp3)
+https://github.com/user-attachments/assets/e9891d6a-2f65-4908-80fa-6e356b73e6ea
+
+[音声（MP3）](docs/audio/shukin.mp3)
 
 ### パターン3：営業
 
@@ -94,7 +96,9 @@ NHKの集金を名乗る訪問者には、AIでは支払いができないこと
 
 > 「申し訳ありませんが、営業のご案内はお断りしています。」
 
-[▶ 会話を再生（MP4）](docs/audio/eigyo.mp4) ／ [音声（MP3）](docs/audio/eigyo.mp3)
+https://github.com/user-attachments/assets/324ef0d4-191d-47a0-b11f-80a369b5eee7
+
+[音声（MP3）](docs/audio/eigyo.mp3)
 
 ### パターン4：予想外の届け物
 
@@ -108,7 +112,9 @@ NHKの集金を名乗る訪問者には、AIでは支払いができないこと
 
 ### パターン5：回覧板
 
-[▶ 会話を再生（MP4）](docs/audio/kairanban.mp4) ／ [音声（MP3）](docs/audio/kairanban.mp3)
+https://github.com/user-attachments/assets/0130531b-b705-43a7-84f7-9f08d25468c7
+
+[音声（MP3）](docs/audio/kairanban.mp3)
 
 # 技術スタック
 
