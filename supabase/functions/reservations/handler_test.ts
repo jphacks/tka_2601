@@ -115,6 +115,61 @@ Deno.test("手入力は確定で作り、操作した本人を除いて通知す
   assertEquals(sent.map((n) => [n.kind, n.actor_user_id, n.dedupe_key]), [["reservation_created", "u1", "v1:reservation_created"]]);
 });
 
+Deno.test("冪等キーを渡し、同じキーの予約があれば 200 で返して通知しない", async () => {
+  let created: { idempotency_key?: string | null } | undefined;
+  const { deps, sent } = setup({
+    providerFor: () =>
+      Promise.resolve(provider({
+        create(input) {
+          created = input;
+          return Promise.resolve({ ...write, existed: true });
+        },
+      })),
+  });
+  const res = await handleReservationsRequest(request("", "POST", { ...newReservation, idempotency_key: "Key-12345" }), deps);
+  assertEquals(res.status, 200);
+  assertEquals(created?.idempotency_key, "Key-12345");
+  assertEquals((await res.json()).reservation.id, "r1");
+  assertEquals(sent, []);
+});
+
+Deno.test("冪等キーを渡さなければ入力に含めない。形が違えば 400", async () => {
+  let created: Record<string, unknown> | undefined;
+  const { deps } = setup({
+    providerFor: () =>
+      Promise.resolve(provider({
+        create(input) {
+          created = input;
+          return Promise.resolve(write);
+        },
+      })),
+  });
+  assertEquals((await handleReservationsRequest(request("", "POST", newReservation), deps)).status, 201);
+  assertEquals("idempotency_key" in created!, false);
+  assertEquals((await handleReservationsRequest(request("", "POST", { ...newReservation, idempotency_key: "bad" }), deps)).status, 400);
+});
+
+Deno.test("変更は見ていた時刻を渡し、違えば 409（reservation_changed）を返す", async () => {
+  let expected: unknown;
+  const { deps, sent } = setup({
+    providerFor: () =>
+      Promise.resolve(provider({
+        update(_, __, version) {
+          expected = version;
+          return Promise.reject(new ProviderError(409, "変更されています", "reservation_changed"));
+        },
+      })),
+  });
+  const res = await handleReservationsRequest(
+    request("/r1", "PATCH", { note: "x", expected_starts_at: "2026-11-02T05:00:00Z", expected_ends_at: "2026-11-02T06:00:00Z" }),
+    deps,
+  );
+  assertEquals(res.status, 409);
+  assertEquals((await res.json()).code, "reservation_changed");
+  assertEquals(expected, { starts_at: "2026-11-02T05:00:00.000Z", ends_at: "2026-11-02T06:00:00.000Z" });
+  assertEquals(sent, []);
+});
+
 Deno.test("操作ごとに通知の種類を決める", async () => {
   const cases: [string, string, string, unknown][] = [
     ["/r1", "PATCH", "reservation_updated", { note: "変更" }],

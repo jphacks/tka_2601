@@ -42,7 +42,7 @@ MONBAN を、個人経営のネイルサロン、マッサージ店、貸し会�
 
 ### 2.2 承認リスト
 
-AI がインターホンで受けた予約は、必ず仮予約（`pending`）で入る。店はアプリの承認リストで確定するか断る。予約先がホットペッパーのときは SALON BOARD に、Square のときは Square に入力してから承認する。Square では AI の仮予約を `reservations` に置いて一覧に合わせ、承認したあとは一覧から外す（店が Square に入れた予約が読まれるため）。Square で `PENDING` の予約も承認リストに出るが、承認は Square で行う。AI が受ける時点で、仮予約を含む既存の予約と時間が重なれば `409` を返して受け付けない。アプリの手入力では重なりを止めない。
+AI がインターホンで受けた予約は、必ず仮予約（`pending`）で入る。店はアプリの承認リストで確定するか断る。予約先がホットペッパーのときは SALON BOARD に、Square のときは Square に入力してから承認する。Square では AI の仮予約を `reservations` に置いて一覧に合わせる。承認したあとも、同じ開始時刻の Square の予約（キャンセルを含む）が読めるまでは、確定として一覧と重なりの判定に残す。店が Square への入力を忘れても予約が消えないようにするためである。この予約は受付元が `ai`、`read_only` が `false` で、不要ならアプリでキャンセルできる。店が Square に別の時刻で入れると、キャンセルするまで両方が出る。Square で `PENDING` の予約も承認リストに出るが、承認は Square で行う。AI が受ける時点で、仮予約を含む既存の予約と時間が重なれば `409` を返して受け付けない。アプリの手入力では重なりを止めない。
 
 予約帳とホットペッパーでは、店ごとに1件ずつ処理する関数（`reservation_create_if_free`）で重なりを確かめるので、同じ枠に AI の仮予約が同時に来ても1件しか入らない。Google カレンダーと Square には同時の書き込みを止める手段がないため、確かめてから書くまでの間に入った予約は防げない。この重なりは承認リストで店が確かめる。
 
@@ -55,9 +55,9 @@ AI がインターホンで受けた予約は、必ず仮予約（`pending`）�
 | 要求 | 本文または引数 | 返事 |
 |---|---|---|
 | `GET /reservations?from=&to=` | ISO 8601 の期間（`status` を付けると絞り込む） | `{"provider": "...", "reservations": [Reservation]}` |
-| `POST /reservations` | `customer_name`、`customer_phone`、`service_name`、`starts_at`、`ends_at`、`note` | `{"reservation": Reservation}`（確定で作る） |
+| `POST /reservations` | `customer_name`、`customer_phone`、`service_name`、`starts_at`、`ends_at`、`note`、任意の `idempotency_key` | `201` と `{"reservation": Reservation}`（確定で作る）。同じキーの予約があれば `200` で既存を返し、通知しない |
 | `GET /reservations/<id>` | なし | `{"reservation": Reservation}` |
-| `PATCH /reservations/<id>` | 上と同じ項目の一部 | `{"reservation": Reservation}` |
+| `PATCH /reservations/<id>` | 上と同じ項目の一部、任意の `expected_starts_at`、`expected_ends_at` | `{"reservation": Reservation}`。今の予約の時刻と違えば `409`（`reservation_changed`）で変更しない |
 | `POST /reservations/<id>/approve` | なし | 確定にする |
 | `POST /reservations/<id>/cancel` | なし | キャンセルにする |
 | `POST /reservations/<id>/arrive` | なし | 到着を記録する |
@@ -78,6 +78,10 @@ AI がインターホンで受けた予約は、必ず仮予約（`pending`）�
 コールバックには JWT がなく、誰が同意したかが分からない。同意の URL を他人に開かせて、他人の予約を自分のグループへ結び付ける攻撃を防ぐため、トークンを保留にしてから本人を確かめる。保留は使い切りで、10 分で無効になる。
 
 日時は `Z` か `+09:00` の付いた ISO 8601 で送る。オフセットのない日時は `400` を返す。
+
+`idempotency_key` は英数字とハイフンの 8〜64 字で、形が違えば `400` を返す。キーは店ごとに一意である。アプリは入力画面ごとに1つ作り、送り直しでは同じキーを使う。Google カレンダーでは予定の id をキーの SHA-256 から決める。予定の id は base32hex（`a`〜`v` と `0`〜`9`）で 5〜1024 字という決まりがあり、16 進はこれに収まる。Google が `409` を返したら既存の予定を読んで返す。Google は id の重複を作成時に必ず検出するとは保証していない。
+
+`expected_starts_at` と `expected_ends_at` には、変更する人が見ていた時刻を送る。Google カレンダーでは読んだ予定の etag を `If-Match` に付けて書くので、読んでから書くまでに別の変更が入っても `reservation_changed` になる。表では時刻を更新の条件に入れる。
 
 `Reservation` は次の形で、どの予約先でも同じである。
 
@@ -112,6 +116,15 @@ AI がインターホンで受けた予約は、必ず仮予約（`pending`）�
 | `POST /device/reservations/<id>/arrive` | 到着を記録し、店に通知する |
 | `PUT /device/heartbeat` | 本体の死活通信。接続切れの検知に使う |
 
+### 3.3 アカウントの削除（Edge Function「account」）
+
+`DELETE /functions/v1/account` は JWT の本人を削除し、`{"deleted": true}` を返す。App Store の審査（5.1.1(v)）で求められる機能で、グループに入っていない人も消せる。途中で失敗したら `500` を返す。アカウントの削除を最後に行うので、ログインしたままやり直せる。
+
+- 残りのメンバーがいなければ、グループごと消す。予約、来客、接続、通知、本体、本体の鍵、店舗の設定は cascade で消える。本体を使い続けるには、管理者が登録し直す。
+- 残りのメンバーがいれば、本人だけが抜ける。グループ、予約、本体は残る。本人がつないだ Google カレンダーと Square の接続は本人の外部アカウントなので取り消し、予約先を予約帳に戻す。ほかの人がつないだ接続は残す。
+- 接続の取り消しは Google と Square に届かなくても続ける。
+- 本人の `push_tokens` と、そのトークンの送信待ちを消す。通知の `actor_user_id`、接続の `connected_by`、招待の `created_by` は `null` になる。
+
 ## 4. 通知
 
 通知の種類は `notification_kinds` の行で決まる。
@@ -140,7 +153,10 @@ pg_cron が1分ごとに Edge Function「calendar-sync」を呼び、`syncToken`
 
 - 接続直後とカレンダーの変更直後は起点を取るだけで、通知しない。
 - 差分が 410 を返したら起点を取り直し、その回は通知しない。
-- MONBAN が自分で書いた変更は `calendar_own_writes` の etag で見分け、差分では通知しない。
+- MONBAN は Google に書く前に、書き込みの id を `calendar_own_writes` に記録し、予定の `extendedProperties.private.monban_write` に入れる。差分で読んだ予定の `monban_write` が記録にあれば通知せず、記録を消す。Google への書き込みが返事を待っている間に差分を読んでも通知しない。
+- 記録を消すので、そのあと店が Google で同じ予定を変えると、印が残っていても通知する。MONBAN の書き込みと店の変更が同じ回の差分に入ると、まとめて通知しない。
+- 削除された予定が id しか返さないときは、予定の id で記録を探す。
+- 接続ごとに `sync_lease_until` の権利を条件付きの更新で取る（`calendar_sync_acquire`）。取れない接続はその回は読まない。取れたら最新の目印を読み直し、終わったら解放する。解放できなくても権利は5分で切れる。
 - 1回の差分が 10 件を超えたら（繰り返しの予定の変更など）、1件にまとめて通知する。
 - 削除された予定に時刻がなければ、終日かどうか分からないので、キャンセルにせず「予約先の予定が削除されました」と通知する。
 - 通知の記録と送信待ちは1つのトランザクションで作る。失敗したら目印を進めず、次の回に読み直す。同じ変更は `dedupe_key` で二重にならず、足りない送信待ちだけが入る。

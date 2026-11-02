@@ -8,6 +8,7 @@ import {
   type GoogleEvent,
   GoogleProvider,
   GoogleSyncExpired,
+  idempotentEventId,
   patchToEvent,
   reservationToEvent,
 } from "./google_calendar.ts";
@@ -22,9 +23,9 @@ const timed = {
 
 function setup(handler: (url: URL, init: RequestInit) => Response) {
   const google = fakeGoogle(handler);
-  const own: string[] = [];
-  const provider = new GoogleProvider(new GoogleClient(oauth, "refresh", google.fetch), "cal@example.com", (id, etag) => {
-    own.push(`${id}:${etag}`);
+  const own: { writeId: string; eventId: string | null; callsBefore: number }[] = [];
+  const provider = new GoogleProvider(new GoogleClient(oauth, "refresh", google.fetch), "cal@example.com", (writeId, eventId) => {
+    own.push({ writeId, eventId, callsBefore: google.calls.filter((c) => c.init.method !== "GET").length });
     return Promise.resolve();
   });
   return { provider, google, own };
@@ -158,24 +159,113 @@ Deno.test("一覧はページをたどる", async () => {
   assertEquals(list.map((r) => r.id), ["a", "b"]);
 });
 
-Deno.test("書いた版を記録し、通知のキーは google:<id>:<etag> になる", async () => {
+const newReservation = {
+  customer_name: "田中",
+  customer_phone: null,
+  service_name: null,
+  starts_at: "2026-11-02T05:00:00.000Z",
+  ends_at: "2026-11-02T06:30:00.000Z",
+  note: null,
+  status: "pending" as const,
+  source: "ai" as const,
+  visit_id: null,
+};
+
+Deno.test("書く前に書き込みの id を記録して予定に入れ、通知のキーは google:<id>:<etag> になる", async () => {
+  let body: GoogleEvent | null = null;
   const { provider, own } = setup((_, init) => {
-    assertEquals(JSON.parse(String(init.body)).status, "tentative");
+    body = JSON.parse(String(init.body));
+    assertEquals(body?.status, "tentative");
     return Response.json({ id: "new", etag: '"v1"', status: "tentative", summary: "田中様", ...timed });
   });
-  const write = await provider.create({
-    customer_name: "田中",
-    customer_phone: null,
-    service_name: null,
-    starts_at: "2026-11-02T05:00:00.000Z",
-    ends_at: "2026-11-02T06:30:00.000Z",
-    note: null,
-    status: "pending",
-    source: "ai",
-    visit_id: null,
-  });
-  assertEquals(own, ['new:"v1"']);
+  const write = await provider.create(newReservation);
+  assertEquals(own.length, 1);
+  assertEquals(own[0].eventId, null);
+  assertEquals(own[0].callsBefore, 0);
+  assertEquals((body as GoogleEvent | null)?.extendedProperties?.private?.monban_write, own[0].writeId);
   assertEquals(write.dedupeKey("reservation_pending"), 'google:new:"v1"');
+  assertEquals(write.existed, undefined);
+});
+
+Deno.test("承認、キャンセル、到着、変更も書く前に記録し、印を入れる", async () => {
+  const bodies: GoogleEvent[] = [];
+  const { provider, own } = setup((_, init) => {
+    if (init.method === "GET") return Response.json({ id: "e1", etag: '"v1"', status: "tentative", summary: "田中様", ...timed });
+    bodies.push(JSON.parse(String(init.body)));
+    return Response.json({ id: "e1", etag: '"v2"', status: "confirmed", summary: "田中様", ...timed });
+  });
+  await provider.update("e1", { note: "メモ" });
+  await provider.approve("e1");
+  await provider.cancel("e1");
+  await provider.arrive("e1");
+  assertEquals(own.map((o) => o.eventId), ["e1", "e1", "e1", "e1"]);
+  assertEquals(new Set(own.map((o) => o.writeId)).size, 4);
+  assertEquals(bodies.map((b) => b.extendedProperties?.private?.monban_write), own.map((o) => o.writeId));
+  assertEquals(typeof bodies[3].extendedProperties?.private?.monban_arrived_at, "string");
+});
+
+Deno.test("冪等キーの予定の id は Google の文字種に合い、同じキーなら同じになる", async () => {
+  const id = await idempotentEventId("cal@example.com", "Key-12345");
+  assertEquals(/^[a-v0-9]{5,1024}$/.test(id), true);
+  assertEquals(id, await idempotentEventId("cal@example.com", "Key-12345"));
+  assertEquals(id === await idempotentEventId("cal@example.com", "Key-12346"), false);
+  assertEquals(id === await idempotentEventId("other@example.com", "Key-12345"), false);
+});
+
+Deno.test("同じ冪等キーの予定があれば Google の 409 から既存を返す", async () => {
+  const expectedId = await idempotentEventId("cal@example.com", "Key-12345");
+  const { provider, google } = setup((url, init) => {
+    if (init.method === "POST") {
+      assertEquals(JSON.parse(String(init.body)).id, expectedId);
+      return Response.json({ error: { code: 409, errors: [{ reason: "duplicate" }] } }, { status: 409 });
+    }
+    assertEquals(url.pathname.endsWith(`/events/${expectedId}`), true);
+    return Response.json({ id: expectedId, etag: '"v1"', status: "confirmed", summary: "田中様", ...timed });
+  });
+  const write = await provider.create({ ...newReservation, status: "confirmed", source: "app", idempotency_key: "Key-12345" });
+  assertEquals(write.existed, true);
+  assertEquals(write.reservation.id, expectedId);
+  assertEquals(google.calls.filter((c) => c.url.pathname.includes("/events")).map((c) => c.init.method), ["POST", "GET"]);
+});
+
+Deno.test("冪等キーで作るときの 409 で予定が読めなければ、そのまま失敗にする", async () => {
+  const { provider } = setup((_, init) =>
+    init.method === "POST"
+      ? Response.json({ error: { code: 409, errors: [] } }, { status: 409 })
+      : Response.json({ error: { code: 404, errors: [] } }, { status: 404 })
+  );
+  await assertRejects(() => provider.create({ ...newReservation, idempotency_key: "Key-12345" }), GoogleApiError);
+});
+
+Deno.test("見ていた時刻と違えば予約を変えない", async () => {
+  const { provider, google } = setup(() => Response.json({ id: "e1", etag: '"v1"', status: "confirmed", summary: "田中様", ...timed }));
+  const error = await assertRejects(
+    () => provider.update("e1", { note: "メモ" }, { starts_at: "2026-11-02T00:00:00.000Z" }),
+    ProviderError,
+  );
+  assertEquals([error.status, error.code], [409, "reservation_changed"]);
+  assertEquals(google.calls.filter((c) => c.init.method === "PATCH").length, 0);
+});
+
+Deno.test("時刻を渡すと If-Match で書き、412 は reservation_changed にする", async () => {
+  const { provider, google } = setup((_, init) => {
+    if (init.method === "GET") return Response.json({ id: "e1", etag: '"v1"', status: "confirmed", summary: "田中様", ...timed });
+    return Response.json({ error: { code: 412, errors: [] } }, { status: 412 });
+  });
+  const error = await assertRejects(
+    () => provider.update("e1", { note: "メモ" }, { starts_at: timed.start.dateTime }),
+    ProviderError,
+  );
+  assertEquals([error.status, error.code], [409, "reservation_changed"]);
+  const patch = google.calls.find((c) => c.init.method === "PATCH")!;
+  assertEquals(new Headers(patch.init.headers).get("If-Match"), '"v1"');
+});
+
+Deno.test("時刻を渡さなければ If-Match を付けない", async () => {
+  const { provider, google } = setup(() => Response.json({ id: "e1", etag: '"v1"', status: "confirmed", summary: "田中様", ...timed }));
+  await provider.update("e1", { note: "メモ" });
+  const patch = google.calls.find((c) => c.init.method === "PATCH")!;
+  assertEquals(new Headers(patch.init.headers).get("If-Match"), null);
 });
 
 Deno.test("承認は仮予約だけ。到着は2回目を書かない", async () => {

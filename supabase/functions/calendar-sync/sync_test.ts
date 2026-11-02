@@ -3,7 +3,7 @@ import { assertEquals } from "jsr:@std/assert@1.0.19";
 import { GoogleClient, type GoogleEvent } from "../_shared/google_calendar.ts";
 import type { NewNotification } from "../_shared/notify.ts";
 import { baseConnection, fakeGoogle, memoryStore } from "../_shared/testing.ts";
-import { BULK_THRESHOLD, classifyChange, syncConnection } from "./sync.ts";
+import { BULK_THRESHOLD, classifyChange, syncConnection, syncIfFree } from "./sync.ts";
 
 const now = new Date("2026-11-02T00:00:00.000Z");
 const future = {
@@ -20,20 +20,22 @@ function run(handler: (url: URL) => Response, options: Parameters<typeof memoryS
   const { store, state } = memoryStore({ connection: baseConnection, provider: "google_calendar", ...options });
   const google = fakeGoogle(handler);
   const sent: NewNotification[] = [];
+  const deps = {
+    store,
+    client: () => Promise.resolve(new GoogleClient({ clientId: "i", clientSecret: "s" }, "r", google.fetch)),
+    notify: (notification: NewNotification) => {
+      sent.push(notification);
+      return Promise.resolve();
+    },
+    now: () => now,
+  };
   return {
     state,
     sent,
     google,
-    sync: (connection = state.connection!) =>
-      syncConnection(connection, {
-        store,
-        client: () => Promise.resolve(new GoogleClient({ clientId: "i", clientSecret: "s" }, "r", google.fetch)),
-        notify: (notification) => {
-          sent.push(notification);
-          return Promise.resolve();
-        },
-        now: () => now,
-      }),
+    deps,
+    store,
+    sync: (connection = state.connection!) => syncConnection(connection, deps),
   };
 }
 
@@ -67,13 +69,106 @@ Deno.test("差分を通知し、次の目印を保存して接続を active に�
   assertEquals(eventsCall.url.searchParams.get("singleEvents"), "true");
 });
 
-Deno.test("MONBAN が自分で書いた版は通知しない", async () => {
-  const { sync, sent } = run(
-    () => Response.json({ items: [event("mine"), event("other")], nextSyncToken: "token-2" }),
-    { own: ['mine:"mine"'] },
+const marked = (id: string, writeId: string, values: Partial<GoogleEvent> = {}) =>
+  event(id, { extendedProperties: { private: { monban_write: writeId } }, ...values });
+
+Deno.test("MONBAN が書いた印が記録にあれば通知せず、記録を消す", async () => {
+  const { sync, sent, state } = run(
+    () => Response.json({ items: [marked("mine", "w1"), event("other")], nextSyncToken: "token-2" }),
+    { own: [{ write_id: "w1", event_id: null }] },
   );
   assertEquals((await sync()).notified, 1);
   assertEquals(sent.map((n) => n.data?.reservation_id), ["other"]);
+  assertEquals(state.own, []);
+});
+
+Deno.test("印が記録になければ通知する（店が Google で直接変えると、古い印が残る）", async () => {
+  const { sync, sent } = run(() => Response.json({ items: [marked("mine", "w1")], nextSyncToken: "token-2" }));
+  assertEquals((await sync()).notified, 1);
+  assertEquals(sent.map((n) => n.data?.reservation_id), ["mine"]);
+});
+
+Deno.test("同じ予定を続けて読むと、2回目の店の変更は通知する", async () => {
+  let round = 0;
+  const { sync, sent } = run(
+    () => Response.json({ items: [marked("mine", "w1")], nextSyncToken: `token-${++round + 1}` }),
+    { own: [{ write_id: "w1", event_id: "mine" }] },
+  );
+  assertEquals((await sync()).notified, 0);
+  assertEquals((await sync()).notified, 1);
+  assertEquals(sent.length, 1);
+});
+
+Deno.test("id しか返らない削除は、予定の id で自分の書き込みと分かる", async () => {
+  const { sync, sent, state } = run(
+    () => Response.json({ items: [{ id: "mine", status: "cancelled" }, { id: "other", etag: '"o"', status: "cancelled" }], nextSyncToken: "token-2" }),
+    { own: [{ write_id: "w1", event_id: "mine" }] },
+  );
+  assertEquals((await sync()).notified, 1);
+  assertEquals(sent[0].title, "予約先の予定が削除されました");
+  assertEquals(state.own, []);
+});
+
+Deno.test("印のない変更は、同じ予定の記録があっても通知する", async () => {
+  const { sync, sent, state } = run(
+    () => Response.json({ items: [event("mine")], nextSyncToken: "token-2" }),
+    { own: [{ write_id: "w1", event_id: "mine" }] },
+  );
+  assertEquals((await sync()).notified, 1);
+  assertEquals(sent.length, 1);
+  assertEquals(state.own.length, 1);
+});
+
+Deno.test("通知に失敗したら記録を残し、読み直しても自分の変更と分かる", async () => {
+  const { store, state } = memoryStore({
+    connection: baseConnection,
+    provider: "google_calendar",
+    own: [{ write_id: "w1", event_id: null }],
+  });
+  const google = fakeGoogle(() => Response.json({ items: [marked("mine", "w1"), event("other")], nextSyncToken: "token-2" }));
+  const result = await syncConnection(state.connection!, {
+    store,
+    client: () => Promise.resolve(new GoogleClient({ clientId: "i", clientSecret: "s" }, "r", google.fetch)),
+    notify: () => Promise.reject(new Error("db down")),
+    now: () => now,
+  });
+  assertEquals(result.outcome, "failed");
+  assertEquals(state.own.length, 1);
+  assertEquals(state.connection?.sync_token, "token-1");
+});
+
+Deno.test("権利が取れなければ読まずに飛ばす", async () => {
+  const { deps, state, google } = run(() => Response.json({ items: [], nextSyncToken: "token-2" }), { leased: true });
+  const result = await syncIfFree(state.connection!, deps);
+  assertEquals(result.outcome, "skipped");
+  assertEquals(google.calls.length, 0);
+  assertEquals(state.leaseReleases, 0);
+});
+
+Deno.test("権利を取ったら読み直した最新の目印で読み、終わったら解放する", async () => {
+  const { deps, state, google } = run(() => Response.json({ items: [], nextSyncToken: "token-3" }));
+  // 一覧を読んだあとに、前の回が目印を進めた
+  const stale = { ...state.connection!, sync_token: "stale" };
+  state.connection = { ...state.connection!, sync_token: "token-2" };
+  assertEquals((await syncIfFree(stale, deps)).outcome, "synced");
+  const eventsCall = google.calls.find((c) => c.url.pathname.endsWith("/events"))!;
+  assertEquals(eventsCall.url.searchParams.get("syncToken"), "token-2");
+  assertEquals(state.connection?.sync_token, "token-3");
+  assertEquals([state.leased, state.leaseReleases], [false, 1]);
+});
+
+Deno.test("読み取りに失敗しても権利を解放する", async () => {
+  const { deps, state } = run(() => new Response("boom", { status: 500 }));
+  assertEquals((await syncIfFree(state.connection!, deps)).outcome, "failed");
+  assertEquals([state.leased, state.leaseReleases], [false, 1]);
+});
+
+Deno.test("権利の取得に失敗しても、その接続だけの失敗にする", async () => {
+  const { deps, state, store } = run(() => Response.json({ items: [], nextSyncToken: "t" }));
+  store.acquireSyncLease = () => Promise.reject(new Error("db down"));
+  const result = await syncIfFree(state.connection!, deps);
+  assertEquals([result.outcome, result.error], ["failed", "db down"]);
+  assertEquals(state.leaseReleases, 0);
 });
 
 Deno.test("差分が多いときは1件にまとめる", async () => {

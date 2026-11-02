@@ -41,16 +41,26 @@ Deno.test("部分更新は upsert でなく update にする（upsert は NOT NU
 });
 
 Deno.test("自分の書き込みの照会は URL が長くならないように分ける", async () => {
-  const { admin, calls } = fakeAdmin([{ event_id: "e0", etag: '"1"' }]);
+  const { admin, calls } = fakeAdmin([{ write_id: "w0", event_id: "e0" }]);
   const store = createCalendarStore(admin);
-  const own = await store.ownEtags("h1", Array.from({ length: 120 }, (_, i) => `e${i}`));
-  const batches = calls.filter((c) => c.method === "in").map((c) => (c.args[1] as string[]).length);
-  assertEquals(batches, [50, 50, 20]);
-  assertEquals(own.has('e0:"1"'), true);
+  const own = await store.ownWrites("h1", Array.from({ length: 120 }, (_, i) => `w${i}`), ["e0"]);
+  const lookups = calls.filter((c) => c.method === "in");
+  assertEquals(lookups.map((c) => [c.args[0], (c.args[1] as string[]).length]), [
+    ["write_id", 50],
+    ["write_id", 50],
+    ["write_id", 20],
+    ["event_id", 1],
+  ]);
+  // 書き込みの id でも予定の id でも見つかった行は1件にする
+  assertEquals(own, [{ write_id: "w0", event_id: "e0" }]);
 
   calls.length = 0;
-  assertEquals((await store.ownEtags("h1", [])).size, 0);
+  assertEquals(await store.ownWrites("h1", [], []), []);
   assertEquals(calls.length, 0);
+
+  await store.consumeOwnWrites("h1", Array.from({ length: 60 }, (_, i) => `w${i}`));
+  assertEquals(calls.filter((c) => c.method === "in").map((c) => (c.args[1] as string[]).length), [50, 10]);
+  assertEquals(calls.filter((c) => c.method === "delete").length, 2);
 });
 
 Deno.test("外部の予約の到着の照会も分ける", async () => {

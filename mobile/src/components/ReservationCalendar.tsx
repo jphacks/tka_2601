@@ -8,6 +8,7 @@ import { Calendar, type CalendarTouchableOpacityProps, type ICalendarEventBase }
 import {
   calendarEnd,
   customerLabel,
+  dailySegments,
   datesInRange,
   dayRange,
   isSameDay,
@@ -137,16 +138,24 @@ export function ReservationCalendar({
   onSwipe: (date: Date) => void;
 }) {
   const active = useMemo(() => reservations.filter((row) => row.status !== 'cancelled'), [reservations]);
-  const events = useMemo<CalendarEvent[]>(
-    () =>
-      active.map((reservation) => ({
+  const events = useMemo<CalendarEvent[]>(() => {
+    if (mode === 'month') {
+      return active.map((reservation) => ({
         title: reservation.customer_name,
         start: new Date(reservation.starts_at),
         end: calendarEnd(new Date(reservation.starts_at), new Date(reservation.ends_at)),
         reservation,
+      }));
+    }
+    const range = mode === 'day' ? dayRange(date) : weekRange(date);
+    return active.flatMap((reservation) =>
+      dailySegments(new Date(reservation.starts_at), new Date(reservation.ends_at), range).map((segment) => ({
+        title: reservation.customer_name,
+        ...segment,
+        reservation,
       })),
-    [active],
-  );
+    );
+  }, [active, date, mode]);
 
   const { firstHour, lastHour } = useMemo(() => {
     const dates = datesInRange(mode === 'day' ? dayRange(date) : weekRange(date));

@@ -30,6 +30,8 @@ export type NewReservation = {
   status: "pending" | "confirmed";
   source: "app" | "ai";
   visit_id: string | null;
+  // 送り直しても二重に作らないためのキー。アプリの追加だけが渡す
+  idempotency_key?: string | null;
 };
 
 export type ReservationPatch = Partial<
@@ -38,10 +40,15 @@ export type ReservationPatch = Partial<
 
 export type ReservationRange = { from: string; to: string; status?: ReservationStatus };
 
+// 変更する人が見ていた予約の時刻。今の予約と違えば変更しない
+export type ExpectedVersion = { starts_at?: string; ends_at?: string };
+
 // 書いた結果。dedupeKey は同じ版の予約を二重に通知しないためのキーを作る
 export type ReservationWrite = {
   reservation: Reservation;
   dedupeKey: (kind: string) => string;
+  // 同じ冪等キーの予約がすでにあった。新しく作っていないので通知しない
+  existed?: boolean;
 };
 
 export interface ReservationProvider {
@@ -52,7 +59,8 @@ export interface ReservationProvider {
   create(input: NewReservation): Promise<ReservationWrite>;
   // 時間が重なれば 409（reservation_overlap）で作らない。AI の仮予約に使う
   createIfFree(input: NewReservation): Promise<ReservationWrite>;
-  update(id: string, patch: ReservationPatch): Promise<ReservationWrite>;
+  // expected を渡すと、今の予約と違うとき 409（reservation_changed）で変更しない
+  update(id: string, patch: ReservationPatch, expected?: ExpectedVersion): Promise<ReservationWrite>;
   approve(id: string): Promise<ReservationWrite>;
   cancel(id: string): Promise<ReservationWrite>;
   arrive(id: string): Promise<ReservationWrite>;
@@ -77,6 +85,9 @@ export async function findOverlaps(
   const found = await provider.list({ from: startsAt, to: endsAt });
   return found.filter((r) => r.id !== excludeId && Date.parse(r.starts_at) < end && Date.parse(r.ends_at) > start);
 }
+
+export const changedError = () =>
+  new ProviderError(409, "予約が別の操作で変更されています。読み直してください", "reservation_changed");
 
 export const overlapError = () => new ProviderError(409, "その時間にはすでに予約があります", "reservation_overlap");
 
@@ -157,6 +168,30 @@ export function parseReservationPatch(body: Record<string, unknown>): Reservatio
   if ("ends_at" in body) patch.ends_at = parseTime(body.ends_at, "ends_at");
   if (Object.keys(patch).length === 0) throw new ProviderError(400, "変更する項目を入れてください");
   return patch;
+}
+
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9-]{8,64}$/;
+
+export function parseIdempotencyKey(body: Record<string, unknown>): string | null {
+  const value = body.idempotency_key;
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !IDEMPOTENCY_KEY.test(value)) {
+    throw new ProviderError(400, "idempotency_key は英数字とハイフンの 8〜64 字にしてください");
+  }
+  return value;
+}
+
+export function parseExpectedVersion(body: Record<string, unknown>): ExpectedVersion | undefined {
+  const expected: ExpectedVersion = {};
+  if (body.expected_starts_at !== undefined) expected.starts_at = parseTime(body.expected_starts_at, "expected_starts_at");
+  if (body.expected_ends_at !== undefined) expected.ends_at = parseTime(body.expected_ends_at, "expected_ends_at");
+  return Object.keys(expected).length > 0 ? expected : undefined;
+}
+
+export function checkExpectedVersion(current: Pick<Reservation, "starts_at" | "ends_at">, expected: ExpectedVersion | undefined) {
+  if (!expected) return;
+  const differs = (now: string, seen: string | undefined) => seen !== undefined && Date.parse(now) !== Date.parse(seen);
+  if (differs(current.starts_at, expected.starts_at) || differs(current.ends_at, expected.ends_at)) throw changedError();
 }
 
 // 開始と終了の片方だけを変えたときも前後を確かめる

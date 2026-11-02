@@ -1,3 +1,4 @@
+import { keysetFilter } from '../../domain/collections';
 import { VISITS_PAGE_SIZE } from '../../domain/visit';
 import type { VisitRepository } from '../../repositories';
 import { requireSupabase } from './client';
@@ -7,20 +8,22 @@ type VisitRow = Record<string, unknown> & { visit_messages?: { text?: string }[]
 
 export const supabaseVisitRepository: VisitRepository = {
   // 来客を新しい順に。応答しなかったチャイム（missed）は出さない
-  async list(householdId, page) {
-    const from = page * VISITS_PAGE_SIZE;
-    const { data, error } = await requireSupabase()
+  async list(householdId, after) {
+    let query = requireSupabase()
       .from('visits')
       .select(
         'id, household_id, device_id, mode, chimed_at, answered_at, ended_at, status, intent, company, outcome, end_reason, visit_messages(text, seq, speaker)',
       )
       .eq('household_id', householdId)
       .neq('status', 'missed')
-      .eq('visit_messages.speaker', 'visitor')
+      .eq('visit_messages.speaker', 'visitor');
+    if (after) query = query.or(keysetFilter('chimed_at', after));
+    const { data, error } = await query
       .order('chimed_at', { ascending: false })
+      .order('id', { ascending: false })
       .order('seq', { referencedTable: 'visit_messages', ascending: true })
       .limit(1, { referencedTable: 'visit_messages' })
-      .range(from, from + VISITS_PAGE_SIZE - 1);
+      .limit(VISITS_PAGE_SIZE);
     if (error) throw error;
     return ((data ?? []) as unknown as VisitRow[]).map((row) => ({
       ...toVisit(row),

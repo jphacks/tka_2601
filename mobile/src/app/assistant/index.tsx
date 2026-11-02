@@ -1,17 +1,18 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 
 import { NavBar, Screen } from '../../components/Screen';
 import { DefinitionList, PrimaryButton, SoftButton } from '../../components/ui';
 import type { AssistantProposal, DayHours, SetBusinessHoursProposal } from '../../domain/assistant';
+import { newIdempotencyKey } from '../../domain/reservation';
 import { applyDayHours } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
 import { useBadges } from '../../lib/badges';
 import { repositories } from '../../lib/container';
-import { errorMessage } from '../../lib/errors';
+import { errorMessage, hasErrorCode } from '../../lib/errors';
 import { dateTimeRange, weekdayName } from '../../lib/format';
 import { colors, radius } from '../../theme';
 
@@ -97,6 +98,8 @@ export default function AssistantScreen() {
   const [proposal, setProposal] = useState<AssistantProposal | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [failure, setFailure] = useState<string | null>(null);
+  // 案ごとに1つ。追加を送り直しても二重に作らない
+  const idempotencyKey = useRef(newIdempotencyKey());
 
   async function send() {
     const message = text.trim();
@@ -106,6 +109,7 @@ export default function AssistantScreen() {
     setProposal(null);
     setFailure(null);
     setPhase('sending');
+    idempotencyKey.current = newIdempotencyKey();
     try {
       const next = await repositories.assistant.parse(message);
       setProposal(next);
@@ -124,12 +128,16 @@ export default function AssistantScreen() {
     });
   }
 
-  // フォームで直すならカードを閉じる。残すと、戻ってから同じ案をもう一度書き込める
-  function correct(target: AssistantProposal) {
+  function closeCard() {
     setRequest(null);
     setProposal(null);
     setFailure(null);
     setPhase('idle');
+  }
+
+  // フォームで直すならカードを閉じる。残すと、戻ってから同じ案をもう一度書き込める
+  function correct(target: AssistantProposal) {
+    closeCard();
     openForm(target);
   }
 
@@ -147,15 +155,21 @@ export default function AssistantScreen() {
           starts_at: proposal.starts_at,
           ends_at: proposal.ends_at,
           note: proposal.note,
-        });
+        }, idempotencyKey.current);
       } else if (proposal.type === 'update_reservation') {
-        await repositories.reservations.update(proposal.reservation_id, proposal.after);
+        await repositories.reservations.update(proposal.reservation_id, proposal.after, proposal.before);
       } else if (proposal.type === 'set_business_hours') {
         await saveBusinessHours(proposal);
       }
       refreshBadges();
       setPhase('done');
     } catch (e) {
+      // カードの内容が古いので、そのまま送り直させない
+      if (hasErrorCode(e, 'reservation_changed')) {
+        closeCard();
+        Alert.alert('予約が変更されています', 'もう一度入力してください。');
+        return;
+      }
       setFailure(errorMessage(e) ?? '保存できませんでした');
       setPhase('ready');
     }

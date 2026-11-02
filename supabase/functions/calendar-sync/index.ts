@@ -8,7 +8,7 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2.118.0";
 import { clientForConnection, createCalendarStore, googleConfigFromEnv } from "../_shared/calendar_store.ts";
 import { notify } from "../_shared/notify.ts";
 import { hasWebhookSecret } from "../_shared/secret.ts";
-import { syncConnection } from "./sync.ts";
+import { syncIfFree } from "./sync.ts";
 
 export default {
   fetch: withSupabase({ auth: "none" }, async (req, ctx) => {
@@ -23,7 +23,7 @@ export default {
     const connections = await store.activeConnections();
     const results = [];
     for (const connection of connections) {
-      results.push(await syncConnection(connection, {
+      results.push(await syncIfFree(connection, {
         store,
         client: (c) => clientForConnection(c, config),
         notify: (notification) => notify(admin, notification),

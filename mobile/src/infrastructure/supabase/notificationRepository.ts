@@ -1,17 +1,20 @@
+import { keysetFilter } from '../../domain/collections';
 import { type NotificationKind, type NotificationPreference, NOTIFICATIONS_PAGE_SIZE } from '../../domain/notification';
 import type { NotificationRepository } from '../../repositories';
 import { requireSupabase } from './client';
 import { toNotification } from './mappers';
 
 export const supabaseNotificationRepository: NotificationRepository = {
-  async list(householdId, page) {
-    const from = page * NOTIFICATIONS_PAGE_SIZE;
-    const { data, error } = await requireSupabase()
+  async list(householdId, after) {
+    let query = requireSupabase()
       .from('notifications')
       .select('id, kind, title, body, data, actor_user_id, created_at')
-      .eq('household_id', householdId)
+      .eq('household_id', householdId);
+    if (after) query = query.or(keysetFilter('created_at', after));
+    const { data, error } = await query
       .order('created_at', { ascending: false })
-      .range(from, from + NOTIFICATIONS_PAGE_SIZE - 1);
+      .order('id', { ascending: false })
+      .limit(NOTIFICATIONS_PAGE_SIZE);
     if (error) throw error;
     return (data ?? []).map(toNotification);
   },

@@ -3,7 +3,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(69);
+select plan(83);
 
 -- 準備の来客で Webhook が送信待ちに入らないよう、Vault の値をいったん消す（このトランザクションの中だけ）
 delete from vault.secrets where name in ('push_function_url', 'push_webhook_secret');
@@ -263,8 +263,8 @@ update public.calendar_connections set calendar_id = 'cal@example.com'
 where household_id = 'b1000000-0000-4000-8000-000000000001';
 update public.shop_profiles set reservation_provider = 'google_calendar'
 where household_id = 'b1000000-0000-4000-8000-000000000001';
-insert into public.calendar_own_writes (household_id, event_id, etag, created_at) values
-  ('b1000000-0000-4000-8000-000000000001', 'old', '"1"', now() - interval '2 days');
+insert into public.calendar_own_writes (household_id, write_id, event_id, created_at) values
+  ('b1000000-0000-4000-8000-000000000001', 'old', null, now() - interval '2 days');
 select private.poll_calendar_connections();
 select results_eq(
   $$select convert_from(body, 'UTF8')::jsonb ->> 'type', headers ->> 'x-webhook-secret' from net.http_request_queue
@@ -303,6 +303,81 @@ select lives_ok(
     '2099-01-01 10:30+09', '2099-01-01 11:30+09', null, 'pending', 'ai', null, array['pending'])$$,
   '数える状態を仮予約だけにすると確定とは重ならない（Square の予約帳）');
 reset role;
+
+-- 冪等キー -------------------------------------------------------------------
+
+insert into public.reservations (household_id, customer_name, starts_at, ends_at, status, source, idempotency_key) values
+  ('b1000000-0000-4000-8000-000000000001', '冪等', '2099-02-01 10:00+09', '2099-02-01 11:00+09', 'confirmed', 'app', 'Key-12345');
+select throws_ok(
+  $$insert into public.reservations (household_id, customer_name, starts_at, ends_at, status, source, idempotency_key) values
+    ('b1000000-0000-4000-8000-000000000001', '冪等', '2099-02-02 10:00+09', '2099-02-02 11:00+09', 'confirmed', 'app', 'Key-12345')$$,
+  '23505', null, '同じ店の同じ冪等キーは入らない');
+select lives_ok(
+  $$insert into public.reservations (household_id, customer_name, starts_at, ends_at, status, source, idempotency_key) values
+    ('b2000000-0000-4000-8000-000000000002', '冪等', '2099-02-01 10:00+09', '2099-02-01 11:00+09', 'confirmed', 'app', 'Key-12345')$$,
+  '別の店なら同じキーを使える');
+select lives_ok(
+  $$insert into public.reservations (household_id, customer_name, starts_at, ends_at, status, source) values
+    ('b1000000-0000-4000-8000-000000000001', 'キーなし1', '2099-02-03 10:00+09', '2099-02-03 11:00+09', 'confirmed', 'app'),
+    ('b1000000-0000-4000-8000-000000000001', 'キーなし2', '2099-02-04 10:00+09', '2099-02-04 11:00+09', 'confirmed', 'app')$$,
+  'キーのない予約はいくつでも入る');
+select throws_ok(
+  $$insert into public.reservations (household_id, customer_name, starts_at, ends_at, status, source, idempotency_key) values
+    ('b1000000-0000-4000-8000-000000000001', '短い', '2099-02-05 10:00+09', '2099-02-05 11:00+09', 'confirmed', 'app', 'short')$$,
+  '23514', null, 'キーの形が違えば入らない');
+
+-- 自己書き込みの記録 ---------------------------------------------------------------
+
+select lives_ok(
+  $$insert into public.calendar_own_writes (household_id, write_id, event_id) values
+    ('b1000000-0000-4000-8000-000000000001', 'w-new', null)$$,
+  '予定の id が決まる前に記録できる');
+select throws_ok(
+  $$insert into public.calendar_own_writes (household_id, write_id, event_id) values
+    ('b1000000-0000-4000-8000-000000000001', 'w-new', 'e1')$$,
+  '23505', null, '同じ書き込みの id は記録できない');
+
+-- 差分の読み取りの権利 -------------------------------------------------------------
+
+set local role service_role;
+select is(public.calendar_sync_acquire('b1000000-0000-4000-8000-000000000001'), true, '空いていれば権利を取れる');
+select is(public.calendar_sync_acquire('b1000000-0000-4000-8000-000000000001'), false, '取られている間は取れない');
+select public.calendar_sync_release('b1000000-0000-4000-8000-000000000001');
+select is(public.calendar_sync_acquire('b1000000-0000-4000-8000-000000000001'), true, '解放すれば取れる');
+reset role;
+update public.calendar_connections set sync_lease_until = now() - interval '1 second'
+where household_id = 'b1000000-0000-4000-8000-000000000001';
+set local role service_role;
+select is(public.calendar_sync_acquire('b1000000-0000-4000-8000-000000000001'), true, '期限が切れた権利は取り直せる');
+select is(public.calendar_sync_acquire('eeeeeeee-0000-4000-8000-00000000ffff'), false, '接続のない店は取れない');
+reset role;
+
+-- アカウントの削除 -----------------------------------------------------------------
+
+insert into public.push_tokens (user_id, token, platform) values
+  ('a1000000-0000-4000-8000-000000000001', 'ExponentPushToken[forget]', 'ios'),
+  ('a2000000-0000-4000-8000-000000000002', 'ExponentPushToken[keep]', 'ios');
+with notice as (
+  insert into public.notifications (household_id, kind, title, body, dedupe_key)
+  values ('b1000000-0000-4000-8000-000000000001', 'reservation_created', '片付けの試験', 'b', 'forget')
+  returning id
+)
+insert into public.push_deliveries (notification_id, token)
+select id, t from notice, unnest(array['ExponentPushToken[forget]', 'ExponentPushToken[keep]']) as t
+on conflict (notification_id, token) do nothing;
+set local role service_role;
+select public.account_forget_push_tokens('a1000000-0000-4000-8000-000000000001');
+reset role;
+select results_eq('select token from public.push_tokens where token like $$%[forget]$$ or token like $$%[keep]$$',
+  $$values ('ExponentPushToken[keep]'::text)$$, '本人のトークンだけを消す');
+select results_eq('select token from public.push_deliveries where token like $$%[forget]$$ or token like $$%[keep]$$',
+  $$values ('ExponentPushToken[keep]'::text)$$, '本人の送信待ちだけを消す');
+
+select is(
+  (select count(*)::int from unnest(array['calendar_sync_acquire(uuid,integer)', 'calendar_sync_release(uuid)', 'account_forget_push_tokens(uuid)']) as f,
+    unnest(array['anon', 'authenticated']) as r
+   where has_function_privilege(r, 'public.' || f, 'execute')),
+  0, 'anon と authenticated は権利と片付けの関数を呼べない');
 
 select * from finish();
 rollback;

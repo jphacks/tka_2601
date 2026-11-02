@@ -62,7 +62,27 @@ export type SyncDeps = {
   now?: () => Date;
 };
 
-export type SyncResult = { household_id: string; outcome: "baseline" | "synced" | "failed"; notified: number; error?: string };
+export type SyncResult = { household_id: string; outcome: "baseline" | "synced" | "failed" | "skipped"; notified: number; error?: string };
+
+// 権利を取ってから、最新の目印で読む。読み取りが重なると古い目印で上書きしてしまう。権利が取れなければ次の回に任せる
+export async function syncIfFree(connection: CalendarConnection, deps: SyncDeps): Promise<SyncResult> {
+  const householdId = connection.household_id;
+  let leased = false;
+  try {
+    leased = await deps.store.acquireSyncLease(householdId);
+    if (!leased) return { household_id: householdId, outcome: "skipped", notified: 0 };
+    const latest = await deps.store.getConnection(householdId);
+    if (!latest?.calendar_id) return { household_id: householdId, outcome: "skipped", notified: 0 };
+    return await syncConnection(latest, deps);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("calendar sync lease failed", householdId, message);
+    return { household_id: householdId, outcome: "failed", notified: 0, error: message };
+  } finally {
+    // 解放に失敗しても、権利は期限で切れる
+    if (leased) await deps.store.releaseSyncLease(householdId).catch((e) => console.error("calendar sync lease not released", householdId, e));
+  }
+}
 
 // 接続ごとの失敗を他の店に波及させない
 export async function syncConnection(connection: CalendarConnection, deps: SyncDeps): Promise<SyncResult> {
@@ -103,21 +123,35 @@ export async function syncConnection(connection: CalendarConnection, deps: SyncD
 }
 
 async function notifyChanges(householdId: string, items: GoogleEvent[], fromToken: string, now: Date, deps: SyncDeps): Promise<number> {
-  const own = await deps.store.ownEtags(householdId, items.map((e) => e.id));
+  const writeIdOf = (event: GoogleEvent) => event.extendedProperties?.private?.monban_write;
+  // 印のない削除は id しか返っていないことがあるので、予定の id で探す
+  const withoutMark = (event: GoogleEvent) => event.status === "cancelled" && !writeIdOf(event);
+  const own = await deps.store.ownWrites(
+    householdId,
+    items.map(writeIdOf).filter((id): id is string => !!id),
+    items.filter(withoutMark).map((event) => event.id),
+  );
+  const ownWriteOf = (event: GoogleEvent) =>
+    own.find((row) => writeIdOf(event) ? row.write_id === writeIdOf(event) : withoutMark(event) && row.event_id === event.id);
+  const matched = items.map(ownWriteOf).filter((row) => !!row).map((row) => row.write_id);
   const changes = items
-    .filter((event) => !event.etag || !own.has(`${event.id}:${event.etag}`))
+    .filter((event) => !ownWriteOf(event))
     .flatMap((event) => {
       const kind = classifyChange(event, now);
       return kind ? [{ event, kind }] : [];
     });
 
+  let notified = changes.length;
   if (changes.length > BULK_THRESHOLD) {
     const starts = changes.map(({ event }) => event.start?.dateTime).filter((s): s is string => !!s).sort();
     await deps.notify(bulkNotice(householdId, changes.length, starts[0], fromToken));
-    return 1;
+    notified = 1;
+  } else {
+    for (const { event, kind } of changes) await deps.notify(changeNotice(householdId, event, kind));
   }
-  for (const { event, kind } of changes) await deps.notify(changeNotice(householdId, event, kind));
-  return changes.length;
+  // 通知を送り終えてから消す。失敗して読み直すときも、自分の変更と分かるように
+  if (matched.length > 0) await deps.store.consumeOwnWrites(householdId, matched);
+  return notified;
 }
 
 // 認証の失敗はすぐ、一時的な失敗は 10 分続いたら接続を error にして1回だけ通知する

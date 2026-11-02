@@ -4,14 +4,16 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Check } from '../../components/icons';
+import { ConfirmDialog } from '../../components/overlays';
 import { Screen } from '../../components/Screen';
 import { Card, GroupHeader, LinkRow, Separator, Toggle } from '../../components/ui';
 import type { Device, DevicePatch } from '../../domain/device';
 import type { ShopProfile } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
-import { PushCleanupFailed, signOut } from '../../lib/authActions';
+import { deleteAccount } from '../../lib/authActions';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
+import { logout } from '../../lib/logout';
 import { BUSINESS_TYPE_LABELS, MODE_LABELS, MODE_ORDER, PROVIDER_LABELS, TONE_LABELS } from '../../lib/labels';
 import { colors } from '../../theme';
 
@@ -22,6 +24,8 @@ export default function SettingsScreen() {
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [serviceCount, setServiceCount] = useState<number | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -60,18 +64,14 @@ export default function SettingsScreen() {
     }
   }
 
-  async function logout(keepPushToken = false) {
+  async function removeAccount() {
+    setConfirmDelete(false);
+    setDeleting(true);
     try {
-      await signOut({ keepPushToken });
+      await deleteAccount();
     } catch (e) {
-      if (e instanceof PushCleanupFailed) {
-        Alert.alert('通知の設定を解除できませんでした', 'ログアウトしても、この端末に通知が届くことがあります。', [
-          { text: '戻る', style: 'cancel' },
-          { text: 'ログアウト', style: 'destructive', onPress: () => logout(true) },
-        ]);
-        return;
-      }
-      Alert.alert('ログアウトできませんでした', errorMessage(e) ?? '');
+      Alert.alert('アカウントを削除できませんでした', errorMessage(e) ?? '');
+      setDeleting(false);
     }
   }
 
@@ -171,8 +171,24 @@ export default function SettingsScreen() {
           >
             <Text style={styles.logoutLabel}>ログアウト</Text>
           </Pressable>
+          <Separator />
+          <Pressable
+            onPress={() => setConfirmDelete(true)}
+            disabled={deleting}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.logout, pressed && styles.rowPressed, deleting && styles.dim]}
+          >
+            <Text style={styles.logoutLabel}>アカウントを削除</Text>
+          </Pressable>
         </Card>
       </ScrollView>
+      <ConfirmDialog
+        visible={confirmDelete}
+        title="アカウントを削除しますか"
+        confirmLabel="削除"
+        onConfirm={removeAccount}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </Screen>
   );
 }
@@ -212,4 +228,5 @@ const styles = StyleSheet.create({
   logoutCard: { marginTop: 24 },
   logout: { minHeight: 52, alignItems: 'center', justifyContent: 'center' },
   logoutLabel: { fontSize: 17, color: colors.navy },
+  dim: { opacity: 0.5 },
 });

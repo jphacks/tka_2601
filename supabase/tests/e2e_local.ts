@@ -84,6 +84,8 @@ const createdVisits = [visitId, missedId, recoveredId, concurrentId];
 // グループとペアリングの試験で作るアカウントとグループ
 const tempUserIds: string[] = [];
 let tempHouseholdId: string | null = null;
+const accountHouseholds: string[] = [];
+const cleanups: (() => Promise<void>)[] = [];
 
 try {
   // H1: ログインしていない利用者は読めない ----------------------------------
@@ -191,7 +193,8 @@ try {
   check("Webhook は5回呼ばれ、push は毎回 200 を返す", responses.length === 5 && responses.every((r) => r.status_code === 200), responses);
   check(
     "Expo から毎回 ticket が返る",
-    bodies.every((b) => b?.sent === 1 && b.tickets?.length === 1 && b.tickets[0].details?.error === "DeviceNotRegistered"),
+    // 試験用のトークンの結果を見る。シミュレーターなどの本物のトークンが登録されていることがある
+    bodies.every((b) => b?.sent >= 1 && b.tickets?.some((t: { details?: { error?: string } }) => t.details?.error === "DeviceNotRegistered")),
     bodies.map((b) => b?.tickets),
   );
   const notices = bodies.map((b) => b?.notice);
@@ -214,7 +217,8 @@ try {
   // 送信待ち: Expo が DeviceNotRegistered を返した端末は、送り直さずにあきらめる
   const deliveries = await sql<{ kind: string; status: string; attempts: number; last_error: string }>(
     `select n.kind, d.status, d.attempts, d.last_error from public.push_deliveries d
-     join public.notifications n on n.id = d.notification_id where n.visit_id = '${visitId}' order by n.kind`,
+     join public.notifications n on n.id = d.notification_id
+     where n.visit_id = '${visitId}' and d.token = '${FAKE_PUSH_TOKEN}' order by n.kind`,
   );
   check(
     "送信待ちは来客時と対応後の2件で、どちらも1回送ってあきらめた",
@@ -236,7 +240,8 @@ try {
     await new Promise((r) => setTimeout(r, 1000));
     retried = await sql(
       `select d.status, d.attempts, d.last_error from public.push_deliveries d
-       join public.notifications n on n.id = d.notification_id where n.visit_id = '${concurrentId}' and n.kind = 'chime'`,
+       join public.notifications n on n.id = d.notification_id
+       where n.visit_id = '${concurrentId}' and n.kind = 'chime' and d.token = '${FAKE_PUSH_TOKEN}'`,
     );
     if (retried[0]?.status !== "pending") break;
   }
@@ -364,16 +369,28 @@ try {
 
   // 店舗の設定、予約、通知（docs/reservations.md） -----------------------------------------
   const memberHousehold = (await resident.from("household_members").select("household_id").eq("user_id", residentId).single()).data!.household_id as string;
-  const profile = await resident.from("shop_profiles").select("tone, reservation_provider").eq("household_id", memberHousehold).single();
+  // デモデータが入っていても壊さないよう、元の設定を覚えて最後に戻す
+  const profile = await resident.from("shop_profiles").select("tone, reservation_provider, business_type, greeting").eq("household_id", memberHousehold).single();
   check("設定の行があり、口調の既定は最も丁寧", profile.data?.tone === "very_polite", profile);
   await resident.from("shop_profiles").update({ business_type: "nail_salon", greeting: "いらっしゃいませ" }).eq("household_id", memberHousehold);
-  const service = await resident.from("shop_services").insert({ household_id: memberHousehold, name: "ジェルネイル", duration_minutes: 90 }).select("id").single();
+  const serviceName = `e2e メニュー ${crypto.randomUUID().slice(0, 8)}`;
+  const service = await resident.from("shop_services").insert({ household_id: memberHousehold, name: serviceName, duration_minutes: 90 }).select("id").single();
   check("メニューを足せる", !service.error, service);
+  // この試験が作った分だけを片付ける（予約はすべて 2099 年）。途中で失敗してもデモデータを壊したままにしない
+  cleanups.push(async () => {
+    await sql(
+      `delete from public.notifications where household_id = '${memberHousehold}' and kind like 'reservation_%'
+         and data ->> 'reservation_id' in (select id::text from public.reservations where household_id = '${memberHousehold}' and starts_at >= '2099-01-01')`,
+    );
+    await sql(`delete from public.reservations where household_id = '${memberHousehold}' and starts_at >= '2099-01-01'`);
+    await admin.from("shop_services").delete().eq("id", service.data!.id);
+    await resident.from("shop_profiles").update({ business_type: profile.data!.business_type, greeting: profile.data!.greeting }).eq("household_id", memberHousehold);
+  });
   const shopSettings = (await device("GET", "/settings")).json;
   const shop = shopSettings.shop as { business_type: string; greeting: string; services: { name: string }[]; reservation_provider: string } | null;
   check(
     "本体は設定と一緒に店舗の設定を読める",
-    shop?.business_type === "nail_salon" && shop.greeting === "いらっしゃいませ" && shop.services[0]?.name === "ジェルネイル" &&
+    shop?.business_type === "nail_salon" && shop.greeting === "いらっしゃいませ" && shop.services.some((s) => s.name === serviceName) &&
       typeof shopSettings.mode === "string",
     shopSettings,
   );
@@ -412,6 +429,28 @@ try {
   const moved = await reservations("PATCH", `/${manualRow.id}`, { note: "初回" });
   check("予約を変更できる", moved.status === 200 && moved.json.reservation.note === "初回", moved);
   check("知らない予約は 404", (await reservations("GET", `/${crypto.randomUUID()}`)).status === 404);
+
+  // 版の照合: 見ていた時刻と違えば変えない
+  const staleEdit = await reservations("PATCH", `/${manualRow.id}`, { note: "古い", expected_starts_at: inDays(2, 4) });
+  check("見ていた時刻と違えば 409（reservation_changed）", staleEdit.status === 409 && staleEdit.json.code === "reservation_changed", staleEdit);
+  const freshEdit = await reservations("PATCH", `/${manualRow.id}`, { note: "初回", expected_starts_at: inDays(2, 5), expected_ends_at: inDays(2, 6) });
+  check("見ていた時刻と同じなら変えられる", freshEdit.status === 200 && freshEdit.json.reservation.note === "初回", freshEdit);
+
+  // 冪等キー: 送り直しても1件だけ作り、通知も1回にする
+  const retried1 = { customer_name: "冪等", starts_at: inDays(8, 5), ends_at: inDays(8, 6), idempotency_key: crypto.randomUUID() };
+  const firstTry = await reservations("POST", "", retried1);
+  const secondTry = await reservations("POST", "", retried1);
+  check(
+    "同じ冪等キーの追加は 201 のあと 200 で同じ予約を返す",
+    firstTry.status === 201 && secondTry.status === 200 && secondTry.json.reservation?.id === firstTry.json.reservation?.id,
+    [firstTry, secondTry],
+  );
+  const retriedNotices = await sql<{ n: number }>(
+    `select count(*)::int as n from public.notifications where data ->> 'reservation_id' = '${firstTry.json.reservation?.id}'`,
+  );
+  check("同じ冪等キーでは通知も1件", retriedNotices[0]?.n === 1, retriedNotices);
+  check("冪等キーの形が違えば 400", (await reservations("POST", "", { ...retried1, idempotency_key: "bad" })).status === 400);
+  await reservations("POST", `/${firstTry.json.reservation?.id}/cancel`);
   check("日時の誤りは 400", (await reservations("POST", "", { customer_name: "佐藤", starts_at: "x", ends_at: "y" })).status === 400);
   const noOffset = await reservations("POST", "", { customer_name: "佐藤", starts_at: "2099-01-02T14:00:00", ends_at: "2099-01-02T15:00:00" });
   check("オフセットのない日時は 400", noOffset.status === 400, noOffset);
@@ -490,7 +529,9 @@ try {
 
   // 通知: AI の操作は全員に送り、アプリの操作は本人に送らない
   const inbox = await resident.from("notifications").select("kind, title, data, actor_user_id").order("created_at", { ascending: false }).limit(100);
-  const kinds = (inbox.data ?? []).map((n) => n.kind);
+  // デモデータの通知と混ざらないよう、この試験の予約の通知だけを見る
+  const testIds = new Set([manualRow.id, pendingRow.id]);
+  const kinds = (inbox.data ?? []).filter((n) => testIds.has((n.data as { reservation_id?: string })?.reservation_id ?? "")).map((n) => n.kind);
   check(
     "予約の通知が種類ごとに残る",
     ["reservation_created", "reservation_updated", "reservation_pending", "reservation_arrived", "reservation_cancelled"].every((k) => kinds.includes(k)),
@@ -501,6 +542,7 @@ try {
     `select n.kind, count(d.id)::int as deliveries from public.notifications n
      left join public.push_deliveries d on d.notification_id = n.id
      where n.kind in ('reservation_created', 'reservation_pending') and n.household_id = '${memberHousehold}'
+       and n.data ->> 'reservation_id' in ('${manualRow.id}', '${pendingRow.id}')
      group by n.kind`,
   );
   check(
@@ -519,7 +561,7 @@ try {
      where n.data ->> 'reservation_id' = '${quiet.json.reservation?.id}'`,
   );
   check("オフにした種類は端末に送らないが、通知の一覧には残る", quietDeliveries[0]?.deliveries === 0, quietDeliveries);
-  await resident.from("notification_preferences").delete().eq("user_id", residentId);
+  await resident.from("notification_preferences").delete().eq("user_id", residentId).eq("kind", "reservation_pending");
 
   // 予約先の切り替えと Google の接続
   const toHotpepper = await reservations("PUT", "/provider", { provider: "hotpepper" });
@@ -586,6 +628,12 @@ try {
     check("接続の状態だけを変えられる", connection?.status === "error" && connection.last_error === "読めない" && connection.sync_token === "t1", connection);
     await store.updateConnection("eeeeeeee-0000-4000-8000-00000000ffff", { status: "error" });
     check("接続のない店の部分更新は何もしない", (await store.getConnection("eeeeeeee-0000-4000-8000-00000000ffff")) === null);
+    check("差分の読み取りの権利を取れる", (await store.acquireSyncLease(memberHousehold)) === true);
+    check("取られている間は権利を取れない", (await store.acquireSyncLease(memberHousehold)) === false);
+    await store.releaseSyncLease(memberHousehold);
+    check("解放すれば権利を取れる", (await store.acquireSyncLease(memberHousehold)) === true);
+    const anonLease = await resident.rpc("calendar_sync_acquire", { p_household_id: memberHousehold });
+    check("メンバーは権利の関数を呼べない", anonLease.error?.code === "42501", anonLease);
     await store.deleteConnection(memberHousehold);
 
     await store.saveSquareConnection({
@@ -608,11 +656,12 @@ try {
     const taken = await store.takePending("e2e-code");
     check("保留のトークンは使い切り", taken?.user_id === residentId && (await store.takePending("e2e-code")) === null, taken);
 
-    const manyIds = Array.from({ length: 300 }, (_, i) => `event-${i}-${"x".repeat(40)}`);
-    await store.recordOwnWrite(memberHousehold, manyIds[250], '"1"');
-    const own = await store.ownEtags(memberHousehold, manyIds);
-    check("多くの予定でも自分の書き込みを読める", own.has(`${manyIds[250]}:"1"`), [...own]);
-    await sql(`delete from public.calendar_own_writes where household_id = '${memberHousehold}'`);
+    const manyIds = Array.from({ length: 300 }, () => crypto.randomUUID());
+    await store.recordOwnWrite(memberHousehold, manyIds[250], null);
+    const own = await store.ownWrites(memberHousehold, manyIds, []);
+    check("多くの予定でも自分の書き込みを読める", own.length === 1 && own[0].write_id === manyIds[250], own);
+    await store.consumeOwnWrites(memberHousehold, [manyIds[250]]);
+    check("確かめた書き込みの記録は消せる", (await store.ownWrites(memberHousehold, manyIds, [])).length === 0);
   }
 
   // 自然言語の入力。解析器の精度は見ず、経路と「書き込まない」ことを確かめる
@@ -657,10 +706,80 @@ try {
   check("本体は死活通信を送れる", beat.status === 200 && typeof beat.json.last_heartbeat_at === "string", beat);
   await admin.from("devices").update({ last_heartbeat_at: null, offline_notified_at: null }).eq("id", DEVICE_ID);
 
-  await admin.from("reservations").delete().eq("household_id", memberHousehold);
-  await admin.from("shop_services").delete().eq("household_id", memberHousehold);
-  await admin.from("notifications").delete().eq("household_id", memberHousehold).like("kind", "reservation_%");
-  await resident.from("shop_profiles").update({ business_type: "other", greeting: "" }).eq("household_id", memberHousehold);
+  // アカウントの削除（App Store の審査 5.1.1(v)） -------------------------------------
+  async function deleteAccount(token: string | null) {
+    const headers: Record<string, string> = { apikey: status.PUBLISHABLE_KEY };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${status.API_URL}/functions/v1/account`, { method: "DELETE", headers });
+    return { status: res.status, json: await res.json() };
+  }
+  const accountOf = async (client: typeof resident) => {
+    const session = (await client.auth.getSession()).data.session!;
+    return { id: session.user.id, jwt: session.access_token };
+  };
+  const userExists = async (id: string) => (await admin.auth.admin.getUserById(id)).data.user !== null;
+  const rowsOf = async (table: string, column: string, value: string) =>
+    (await admin.from(table).select(column, { count: "exact", head: true }).eq(column, value)).count ?? 0;
+
+  check("アカウントの削除はログインなしだと 401", (await deleteAccount(null)).status === 401);
+  check("アカウントの削除は不正な JWT だと 401", (await deleteAccount("not-a-jwt")).status === 401);
+  const notAllowedMethod = await fetch(`${status.API_URL}/functions/v1/account`, { headers: { Authorization: `Bearer ${jwt}`, apikey: status.PUBLISHABLE_KEY } });
+  await notAllowedMethod.body?.cancel();
+  check("DELETE 以外は 405 で消さない", notAllowedMethod.status === 405, notAllowedMethod.status);
+
+  const loner = await accountOf(await newUser(`e2e-loner-${suffix}@example.com`, {}));
+  const lonerGone = await deleteAccount(loner.jwt);
+  check("グループに入っていない人も消せる", lonerGone.status === 200 && lonerGone.json.deleted === true && !(await userExists(loner.id)), lonerGone);
+
+  const leaverClient = await newUser(`e2e-leaver-${suffix}@example.com`, {});
+  const lastClient = await newUser(`e2e-last-${suffix}@example.com`, {});
+  const leaver = await accountOf(leaverClient);
+  const last = await accountOf(lastClient);
+  const shopId = (await leaverClient.rpc("create_household", { name: "e2e の削除の店" })).data as string;
+  accountHouseholds.push(shopId);
+  const shopInvite = await leaverClient.rpc("get_or_create_household_invite");
+  await lastClient.rpc("accept_household_invite", { token: shopInvite.data });
+  const shopKey = `dk_e2e_${crypto.randomUUID()}`;
+  const [shopDevice] = await sql<{ device_id: string; pairing_code: string }>(
+    `select * from private.register_device('e2e の削除の本体', '${await sha256Hex(shopKey)}')`,
+  );
+  await leaverClient.rpc("claim_device", { code: shopDevice.pairing_code });
+  const shopVisit = crypto.randomUUID();
+  await device("PUT", `/visits/${shopVisit}`, { chimed_at: startedAt, mode: "normal", status: "ended", intent: "acquaintance", outcome: "escalated", end_reason: "closing" }, shopKey);
+  await device("POST", "/reservations", { customer_name: "残る予約", starts_at: inDays(9, 5), ends_at: inDays(9, 6) }, shopKey);
+  await leaverClient.from("push_tokens").upsert({ user_id: leaver.id, token: "ExponentPushToken[e2e-leaver]", platform: "ios" });
+  {
+    const store = createCalendarStore(admin);
+    const connectionOf = (connectedBy: string) => ({
+      household_id: shopId,
+      account_email: "shop@example.com",
+      calendar_id: null,
+      calendar_name: null,
+      refresh_token_encrypted: "encrypted-refresh",
+      sync_token: null,
+      status: "active" as const,
+      last_error: null,
+      connected_by: connectedBy,
+    });
+    // ほかの人がつないだ接続は、抜ける人の削除で消さない
+    await store.saveConnection(connectionOf(last.id));
+    const leaverGone = await deleteAccount(leaver.jwt);
+    check("ほかのメンバーがいれば本人だけが抜ける", leaverGone.status === 200 && !(await userExists(leaver.id)), leaverGone);
+    check("グループと予約と本体は残る", (await rowsOf("households", "id", shopId)) === 1 && (await rowsOf("reservations", "household_id", shopId)) === 1 && (await rowsOf("devices", "id", shopDevice.device_id)) === 1);
+    check("抜けた人のトークンは消える", (await rowsOf("push_tokens", "user_id", leaver.id)) === 0);
+    check("ほかの人がつないだ接続は残る", (await store.getConnection(shopId))?.connected_by === last.id);
+    check("残ったメンバーは続けて使える", (await rowsOf("household_members", "household_id", shopId)) === 1);
+  }
+  const shopKeyHash = await sha256Hex(shopKey);
+  const lastGone = await deleteAccount(last.jwt);
+  check("最後のメンバーが消えるとアカウントも消える", lastGone.status === 200 && !(await userExists(last.id)), lastGone);
+  check("最後のメンバーが消えるとグループも消える", (await rowsOf("households", "id", shopId)) === 0);
+  check(
+    "予約、来客、接続も一緒に消える",
+    (await rowsOf("reservations", "household_id", shopId)) === 0 && (await rowsOf("visits", "id", shopVisit)) === 0 && (await rowsOf("calendar_connections", "household_id", shopId)) === 0,
+  );
+  check("本体と鍵も一緒に消える", (await rowsOf("devices", "id", shopDevice.device_id)) === 0 && (await rowsOf("device_keys", "key_hash", shopKeyHash)) === 0);
+  check("消えた本体の鍵は使えない", (await device("GET", "/mode", undefined, shopKey)).status === 401);
 
   // H3b: 住人は1件ずつ消せる ---------------------------------------------------
   const both = await resident.from("visits").delete().in("id", [visitId, missedId]).select("id");
@@ -670,13 +789,16 @@ try {
   const left = await admin.from("visit_messages").select("seq").eq("visit_id", visitId);
   check("H3b 消した来客の発話も消える", left.data?.length === 0, left);
 } finally {
+  for (const cleanup of cleanups) await cleanup();
   await admin.from("visits").delete().in("id", createdVisits);
   await admin.from("households").delete().eq("id", OTHER_HOUSEHOLD_ID);
   await admin.from("push_tokens").delete().eq("token", FAKE_PUSH_TOKEN);
+  for (const id of accountHouseholds) await admin.from("households").delete().eq("id", id);
   // グループを消すと、結び付けた本体、その鍵、来客も消える
   if (tempHouseholdId) await admin.from("households").delete().eq("id", tempHouseholdId);
   for (const id of tempUserIds) await admin.auth.admin.deleteUser(id);
-  await resident.auth.signOut();
+  // 既定の global は同じアカウントのすべてのセッションを切る。シミュレーターのログインを残す
+  await resident.auth.signOut({ scope: "local" });
 }
 
 console.log(failures === 0 ? "\nすべて通りました" : `\n${failures} 件が失敗しました`);

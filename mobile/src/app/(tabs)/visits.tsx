@@ -36,16 +36,14 @@ export default function VisitListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const loadingMore = useRef(false);
-  const page = useRef(0);
   // 読み直しの回数。読み直す前に始めた続きの読み込みの結果を捨てる
   const generation = useRef(0);
 
   const loadFirstPage = useCallback(async () => {
     const current = ++generation.current;
     try {
-      const rows = await repositories.visits.list(household.id, 0);
+      const rows = await repositories.visits.list(household.id);
       if (current !== generation.current) return;
-      page.current = 0;
       setVisits(rows);
       setHasMore(rows.length === VISITS_PAGE_SIZE);
       setError(null);
@@ -70,13 +68,13 @@ export default function VisitListScreen() {
   }
 
   async function loadMore() {
-    if (!hasMore || loadingMore.current || !visits) return;
+    const last = visits?.[visits.length - 1];
+    if (!hasMore || loadingMore.current || !last) return;
     loadingMore.current = true;
     const started = generation.current;
     try {
-      const next = await repositories.visits.list(household.id, page.current + 1);
+      const next = await repositories.visits.list(household.id, { at: last.chimed_at, id: last.id });
       if (started !== generation.current) return;
-      page.current += 1;
       setVisits((current) => appendUnique(current ?? [], next));
       setHasMore(next.length === VISITS_PAGE_SIZE);
     } finally {

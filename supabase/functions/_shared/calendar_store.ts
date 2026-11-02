@@ -25,6 +25,11 @@ export type NewCalendarConnection = Omit<CalendarConnection, "last_synced_at">;
 export type CalendarConnectionPatch = Partial<Omit<CalendarConnection, "household_id">>;
 export type SquareConnectionPatch = Partial<Omit<SquareConnection, "household_id">>;
 
+// 読み取りが途中で落ちたときに権利が切れるまでの時間。普段の読み取りより十分に長くする
+const SYNC_LEASE_SECONDS = 300;
+
+export type OwnWrite = { write_id: string; event_id: string | null };
+
 export type OAuthProvider = "google_calendar" | "square";
 export type OAuthState = {
   state: string;
@@ -73,8 +78,15 @@ export interface CalendarStore {
   takePending(code: string): Promise<OAuthPending | null>;
   getProviderKind(householdId: string): Promise<ProviderKind>;
   setProviderKind(householdId: string, kind: ProviderKind): Promise<void>;
-  recordOwnWrite(householdId: string, eventId: string, etag: string): Promise<void>;
-  ownEtags(householdId: string, eventIds: string[]): Promise<Set<string>>;
+  // 予定を書く前に、自分の書き込みの id を記録する
+  recordOwnWrite(householdId: string, writeId: string, eventId: string | null): Promise<void>;
+  // 書き込みの id か予定の id が合う記録を返す
+  ownWrites(householdId: string, writeIds: string[], eventIds: string[]): Promise<OwnWrite[]>;
+  // 差分で確かめた記録を消す。消さないと、あとで店が Google で直接変えた分まで自分の変更に見える
+  consumeOwnWrites(householdId: string, writeIds: string[]): Promise<void>;
+  // 接続ごとの差分の読み取りの権利。別の回が読んでいる間は取れない
+  acquireSyncLease(householdId: string): Promise<boolean>;
+  releaseSyncLease(householdId: string): Promise<void>;
   // Google を予約先にしていて、カレンダーを選び終えた接続
   activeConnections(): Promise<CalendarConnection[]>;
   getSquareConnection(householdId: string): Promise<SquareConnection | null>;
@@ -144,20 +156,39 @@ export function createCalendarStore(admin: SupabaseClient): CalendarStore {
       const { error } = await admin.from("shop_profiles").update({ reservation_provider: kind }).eq("household_id", householdId);
       if (error) throw error;
     },
-    async recordOwnWrite(householdId, eventId, etag) {
-      const { error } = await admin.from("calendar_own_writes").upsert({ household_id: householdId, event_id: eventId, etag });
+    async recordOwnWrite(householdId, writeId, eventId) {
+      const { error } = await admin.from("calendar_own_writes").insert({ household_id: householdId, write_id: writeId, event_id: eventId });
       if (error) throw error;
     },
-    async ownEtags(householdId, eventIds) {
-      const own = new Set<string>();
-      for (const batch of batches(eventIds)) {
-        const { data, error } = await admin.from("calendar_own_writes").select("event_id, etag")
-          .eq("household_id", householdId)
-          .in("event_id", batch);
+    async ownWrites(householdId, writeIds, eventIds) {
+      const found = new Map<string, OwnWrite>();
+      const read = async (column: "write_id" | "event_id", values: string[]) => {
+        for (const batch of batches(values)) {
+          const { data, error } = await admin.from("calendar_own_writes").select("write_id, event_id")
+            .eq("household_id", householdId)
+            .in(column, batch);
+          if (error) throw error;
+          for (const row of data as OwnWrite[]) found.set(row.write_id, row);
+        }
+      };
+      await read("write_id", writeIds);
+      await read("event_id", eventIds);
+      return [...found.values()];
+    },
+    async consumeOwnWrites(householdId, writeIds) {
+      for (const batch of batches(writeIds)) {
+        const { error } = await admin.from("calendar_own_writes").delete().eq("household_id", householdId).in("write_id", batch);
         if (error) throw error;
-        for (const r of data as { event_id: string; etag: string }[]) own.add(`${r.event_id}:${r.etag}`);
       }
-      return own;
+    },
+    async acquireSyncLease(householdId) {
+      const { data, error } = await admin.rpc("calendar_sync_acquire", { p_household_id: householdId, p_seconds: SYNC_LEASE_SECONDS });
+      if (error) throw error;
+      return data === true;
+    },
+    async releaseSyncLease(householdId) {
+      const { error } = await admin.rpc("calendar_sync_release", { p_household_id: householdId });
+      if (error) throw error;
     },
     async activeConnections() {
       const { data: profiles, error } = await admin.from("shop_profiles").select("household_id").eq("reservation_provider", "google_calendar");
@@ -238,7 +269,7 @@ export async function providerFor(admin: SupabaseClient, householdId: string): P
       const connection = await store.getConnection(householdId);
       if (!connection?.calendar_id) throw new ProviderError(409, "Google カレンダーの接続が済んでいません", "google_not_connected");
       const client = await clientForConnection(connection, config);
-      return new GoogleProvider(client, connection.calendar_id, (eventId, etag) => store.recordOwnWrite(householdId, eventId, etag));
+      return new GoogleProvider(client, connection.calendar_id, (writeId, eventId) => store.recordOwnWrite(householdId, writeId, eventId));
     },
     square: async () => {
       const config = squareConfigFromEnv();
@@ -247,7 +278,7 @@ export async function providerFor(admin: SupabaseClient, householdId: string): P
       if (!connection) throw new ProviderError(409, "Square の接続が済んでいません", "square_not_connected");
       return new SquareProvider({
         client: squareClientFor(admin, store, connection, config),
-        // 表の確定は店が Square に入れた予約と二重になるので、重なりには仮予約だけを数える
+        // 表の確定は SquareProvider が Square の予約と照らして数えるので、表の中では仮予約だけを数える
         ledger: new TableProvider(admin, householdId, "monban", ["pending"]),
         store,
         householdId,

@@ -3,6 +3,8 @@ import type { CalendarStore } from "../_shared/calendar_store.ts";
 import { readJsonObject, reservationErrorResponse } from "../_shared/errors.ts";
 import type { NewNotification } from "../_shared/notify.ts";
 import {
+  parseExpectedVersion,
+  parseIdempotencyKey,
   parseNewReservation,
   parseRange,
   parseReservationPatch,
@@ -130,9 +132,14 @@ async function collectionRoute(req: Request, url: URL, deps: ReservationsDeps, m
     return Response.json({ provider: provider.kind, reservations: await provider.list(range) });
   }
   if (req.method !== "POST") return methodNotAllowed();
-  const input = parseNewReservation(await readJsonObject(req), { status: "confirmed", source: "app" });
+  const body = await readJsonObject(req);
+  const input = parseNewReservation(body, { status: "confirmed", source: "app" });
+  const idempotencyKey = parseIdempotencyKey(body);
   const provider = await deps.providerFor(member.householdId);
-  return await respondWrite(await provider.create(input), "reservation_created", deps, member, 201);
+  const write = await provider.create(idempotencyKey ? { ...input, idempotency_key: idempotencyKey } : input);
+  // 送り直しで同じ予約が見つかった。作っていないので通知しない
+  if (write.existed) return Response.json({ reservation: write.reservation });
+  return await respondWrite(write, "reservation_created", deps, member, 201);
 }
 
 async function itemRoute(req: Request, id: string, deps: ReservationsDeps, member: Member): Promise<Response> {
@@ -142,8 +149,9 @@ async function itemRoute(req: Request, id: string, deps: ReservationsDeps, membe
     return reservation ? Response.json({ reservation }) : Response.json({ error: "予約が見つかりません" }, { status: 404 });
   }
   if (req.method !== "PATCH") return methodNotAllowed();
-  const patch = parseReservationPatch(await readJsonObject(req));
-  return await respondWrite(await provider.update(id, patch), "reservation_updated", deps, member);
+  const body = await readJsonObject(req);
+  const write = await provider.update(id, parseReservationPatch(body), parseExpectedVersion(body));
+  return await respondWrite(write, "reservation_updated", deps, member);
 }
 
 type Action = "approve" | "cancel" | "arrive";

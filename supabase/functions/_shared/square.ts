@@ -2,6 +2,7 @@
 // AI の仮予約は Square に書かず reservations 表に入れ、店が Square に入力してから承認する
 import type { NewNotification } from "./notify.ts";
 import {
+  type ExpectedVersion,
   findOverlaps,
   type NewReservation,
   overlapError,
@@ -385,16 +386,20 @@ export class SquareProvider implements ReservationProvider {
       .filter((r): r is Reservation => r !== null);
   }
 
-  // Square の予約と、表の仮予約を合わせて返す。表の確定は店が Square に入れた予約と二重になるので出さない
+  // Square の予約と、表の AI の予約を合わせて返す。
+  // 承認した予約は、店が Square に入れた本物が読めるまで表から出す。入力を忘れても一覧と重なりの判定から消えない
   async list({ from, to, status }: ReservationRange): Promise<Reservation[]> {
     const [bookings, ledger] = await Promise.all([
       this.deps.client.listBookings(new Date(Date.parse(from) - LOOKBACK_MS), new Date(to)),
-      status === undefined || status === "pending" ? this.deps.ledger.list({ from, to, status: "pending" }) : Promise.resolve([]),
+      status === "cancelled" ? Promise.resolve([]) : this.deps.ledger.list(status ? { from, to, status } : { from, to }),
     ]);
     const matches = bookings.filter((b) => (status ? bookingStatus(b.status) === status : !isCancelledStatus(b.status)));
     const reservations = (await this.toReservations(matches))
       .filter((r) => Date.parse(r.starts_at) < Date.parse(to) && Date.parse(r.ends_at) > Date.parse(from));
-    return [...reservations, ...ledger].sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at));
+    // Square でキャンセルされた本物とも照らす。照らさないと、消した予約が表から戻ってくる
+    const realStarts = new Set(bookings.map((b) => Date.parse(b.start_at ?? "")));
+    const waiting = ledger.filter((r) => r.status === "pending" || (r.source === "ai" && !realStarts.has(Date.parse(r.starts_at))));
+    return [...reservations, ...waiting].sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at));
   }
 
   async get(id: string): Promise<Reservation | null> {
@@ -416,9 +421,9 @@ export class SquareProvider implements ReservationProvider {
     return await this.deps.ledger.createIfFree(input);
   }
 
-  async update(id: string, patch: ReservationPatch): Promise<ReservationWrite> {
+  async update(id: string, patch: ReservationPatch, expected?: ExpectedVersion): Promise<ReservationWrite> {
     if (id.startsWith(SQUARE_ID_PREFIX)) throw readOnlyError();
-    return await this.deps.ledger.update(id, patch);
+    return await this.deps.ledger.update(id, patch, expected);
   }
 
   async approve(id: string): Promise<ReservationWrite> {

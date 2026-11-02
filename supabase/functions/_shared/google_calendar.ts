@@ -1,7 +1,10 @@
 // Google カレンダーの API と、予定と予約の変換（docs/reservations.md 2章）。
 // 予約の写しは持たず、読むたびに API を呼ぶ。fetch は試験で差し替えられる
 import {
+  changedError,
+  checkExpectedVersion,
   checkPatchedOrder,
+  type ExpectedVersion,
   findOverlaps,
   type NewReservation,
   overlapError,
@@ -105,12 +108,13 @@ export class GoogleClient {
   }
 
   // 成功の JSON を返す。404 は null
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T | null> {
+  private async request<T>(method: string, path: string, body?: unknown, ifMatch?: string): Promise<T | null> {
     const res = await this.send(`${CALENDAR_API}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${await this.accessToken()}`,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(ifMatch ? { "If-Match": ifMatch } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -209,11 +213,13 @@ export class GoogleClient {
     return created;
   }
 
-  async patchEvent(calendarId: string, id: string, patch: Partial<GoogleEvent>): Promise<GoogleEvent> {
+  // ifMatch を渡すと、その版のときだけ変える。違えば 412 の GoogleApiError になる
+  async patchEvent(calendarId: string, id: string, patch: Partial<GoogleEvent>, ifMatch?: string): Promise<GoogleEvent> {
     const updated = await this.request<GoogleEvent>(
       "PATCH",
       this.eventsPath(calendarId, `/${encodeURIComponent(id)}?sendUpdates=none`),
       patch,
+      ifMatch,
     );
     if (!updated) throw new ProviderError(404, "予約が見つかりません");
     return updated;
@@ -296,14 +302,28 @@ export function googleDedupeKey(event: GoogleEvent): string {
   return `google:${event.id}:${eventVersion(event)}`;
 }
 
+// 予定の id は base32hex（a〜v と 0〜9）で 5〜1024 字。16 進はその一部なので SHA-256 をそのまま使う
+export async function idempotentEventId(calendarId: string, idempotencyKey: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${calendarId}:${idempotencyKey}`));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// 自分の書き込みの印を付ける。差分を読んだときに、同じ変更を通知しないため
+function withWriteId(event: Partial<GoogleEvent>, writeId: string): Partial<GoogleEvent> {
+  return {
+    ...event,
+    extendedProperties: { private: { ...event.extendedProperties?.private, monban_write: writeId } },
+  };
+}
+
 export class GoogleProvider implements ReservationProvider {
   readonly kind = "google_calendar" as const;
 
   constructor(
     private readonly client: GoogleClient,
     private readonly calendarId: string,
-    // 自分で書いた版を記録する。差分を読んだときに同じ変更を通知しないため
-    private readonly recordOwnWrite: (eventId: string, etag: string) => Promise<void>,
+    // 書く前に書き込みの id を記録する。差分を読んだときに同じ変更を通知しないため
+    private readonly recordOwnWrite: (writeId: string, eventId: string | null) => Promise<void>,
   ) {}
 
   async list({ from, to, status }: ReservationRange): Promise<Reservation[]> {
@@ -323,15 +343,35 @@ export class GoogleProvider implements ReservationProvider {
     return reservation;
   }
 
-  private async toWrite(event: GoogleEvent): Promise<ReservationWrite> {
-    await this.recordOwnWrite(event.id, eventVersion(event));
+  // 書き込みの id を記録してから予定を変える。返事を待つ間に差分を読まれても自分の変更と分かる
+  private async patchOwn(id: string, patch: Partial<GoogleEvent>, ifMatch?: string): Promise<GoogleEvent> {
+    const writeId = crypto.randomUUID();
+    await this.recordOwnWrite(writeId, id);
+    return await this.client.patchEvent(this.calendarId, id, withWriteId(patch, writeId), ifMatch);
+  }
+
+  private toWrite(event: GoogleEvent, existed = false): ReservationWrite {
     const reservation = eventToReservation(event);
     if (!reservation) throw new ProviderError(502, "Google カレンダーから予定の時刻を読めませんでした");
-    return { reservation, dedupeKey: () => googleDedupeKey(event) };
+    return { reservation, dedupeKey: () => googleDedupeKey(event), ...(existed ? { existed } : {}) };
   }
 
   async create(input: NewReservation): Promise<ReservationWrite> {
-    return this.toWrite(await this.client.insertEvent(this.calendarId, reservationToEvent(input)));
+    const writeId = crypto.randomUUID();
+    const key = input.idempotency_key;
+    // 冪等キーがあれば id をキーから決める。同じ id の予定は Google が 409 で断る
+    const eventId = key ? await idempotentEventId(this.calendarId, key) : null;
+    await this.recordOwnWrite(writeId, eventId);
+    const event = withWriteId(reservationToEvent(input), writeId);
+    if (!eventId) return this.toWrite(await this.client.insertEvent(this.calendarId, event));
+    try {
+      return this.toWrite(await this.client.insertEvent(this.calendarId, { ...event, id: eventId }));
+    } catch (e) {
+      if (!(e instanceof GoogleApiError && e.status === 409)) throw e;
+      const found = await this.client.getEvent(this.calendarId, eventId);
+      if (!found) throw e;
+      return this.toWrite(found, true);
+    }
   }
 
   // カレンダーには同時の書き込みを止める手段がないので、読んでから書くまでの重なりは承認リストで防ぐ
@@ -340,17 +380,26 @@ export class GoogleProvider implements ReservationProvider {
     return await this.create(input);
   }
 
-  async update(id: string, patch: ReservationPatch): Promise<ReservationWrite> {
-    const current = await this.requireReservation(id);
+  async update(id: string, patch: ReservationPatch, expected?: ExpectedVersion): Promise<ReservationWrite> {
+    const event = await this.client.getEvent(this.calendarId, id);
+    const current = event ? eventToReservation(event) : null;
+    if (!event || !current) throw new ProviderError(404, "予約が見つかりません");
     if (current.status === "cancelled") throw new ProviderError(409, "キャンセルした予約は変更できません");
+    checkExpectedVersion(current, expected);
     checkPatchedOrder(current, patch);
-    return this.toWrite(await this.client.patchEvent(this.calendarId, id, patchToEvent(current, patch)));
+    try {
+      return this.toWrite(await this.patchOwn(id, patchToEvent(current, patch), expected ? event.etag : undefined));
+    } catch (e) {
+      // 読んでから書くまでに、別の操作が先に変えた
+      if (e instanceof GoogleApiError && e.status === 412) throw changedError();
+      throw e;
+    }
   }
 
   async approve(id: string): Promise<ReservationWrite> {
     const current = await this.requireReservation(id);
     if (current.status !== "pending") throw new ProviderError(409, "仮予約ではありません");
-    return this.toWrite(await this.client.patchEvent(this.calendarId, id, { status: "confirmed" }));
+    return this.toWrite(await this.patchOwn(id, { status: "confirmed" }));
   }
 
   // すでにキャンセルや到着済みなら書かない。版が変わらないので二重に通知もしない
@@ -358,7 +407,7 @@ export class GoogleProvider implements ReservationProvider {
     const event = await this.client.getEvent(this.calendarId, id);
     if (!event || !eventToReservation(event)) throw new ProviderError(404, "予約が見つかりません");
     if (event.status === "cancelled") return this.toWrite(event);
-    return this.toWrite(await this.client.patchEvent(this.calendarId, id, { status: "cancelled" }));
+    return this.toWrite(await this.patchOwn(id, { status: "cancelled" }));
   }
 
   async arrive(id: string): Promise<ReservationWrite> {
@@ -367,7 +416,7 @@ export class GoogleProvider implements ReservationProvider {
     if (!event || !current) throw new ProviderError(404, "予約が見つかりません");
     if (current.status === "cancelled") throw new ProviderError(409, "キャンセルした予約です");
     if (current.arrived_at) return this.toWrite(event);
-    return this.toWrite(await this.client.patchEvent(this.calendarId, id, {
+    return this.toWrite(await this.patchOwn(id, {
       extendedProperties: { private: { monban_arrived_at: new Date().toISOString() } },
     }));
   }

@@ -73,13 +73,13 @@ function fakeFetch(handler: (url: URL, init: RequestInit) => Response) {
   return { fetch: fn as typeof fetch, calls };
 }
 
-function provider(bookings: SquareBooking[] = [booking], overrides: { customers?: () => Promise<Map<string, { name: string; phone: string | null }>> } = {}) {
+function provider(bookings: SquareBooking[] = [booking], overrides: { ledgerRows?: Reservation[]; customers?: () => Promise<Map<string, { name: string; phone: string | null }>> } = {}) {
   const arrivals = new Map<string, string>();
   const ledgerCalls: string[] = [];
   const ledger = {
-    list: () => {
+    list: ({ status }: { status?: string }) => {
       ledgerCalls.push("list");
-      return Promise.resolve([ledgerRow]);
+      return Promise.resolve((overrides.ledgerRows ?? [ledgerRow]).filter((r) => !status || r.status === status));
     },
     get: () => Promise.resolve(ledgerRow),
     createIfFree: (input: NewReservation) => {
@@ -231,12 +231,70 @@ Deno.test("一覧: Square の予約と表の仮予約を時刻の順に合わせ
   assertEquals((await instance.list({ ...range, status: "cancelled" })).map((r) => r.id), ["square:b2"]);
 });
 
-Deno.test("一覧: 表は仮予約だけを合わせる（確定は Square の本物と二重になる）", async () => {
+const approved: Reservation = { ...ledgerRow, id: "approved", status: "confirmed", source: "ai", starts_at: "2026-11-02T05:00:00.000Z", ends_at: "2026-11-02T06:00:00.000Z" };
+
+Deno.test("一覧: キャンセルの絞り込みでは表を読まない", async () => {
   const { instance, ledgerCalls } = provider([]);
-  assertEquals((await instance.list({ ...range, status: "confirmed" })).length, 0);
+  assertEquals(await instance.list({ ...range, status: "cancelled" }), []);
   assertEquals(ledgerCalls, []);
   assertEquals((await instance.list({ ...range, status: "pending" })).map((r) => r.id), [ledgerRow.id]);
   assertEquals(ledgerCalls, ["list"]);
+});
+
+Deno.test("一覧: 承認した AI の予約は、同じ開始時刻の Square の予約がないあいだ残す", async () => {
+  const other = { ...booking, start_at: "2026-11-02T08:00:00Z" };
+  const { instance } = provider([other], { ledgerRows: [approved] });
+  const rows = await instance.list(range);
+  assertEquals(rows.map((r) => r.id), ["approved", "square:b1"]);
+  assertEquals(rows[0].read_only, false);
+  assertEquals(rows[0].source, "ai");
+  assertEquals((await instance.list({ ...range, status: "confirmed" })).map((r) => r.id), ["approved", "square:b1"]);
+});
+
+Deno.test("一覧: 本物が読めたら承認した予約を二重に出さない。時刻の書き方が違っても同じ時刻として比べる", async () => {
+  const real = { ...booking, start_at: "2026-11-02T14:00:00+09:00" };
+  const { instance } = provider([real], { ledgerRows: [approved] });
+  assertEquals((await instance.list(range)).map((r) => r.id), ["square:b1"]);
+});
+
+Deno.test("一覧: Square でキャンセルされた本物があれば、承認した予約を戻さない", async () => {
+  const cancelled = { ...booking, start_at: "2026-11-02T05:00:00Z", status: "CANCELLED_BY_SELLER" };
+  const { instance } = provider([cancelled], { ledgerRows: [approved] });
+  assertEquals(await instance.list(range), []);
+});
+
+Deno.test("一覧: 表のアプリの確定は残さない（予約先を切り替える前の行）", async () => {
+  const { instance } = provider([], { ledgerRows: [{ ...approved, source: "app" }] });
+  assertEquals(await instance.list(range), []);
+});
+
+Deno.test("重なりの判定: 承認した AI の予約とも重なる", async () => {
+  const { instance, ledgerCalls } = provider([], { ledgerRows: [approved] });
+  const input: NewReservation = {
+    customer_name: "田中",
+    customer_phone: null,
+    service_name: null,
+    starts_at: "2026-11-02T05:30:00.000Z",
+    ends_at: "2026-11-02T06:30:00.000Z",
+    note: null,
+    status: "pending",
+    source: "ai",
+    visit_id: null,
+  };
+  await assertProviderError(() => instance.createIfFree(input), 409, "reservation_overlap");
+  assertEquals(ledgerCalls, ["list"]);
+});
+
+Deno.test("表の予約の変更に、見ていた時刻を渡す", async () => {
+  const seen: unknown[] = [];
+  const { instance } = provider();
+  const ledger = (instance as unknown as { deps: { ledger: { update: unknown } } }).deps.ledger;
+  ledger.update = (_: string, __: unknown, expected: unknown) => {
+    seen.push(expected);
+    return Promise.resolve(write);
+  };
+  await instance.update(ledgerRow.id, { note: "x" }, { starts_at: range.from });
+  assertEquals(seen, [{ starts_at: range.from }]);
 });
 
 Deno.test("一覧: 期間と重ならない予約は返さない", async () => {

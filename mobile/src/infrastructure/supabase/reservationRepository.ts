@@ -23,12 +23,16 @@ export const supabaseReservationRepository: ReservationRepository = {
     const { reservation } = await callFunction<{ reservation: Row }>(itemPath(id), 'GET');
     return toReservation(reservation);
   },
-  async create(input) {
-    const { reservation } = await callFunction<{ reservation: Row }>('reservations', 'POST', input);
+  async create(input, idempotencyKey) {
+    const body = idempotencyKey ? { ...input, idempotency_key: idempotencyKey } : input;
+    const { reservation } = await callFunction<{ reservation: Row }>('reservations', 'POST', body);
     return toReservation(reservation);
   },
-  async update(id, patch) {
-    const { reservation } = await callFunction<{ reservation: Row }>(itemPath(id), 'PATCH', patch);
+  async update(id, patch, expected) {
+    const body = expected
+      ? { ...patch, expected_starts_at: expected.starts_at, expected_ends_at: expected.ends_at }
+      : patch;
+    const { reservation } = await callFunction<{ reservation: Row }>(itemPath(id), 'PATCH', body);
     return toReservation(reservation);
   },
   async approve(id) {

@@ -4,10 +4,11 @@ import { Alert, KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from 
 
 import { QrScan } from '../components/icons';
 import { Screen } from '../components/Screen';
-import { PrimaryButton, TextField, TintButton } from '../components/ui';
+import { PrimaryButton, TextButton, TextField, TintButton } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { repositories } from '../lib/container';
 import { errorMessage } from '../lib/errors';
+import { logout } from '../lib/logout';
 import { colors, radius } from '../theme';
 
 // 初回: お店を作るか、招待されたお店に参加する
@@ -48,6 +49,7 @@ export default function GroupSetupScreen() {
             </Text>
             <TintButton label="QR コードを読み取る" icon={<QrScan />} onPress={() => router.push('/scan')} />
           </View>
+          <TextButton label="ログアウト" onPress={() => logout()} />
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>

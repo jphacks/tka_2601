@@ -1,6 +1,14 @@
 // deno test supabase/functions/_shared/
 import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1.0.19";
-import { parseNewReservation, parseRange, parseReservationPatch, ProviderError } from "./reservation.ts";
+import {
+  checkExpectedVersion,
+  parseExpectedVersion,
+  parseIdempotencyKey,
+  parseNewReservation,
+  parseRange,
+  parseReservationPatch,
+  ProviderError,
+} from "./reservation.ts";
 import { reservationNotice, reservationTime } from "./reservation_notice.ts";
 import { decryptToken, encryptToken } from "./token_crypto.ts";
 
@@ -99,4 +107,30 @@ Deno.test("更新トークンは暗号化して元に戻せ、鍵が違えば読
   assertEquals(await decryptToken(encrypted, key), "refresh-token");
   await assertRejects(() => decryptToken(encrypted, other));
   await assertRejects(() => encryptToken("x", btoa("short")));
+});
+
+Deno.test("冪等キーは英数字とハイフンの 8〜64 字", () => {
+  assertEquals(parseIdempotencyKey({}), null);
+  assertEquals(parseIdempotencyKey({ idempotency_key: null }), null);
+  assertEquals(parseIdempotencyKey({ idempotency_key: "Key-1234" }), "Key-1234");
+  assertEquals(parseIdempotencyKey({ idempotency_key: "a".repeat(64) }), "a".repeat(64));
+  for (const value of ["short-1", "a".repeat(65), "has space1", "key_12345", "予約のキー12345", 12345678]) {
+    assertEquals(assertThrows(() => parseIdempotencyKey({ idempotency_key: value }), ProviderError).status, 400);
+  }
+});
+
+Deno.test("見ていた時刻を読み、今の予約と比べる", () => {
+  assertEquals(parseExpectedVersion({ note: "x" }), undefined);
+  assertEquals(parseExpectedVersion({ expected_starts_at: "2026-11-02T14:00:00+09:00", expected_ends_at: "2026-11-02T06:00:00Z" }), {
+    starts_at: "2026-11-02T05:00:00.000Z",
+    ends_at: "2026-11-02T06:00:00.000Z",
+  });
+  assertThrows(() => parseExpectedVersion({ expected_starts_at: "明日" }), ProviderError);
+
+  const current = { starts_at: "2026-11-02T05:00:00Z", ends_at: "2026-11-02T06:00:00.000Z" };
+  checkExpectedVersion(current, undefined);
+  checkExpectedVersion(current, { starts_at: "2026-11-02T05:00:00.000Z" });
+  checkExpectedVersion(current, { starts_at: "2026-11-02T05:00:00.000Z", ends_at: "2026-11-02T06:00:00.000Z" });
+  const error = assertThrows(() => checkExpectedVersion(current, { ends_at: "2026-11-02T07:00:00.000Z" }), ProviderError);
+  assertEquals([error.status, error.code], [409, "reservation_changed"]);
 });

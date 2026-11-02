@@ -76,6 +76,38 @@ npx expo run:ios
 npx eas-cli@latest build --profile development-simulator --platform ios
 ```
 
+## TestFlight まで
+
+配布は `production` のプロファイルで行う。チームは 93LJ9T3CBB、バンドル ID は `com.atsushihosaka.monban` である。
+
+ビルドの前に次を済ませる。
+
+1. クラウドの Supabase に、このアプリが使うマイグレーションと Edge Function を適用する（`supabase/README.md`）。アカウントの削除は `DELETE functions/v1/account`、予約の二重防止は `POST /reservations` の `idempotency_key` と `PATCH` の `expected_starts_at`、`expected_ends_at` を使うので、これらが入っている必要がある。
+2. EAS の `production` 環境に、`EXPO_PUBLIC_SUPABASE_URL` と `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を入れる。`.env` は Git の対象外で EAS へ上がらない。
+3. 下の「外部の設定」の Supabase の Auth と Apple Developer の項目を済ませる。
+4. App Store Connect でアプリを作る。外部テストをするなら、プライバシーポリシーの URL、ベータ版の説明、審査用のアカウントも用意する。内部テストには審査がない。
+
+```bash
+npx eas-cli@latest build --platform ios --profile production
+```
+
+```bash
+npx eas-cli@latest submit --platform ios --profile production --latest
+```
+
+`eas.json` の `submit.production` に `ascAppId` がないので、提出のときに聞かれる。CI で動かすなら App Store Connect のアプリの ID を入れる。
+
+審査で見られる点は次のとおり実装している。
+
+| 項目 | 実装 |
+|---|---|
+| アカウントの削除（5.1.1(v)） | 設定タブの「アカウントを削除」 |
+| Sign in with Apple（4.8） | ログイン画面 |
+| 権限の文言 | カメラは招待の QR コードの読み取りだけに使う。マイクの権限は持たない |
+| 暗号の申告 | `ITSAppUsesNonExemptEncryption` は false |
+
+通知の受信は TestFlight のビルドで確かめる。シミュレーターでは本番の APNs に届かない。
+
 ## 外部の設定
 
 | 対象 | 設定 |

@@ -58,7 +58,6 @@ export default function NotificationsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const page = useRef(0);
   const loadingMore = useRef(false);
   // 読み直しの回数。読み直す前に始めた続きの読み込みの結果を捨てる
   const generation = useRef(0);
@@ -70,10 +69,9 @@ export default function NotificationsScreen() {
       // 未読の印は開いた時点の位置で出し、読んだ位置は先へ進める
       const [previous, first] = await Promise.all([
         repositories.notifications.getReadThrough(userId),
-        repositories.notifications.list(household.id, 0),
+        repositories.notifications.list(household.id),
       ]);
       if (current !== generation.current) return;
-      page.current = 0;
       setReadThrough(previous);
       setRows(first);
       setHasMore(first.length === NOTIFICATIONS_PAGE_SIZE);
@@ -103,13 +101,13 @@ export default function NotificationsScreen() {
   }
 
   async function loadMore() {
-    if (!hasMore || loadingMore.current || !rows) return;
+    const last = rows?.[rows.length - 1];
+    if (!hasMore || loadingMore.current || !last) return;
     loadingMore.current = true;
     const started = generation.current;
     try {
-      const next = await repositories.notifications.list(household.id, page.current + 1);
+      const next = await repositories.notifications.list(household.id, { at: last.created_at, id: last.id });
       if (started !== generation.current) return;
-      page.current += 1;
       setRows((current) => appendUnique(current ?? [], next));
       setHasMore(next.length === NOTIFICATIONS_PAGE_SIZE);
     } catch (e) {

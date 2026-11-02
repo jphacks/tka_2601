@@ -1,4 +1,5 @@
 // どの実装を使うかを決める唯一の場所。画面と hooks はここからリポジトリを受け取る
+import { supabaseAccountRepository } from '../infrastructure/supabase/accountRepository';
 import { supabaseAssistantRepository } from '../infrastructure/supabase/assistantRepository';
 import { supabaseDeviceRepository } from '../infrastructure/supabase/deviceRepository';
 import { supabaseGroupRepository } from '../infrastructure/supabase/groupRepository';
@@ -20,4 +21,5 @@ export const repositories: Repositories = {
   assistant: supabaseAssistantRepository,
   groups: supabaseGroupRepository,
   pushTokens: supabasePushTokenRepository,
+  account: supabaseAccountRepository,
 };

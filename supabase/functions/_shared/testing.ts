@@ -1,5 +1,5 @@
 // 試験で使う共通の部品（Deno のユニット試験だけが読む）
-import type { CalendarConnection, CalendarStore, OAuthPending, OAuthState } from "./calendar_store.ts";
+import type { CalendarConnection, CalendarStore, OAuthPending, OAuthState, OwnWrite } from "./calendar_store.ts";
 import type { ProviderKind } from "./reservation.ts";
 import type { SquareConnection } from "./square.ts";
 
@@ -28,14 +28,22 @@ function requireColumns(table: string, row: Record<string, unknown>, columns: st
 }
 
 export function memoryStore(
-  options: { connection?: CalendarConnection | null; square?: SquareConnection | null; provider?: ProviderKind; own?: string[] } = {},
+  options: {
+    connection?: CalendarConnection | null;
+    square?: SquareConnection | null;
+    provider?: ProviderKind;
+    own?: OwnWrite[];
+    leased?: boolean;
+  } = {},
 ) {
   const state = {
     connection: options.connection ?? null,
     provider: options.provider ?? ("monban" as ProviderKind),
     states: new Map<string, OAuthState>(),
     pending: new Map<string, OAuthPending>(),
-    own: new Set(options.own ?? []),
+    own: [...(options.own ?? [])],
+    leased: options.leased ?? false,
+    leaseReleases: 0,
     saved: [] as Partial<CalendarConnection>[],
     square: options.square ?? null,
     squareSaved: [] as Partial<SquareConnection>[],
@@ -81,11 +89,27 @@ export function memoryStore(
       state.provider = kind;
       return Promise.resolve();
     },
-    recordOwnWrite(_, eventId, etag) {
-      state.own.add(`${eventId}:${etag}`);
+    recordOwnWrite(_, writeId, eventId) {
+      state.own.push({ write_id: writeId, event_id: eventId });
       return Promise.resolve();
     },
-    ownEtags: () => Promise.resolve(state.own),
+    ownWrites(_, writeIds, eventIds) {
+      return Promise.resolve(state.own.filter((row) => writeIds.includes(row.write_id) || eventIds.includes(row.event_id ?? "")));
+    },
+    consumeOwnWrites(_, writeIds) {
+      state.own = state.own.filter((row) => !writeIds.includes(row.write_id));
+      return Promise.resolve();
+    },
+    acquireSyncLease() {
+      if (state.leased) return Promise.resolve(false);
+      state.leased = true;
+      return Promise.resolve(true);
+    },
+    releaseSyncLease() {
+      state.leased = false;
+      state.leaseReleases++;
+      return Promise.resolve();
+    },
     activeConnections: () => Promise.resolve(state.connection ? [state.connection] : []),
     getSquareConnection: () => Promise.resolve(state.square),
     squareConnectionByMerchant: (merchantId) => Promise.resolve(state.square?.merchant_id === merchantId ? state.square : null),

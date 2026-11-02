@@ -1,12 +1,12 @@
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NavBar, Screen } from '../../components/Screen';
 import { Card, Chip, ChipGroup, GroupHeader, NavTextButton, Separator, Stepper } from '../../components/ui';
-import { type ReservationInput, startOfDayDate } from '../../domain/reservation';
+import { newIdempotencyKey, type ReservationInput, startOfDayDate } from '../../domain/reservation';
 import type { ShopService } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
 import { repositories } from '../../lib/container';
@@ -51,6 +51,8 @@ export default function ReservationEditScreen() {
   const [duration, setDuration] = useState(params.duration ? Number(params.duration) : DEFAULT_DURATION);
   const [note, setNote] = useState(params.note ?? '');
   const [saving, setSaving] = useState(false);
+  // 画面ごとに1つ。保存を押し直しても二重に作らない
+  const idempotencyKey = useRef(newIdempotencyKey());
 
   useEffect(() => {
     repositories.shop
@@ -116,7 +118,7 @@ export default function ReservationEditScreen() {
     setSaving(true);
     try {
       if (params.id) await repositories.reservations.update(params.id, input);
-      else await repositories.reservations.create(input);
+      else await repositories.reservations.create(input, idempotencyKey.current);
       router.back();
     } catch (e) {
       Alert.alert('保存できませんでした', errorMessage(e) ?? '');

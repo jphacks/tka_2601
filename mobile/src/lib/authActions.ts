@@ -2,6 +2,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 
+import { repositories } from './container';
 import { Cancelled, hasErrorCode } from './errors';
 import { unregisterPushToken } from './push';
 import { requireSupabase } from '../infrastructure/supabase/client';
@@ -89,5 +90,12 @@ export async function signOut({ keepPushToken = false }: { keepPushToken?: boole
     }
   }
   const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+
+// アカウントを消して、この端末のセッションも消す。サーバーのセッションは残っていないので local だけでよい
+export async function deleteAccount(): Promise<void> {
+  await repositories.account.remove();
+  const { error } = await requireSupabase().auth.signOut({ scope: 'local' });
   if (error) throw error;
 }

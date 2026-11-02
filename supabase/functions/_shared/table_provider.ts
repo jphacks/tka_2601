@@ -1,7 +1,10 @@
 // MONBAN の予約帳。予約先が monban か hotpepper の店は reservations 表を読み書きする
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.118.0";
 import {
+  changedError,
+  checkExpectedVersion,
   checkPatchedOrder,
+  type ExpectedVersion,
   type NewReservation,
   ProviderError,
   type Reservation,
@@ -85,8 +88,22 @@ export class TableProvider implements ReservationProvider {
       .insert({ ...input, household_id: this.householdId })
       .select(COLUMNS)
       .single();
-    if (error) throw error;
+    if (error) {
+      // 同じ冪等キーで作り終えていた
+      if (error.code === "23505" && input.idempotency_key) return await this.existing(input.idempotency_key);
+      throw error;
+    }
     return toWrite(data as unknown as Row);
+  }
+
+  private async existing(idempotencyKey: string): Promise<ReservationWrite> {
+    const { data, error } = await this.admin.from("reservations").select(COLUMNS)
+      .eq("household_id", this.householdId)
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new ProviderError(404, "予約が見つかりません");
+    return { ...toWrite(data as unknown as Row), existed: true };
   }
 
   // 同じ店の予約を1つずつ処理する関数で、重なりを確かめてから作る
@@ -112,23 +129,32 @@ export class TableProvider implements ReservationProvider {
   }
 
   // 読んでから書くまでに状態が変わっていたら書かない。そのときは null を返す
-  private async write(id: string, values: Record<string, unknown>, expected: StatusFilter): Promise<ReservationWrite | null> {
+  private async write(
+    id: string,
+    values: Record<string, unknown>,
+    expected: StatusFilter,
+    times: Pick<Row, "starts_at" | "ends_at"> | null = null,
+  ): Promise<ReservationWrite | null> {
     let query = this.admin.from("reservations").update(values)
       .eq("household_id", this.householdId)
       .eq("id", id);
     query = expected === "pending" ? query.eq("status", "pending") : query.neq("status", "cancelled");
+    if (times) query = query.eq("starts_at", times.starts_at).eq("ends_at", times.ends_at);
     const { data, error } = await query.select(COLUMNS).maybeSingle();
     if (error) throw error;
     return data ? toWrite(data as unknown as Row) : null;
   }
 
-  async update(id: string, patch: ReservationPatch): Promise<ReservationWrite> {
+  async update(id: string, patch: ReservationPatch, expected?: ExpectedVersion): Promise<ReservationWrite> {
     const current = await this.requireRow(id);
     if (current.status === "cancelled") throw new ProviderError(409, "キャンセルした予約は変更できません");
+    checkExpectedVersion(toReservation(current), expected);
     checkPatchedOrder(toReservation(current), patch);
-    const written = await this.write(id, patch, "active");
-    if (!written) throw new ProviderError(409, "キャンセルした予約は変更できません");
-    return written;
+    const written = await this.write(id, patch, "active", expected ? current : null);
+    if (written) return written;
+    // 読んでから書くまでに、別の操作が先に変えた
+    if (expected && (await this.requireRow(id)).status !== "cancelled") throw changedError();
+    throw new ProviderError(409, "キャンセルした予約は変更できません");
   }
 
   async approve(id: string): Promise<ReservationWrite> {

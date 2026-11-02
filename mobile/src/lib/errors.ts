@@ -29,6 +29,7 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   assistant_unavailable: '今は入力を読み取れません。',
   oauth_code_invalid: 'ログインの手続きが無効です。もう一度ログインしてください。',
   oauth_user_mismatch: 'ログインを始めた人のアカウントで操作してください。',
+  reservation_changed: '予約が変更されています。',
   provider_read_only: 'Square の予約は Square で変更してください。',
   square_not_configured: 'Square の接続が設定されていません',
   square_not_connected: 'Square の接続が済んでいません。',

@@ -72,6 +72,13 @@ export function isSameDay(a: Date, b: Date): boolean {
 
 export type DateRange = { from: Date; to: Date };
 
+export type ReservationTime = { starts_at: string; ends_at: string };
+
+// 送り直しを見分けるための値。秘密ではないので暗号の乱数は要らない
+export function newIdempotencyKey(): string {
+  return 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g, () => Math.floor(Math.random() * 16).toString(16));
+}
+
 export function dayRange(date: Date): DateRange {
   const from = startOfDayDate(date);
   return { from, to: addDays(from, 1) };
@@ -156,6 +163,20 @@ export function canRecordArrival(reservation: Reservation, now: Date): boolean {
 }
 
 // カレンダーのライブラリは 0:00〜0:00 の予定を終日として本文から外すので、終わりを 1 分前にして渡す
+// 日と週の表示に渡す、日ごとの区間。表示する期間の分だけ作る。
+// ライブラリは日をまたぐ予定の中日を出さず、00:00〜00:00 を終日として隠すので、
+// 1日の終わりは 23:59 で切る
+export function dailySegments(start: Date, end: Date, range: DateRange): { start: Date; end: Date }[] {
+  const to = end < range.to ? end : range.to;
+  const segments: { start: Date; end: Date }[] = [];
+  for (let cursor = start > range.from ? start : range.from; cursor < to; ) {
+    const nextDay = addDays(startOfDayDate(cursor), 1);
+    segments.push({ start: cursor, end: to < nextDay ? to : new Date(nextDay.getTime() - 60_000) });
+    cursor = nextDay;
+  }
+  return segments;
+}
+
 export function calendarEnd(start: Date, end: Date): Date {
   const atMidnight = (date: Date) => date.getHours() === 0 && date.getMinutes() === 0;
   return atMidnight(start) && atMidnight(end) ? new Date(end.getTime() - 60_000) : end;

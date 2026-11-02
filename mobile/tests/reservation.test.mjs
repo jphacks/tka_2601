@@ -15,7 +15,10 @@ import {
   reservationsByDay,
   reservationSections,
   weekRange,
+  dailySegments,
+  newIdempotencyKey,
 } from '../src/domain/reservation.ts';
+import { keysetFilter } from '../src/domain/collections.ts';
 import { appendUnique } from '../src/domain/collections.ts';
 import { applyDayHours, isClosedOn, normalizeBusinessHours, visibleHours } from '../src/domain/shop.ts';
 import { endClockLabel } from '../src/lib/format.ts';
@@ -195,4 +198,46 @@ test('the end label shows when it falls on the next day', () => {
 test('pages never repeat a row', () => {
   const merged = appendUnique([{ id: 'a' }, { id: 'b' }], [{ id: 'b' }, { id: 'c' }]);
   assert.deepEqual(merged.map((row) => row.id), ['a', 'b', 'c']);
+});
+
+test('reservations are split into one segment per visible day', () => {
+  const start = new Date(2026, 10, 2, 22);
+  const end = new Date(2026, 10, 6, 2);
+  const range = { from: new Date(2026, 10, 1), to: new Date(2026, 10, 8) };
+  const segments = dailySegments(start, end, range);
+  assert.equal(segments.length, 5);
+  assert.deepEqual(segments[0], { start, end: new Date(2026, 10, 2, 23, 59) });
+  // 中日は 1 日分で、終日として隠されない
+  assert.deepEqual(segments[1], { start: new Date(2026, 10, 3), end: new Date(2026, 10, 3, 23, 59) });
+  assert.deepEqual(segments[4], { start: new Date(2026, 10, 6), end });
+});
+
+test('segments stay inside the visible range and leave a same-day reservation alone', () => {
+  const start = new Date(2026, 10, 2, 22);
+  const end = new Date(2026, 10, 30, 2);
+  const range = { from: new Date(2026, 10, 8), to: new Date(2026, 10, 9) };
+  assert.deepEqual(dailySegments(start, end, range), [{ start: range.from, end: new Date(2026, 10, 8, 23, 59) }]);
+  const sameDay = { start: new Date(2026, 10, 8, 10), end: new Date(2026, 10, 8, 11) };
+  assert.deepEqual(dailySegments(sameDay.start, sameDay.end, range), [sameDay]);
+  assert.deepEqual(dailySegments(new Date(2026, 10, 9, 10), new Date(2026, 10, 9, 11), range), []);
+});
+
+test('a fully covered day and a reservation ending at midnight do not create an empty day', () => {
+  const range = { from: new Date(2026, 10, 1), to: new Date(2026, 10, 8) };
+  assert.deepEqual(dailySegments(new Date(2026, 10, 2), new Date(2026, 10, 3), range), [
+    { start: new Date(2026, 10, 2), end: new Date(2026, 10, 2, 23, 59) },
+  ]);
+});
+
+test('idempotency keys look like uuids and differ', () => {
+  const key = newIdempotencyKey();
+  assert.match(key, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.notEqual(key, newIdempotencyKey());
+});
+
+test('the keyset filter selects rows after the cursor, breaking ties by id', () => {
+  assert.equal(
+    keysetFilter('created_at', { at: '2026-11-02T09:00:00.123+00:00', id: 'abc' }),
+    'created_at.lt."2026-11-02T09:00:00.123+00:00",and(created_at.eq."2026-11-02T09:00:00.123+00:00",id.lt.abc)',
+  );
 });

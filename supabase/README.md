@@ -16,11 +16,13 @@
 | `migrations/20261017072020_push_retry.sql` | 通知の送信待ちと、pg_cron による再送 |
 | `migrations/20261017073719_extra_instructions_limit.sql` | AI への追加の指示を 350 字までにする |
 | `migrations/20261102000000_shop_reservations.sql` | 店舗の設定とメニュー、予約帳、Google カレンダーの接続、通知の種類と記録、本体の死活通信、pg_cron の追加 |
+| `migrations/20261102000001_review_followups.sql` | 予約の冪等キー、Google への書き込みの記録を書き込み id に替える変更、差分の読み取りの権利、アカウントの削除で使う通知の送り先の片付け |
 | `functions/device/` | 本体と中継が来客と予約を書き、設定を読むための Edge Function |
 | `functions/push/` | 来客の通知を作って端末に送り、送信待ちを再送する Edge Function |
 | `functions/reservations/` | アプリが予約と予約先を読み書きし、Google カレンダーと Square に接続する Edge Function。Square の Webhook も受ける |
 | `functions/calendar-sync/` | pg_cron が1分ごとに呼び、Google カレンダーの差分を読んで通知する Edge Function |
 | `functions/assistant/` | 自然言語の入力を変更の案にする Edge Function。書き込みはしない |
+| `functions/account/` | アカウントを削除する Edge Function（`docs/reservations.md` 3.3） |
 | `functions/device/contract.ts` | 本体と中継（ボイスエージェント）に渡す形。仕様が変わったらここを直す |
 | `functions/_shared/assistant/` | 解析器の入口（`IntentParser`）、Ollama の実装、解析結果を案に変換する処理 |
 | `functions/_shared/` | 予約先の共通の入口と実装（予約帳、Google カレンダー、Square）、通知の配信、Expo への送信、更新トークンの暗号化 |
@@ -251,11 +253,11 @@ deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_
 
 | 試験 | 実行 | 内容 |
 |---|---|---|
-| pgTAP（199 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送、店舗の設定とメニューの権限、予約帳と接続（Square を含む）を直接読めないこと、通知のオンオフと操作した本人の除外、接続切れ、差分を読む呼び出し |
-| 結合（130 件） | `deno run --allow-read --allow-run --allow-net --allow-env supabase/tests/e2e_local.ts` | Data API での H1 と H3b、device での H2 と H4（同時の作成を含む）、グループの作成から招待での参加まで、ペアリング、設定、Webhook から Expo までと通知の文面、pg_cron の再送、予約帳の操作と通知、AI の仮予約と重なりの拒否、予約先の切り替え、Square の未設定と未接続、assistant の認証と入力の検証と「書き込まない」こと |
-| Edge Function（170 件） | `deno test --allow-env supabase/functions/` | 通知の条件と文面、Expo の試し直し、予定と予約の変換、差分の分類とまとめ通知、410 の扱い、自分の書き込みの除外、OAuth、更新トークンの暗号化、予約先の振り分け、device の経路、Square（状態の対応、ページングと期間の分割、顧客とメニュー、読み取り専用、合流、署名、Webhook、トークンの更新）、自然言語の入力（案への変換、文との突き合わせ、Ollama の成功と失敗、未設定の 503） |
+| pgTAP（213 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送、店舗の設定とメニューの権限、予約帳と接続（Square を含む）を直接読めないこと、通知のオンオフと操作した本人の除外、接続切れ、差分を読む呼び出し |
+| 結合（154 件） | `deno run --allow-read --allow-run --allow-net --allow-env supabase/tests/e2e_local.ts` | Data API での H1 と H3b、device での H2 と H4（同時の作成を含む）、グループの作成から招待での参加まで、ペアリング、設定、Webhook から Expo までと通知の文面、pg_cron の再送、予約帳の操作と通知、AI の仮予約と重なりの拒否、予約先の切り替え、Square の未設定と未接続、assistant の認証と入力の検証と「書き込まない」こと |
+| Edge Function（210 件） | `deno test --allow-env supabase/functions/` | 通知の条件と文面、Expo の試し直し、予定と予約の変換、差分の分類とまとめ通知、410 の扱い、自分の書き込みの除外、OAuth、更新トークンの暗号化、予約先の振り分け、device の経路、Square（状態の対応、ページングと期間の分割、顧客とメニュー、読み取り専用、合流、署名、Webhook、トークンの更新）、自然言語の入力（案への変換、文との突き合わせ、Ollama の成功と失敗、未設定の 503） |
 
-結合試験は、シードを入れたローカルで流す。Expo には実在しないトークンで送るため、Expo から `DeviceNotRegistered` の ticket が返れば正しい。マイグレーションを変えたら `supabase db advisors --local` も通す。
+結合試験は、シードを入れたローカルで流す。Expo には実在しないトークンで送るため、Expo から `DeviceNotRegistered` の ticket が返れば正しい。シミュレーターなどが本物のトークンを登録していれば、その端末にも試験の通知が届く。デモデータ（`scripts/seed_demo.ts`）が入っていても壊さず、試験で作った行だけを片付ける。マイグレーションを変えたら `supabase db advisors --local` も通す。
 
 実際の Google カレンダーとの通信は、OAuth クライアントが要るためどの試験も通らない。Google の応答はユニット試験の偽物で確かめている。
 
