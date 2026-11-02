@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { QrCode } from '../../components/QrCode';
@@ -26,6 +26,11 @@ export default function InviteScreen() {
   async function share() {
     if (!link) return;
     try {
+      if (Platform.OS === 'web') {
+        await navigator.clipboard.writeText(link);
+        Alert.alert('招待リンクをコピーしました');
+        return;
+      }
       await Share.share({ message: link });
     } catch (e) {
       Alert.alert('送れませんでした', errorMessage(e) ?? '');
@@ -55,7 +60,7 @@ export default function InviteScreen() {
           <Text style={styles.sectionTitle} accessibilityRole="header">
             離れているメンバーには
           </Text>
-          <PrimaryButton label="招待リンクを送る" disabled={!link} onPress={share} />
+          <PrimaryButton label={Platform.OS === 'web' ? '招待リンクをコピーする' : '招待リンクを送る'} disabled={!link} onPress={share} />
         </View>
       </ScrollView>
     </Screen>

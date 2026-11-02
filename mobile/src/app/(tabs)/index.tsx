@@ -1,6 +1,5 @@
-import SegmentedControlClass, { type SegmentedControlProps } from '@react-native-segmented-control/segmented-control';
 import { router, useFocusEffect } from 'expo-router';
-import { type ComponentType, useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-screens/experimental';
 
@@ -10,6 +9,7 @@ import { ChevronLeft, ChevronRight } from '../../components/icons';
 import { type CalendarMode, monthCalendarHeight, ReservationCalendar } from '../../components/ReservationCalendar';
 import { ReservationRow } from '../../components/ReservationRow';
 import { Screen } from '../../components/Screen';
+import { SegmentedControl } from '../../components/SegmentedControl';
 import { Card, CenterMessage, IntentBadge, LargeTitle, PrimaryButton, Separator, SoftButton } from '../../components/ui';
 import {
   addDays,
@@ -41,9 +41,6 @@ import { dateTimeRange, hourMinute, monthDay, sectionTitle } from '../../lib/for
 import { approveDialogTitle } from '../../lib/labels';
 import { SYMBOLS } from '../../lib/symbols';
 import { colors, radius } from '../../theme';
-
-// ライブラリの型は今の React Native の型と合わず、JSX に使えない
-const SegmentedControl = SegmentedControlClass as unknown as ComponentType<SegmentedControlProps>;
 
 type ViewMode = 'list' | CalendarMode;
 
@@ -379,7 +376,7 @@ export default function ReservationsScreen() {
       <SegmentedControl
         values={VIEW_LABELS}
         selectedIndex={VIEW_ORDER.indexOf(view)}
-        onChange={(event) => changeView(VIEW_ORDER[event.nativeEvent.selectedSegmentIndex])}
+        onSelect={(index) => changeView(VIEW_ORDER[index])}
         style={styles.segmented}
       />
 
