@@ -84,6 +84,50 @@ Deno.test("変更は変えた項目だけを送り、電話番号を消すとき
   assertEquals(patchToEvent(current, { service_name: "ケア" }).summary, "田中様 ケア");
 });
 
+Deno.test("410 は消された予定と syncToken の失効を区別する", async () => {
+  const deleted = setup(() => Response.json({ error: { errors: [{ reason: "deleted" }] } }, { status: 410 }));
+  assertEquals(await deleted.provider.get("gone"), null);
+  await assertRejects(() => deleted.provider.update("gone", { note: "x" }), ProviderError);
+
+  const expired = fakeGoogle(() => Response.json({ error: { errors: [{ reason: "fullSyncRequired" }] } }, { status: 410 }));
+  await assertRejects(() => new GoogleClient(oauth, "refresh", expired.fetch).changes("cal", "t"), GoogleSyncExpired);
+});
+
+Deno.test("レート制限の 403 だけを一時的な失敗として扱う", () => {
+  assertEquals(new GoogleApiError("x", 403, "rateLimitExceeded").transient, true);
+  assertEquals(new GoogleApiError("x", 403, "userRateLimitExceeded").transient, true);
+  assertEquals(new GoogleApiError("x", 403, "forbidden").transient, false);
+  assertEquals(new GoogleApiError("x", 403).transient, false);
+});
+
+Deno.test("AI の仮予約は予定と重なれば作らず、空いていれば仮の予定を作る", async () => {
+  const input = {
+    customer_name: "田中",
+    customer_phone: null,
+    service_name: null,
+    starts_at: "2026-11-02T05:00:00.000Z",
+    ends_at: "2026-11-02T06:00:00.000Z",
+    note: null,
+    status: "pending" as const,
+    source: "ai" as const,
+    visit_id: null,
+  };
+  const busy = setup(() => Response.json({ items: [{ id: "a", status: "confirmed", summary: "A", ...timed }] }));
+  await assertRejects(
+    () => busy.provider.createIfFree(input),
+    ProviderError,
+    "その時間にはすでに予約があります",
+  );
+  assertEquals(busy.google.calls.some((c) => c.init.method === "POST" && c.url.pathname.includes("/events")), false);
+
+  const free = setup((_, init) =>
+    init.method === "POST"
+      ? Response.json({ id: "new", etag: '"1"', status: "tentative", summary: "田中様", ...timed })
+      : Response.json({ items: [] })
+  );
+  assertEquals((await free.provider.createIfFree(input)).reservation.status, "pending");
+});
+
 Deno.test("一覧は singleEvents で読み、終日とキャンセルを除き、status で絞り込める", async () => {
   const { provider, google } = setup(() =>
     Response.json({

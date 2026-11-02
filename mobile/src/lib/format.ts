@@ -74,6 +74,13 @@ export function dateTimeRange(startsAt: string, endsAt: string): string {
 }
 
 // 分を 10:00 の形に。0 時から 24 時の間に収める
+// 予約の終了の時刻。翌日に入るときは 翌 0:30 と出す
+export function endClockLabel(minutes: number): string {
+  if (minutes < 24 * 60) return clockLabel(minutes);
+  const rest = minutes - 24 * 60;
+  return `翌 ${Math.floor(rest / 60)}:${pad(rest % 60)}`;
+}
+
 export function clockLabel(minutes: number): string {
   const clamped = Math.min(Math.max(minutes, 0), 24 * 60);
   return `${pad(Math.floor(clamped / 60))}:${pad(clamped % 60)}`;

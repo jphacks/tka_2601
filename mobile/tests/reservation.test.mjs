@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import {
   addDays,
   calendarDayKey,
+  calendarEnd,
+  canRecordArrival,
   customerLabel,
   datesInRange,
   dayRange,
@@ -14,7 +16,9 @@ import {
   reservationSections,
   weekRange,
 } from '../src/domain/reservation.ts';
-import { isClosedOn, normalizeBusinessHours, visibleHours } from '../src/domain/shop.ts';
+import { appendUnique } from '../src/domain/collections.ts';
+import { applyDayHours, isClosedOn, normalizeBusinessHours, visibleHours } from '../src/domain/shop.ts';
+import { endClockLabel } from '../src/lib/format.ts';
 
 function reservation(id, startsAt, status = 'confirmed', extra = {}) {
   const start = new Date(startsAt);
@@ -120,4 +124,75 @@ test('visible hours fall back when every day is closed and stay valid for the ca
   const { firstHour, lastHour } = visibleHours(closed, [new Date(2026, 10, 2)], [lateNight]);
   assert.equal(lastHour <= 23, true);
   assert.equal(firstHour < lastHour, true);
+});
+
+test('visible hours look only at the part of a reservation inside the shown day', () => {
+  const hours = normalizeBusinessHours([]);
+  const overnight = { ...reservation('n', new Date(2026, 10, 2, 22)), ends_at: new Date(2026, 10, 3, 2).toISOString() };
+  // 翌日は前の日から続いているので 0 時から出す
+  assert.deepEqual(visibleHours(hours, [new Date(2026, 10, 3)], [overnight]), { firstHour: 0, lastHour: 19 });
+  // 当日は 22 時から 24 時まで。カレンダーの最後の行は 23 時
+  assert.deepEqual(visibleHours(hours, [new Date(2026, 10, 2)], [overnight]), { firstHour: 10, lastHour: 23 });
+  // 表示する日と重ならない予約は幅に影響しない
+  assert.deepEqual(visibleHours(hours, [new Date(2026, 10, 5)], [overnight]), { firstHour: 10, lastHour: 19 });
+  // ちょうど 0 時に終わる予約は翌日に出ない
+  const untilMidnight = { ...reservation('m', new Date(2026, 10, 2, 22)), ends_at: new Date(2026, 10, 3).toISOString() };
+  assert.deepEqual(visibleHours(hours, [new Date(2026, 10, 3)], [untilMidnight]), { firstHour: 10, lastHour: 19 });
+});
+
+test('empty clock values fall back to the defaults', () => {
+  const [sunday] = normalizeBusinessHours([{ day: 0, closed: true, open: '', close: '' }]);
+  assert.deepEqual(sunday, { day: 0, closed: true, open: '10:00', close: '19:00' });
+});
+
+test('a day change never saves an empty clock and keeps the other days', () => {
+  const saved = [{ day: 3, closed: false, open: '11:00', close: '20:00' }, { day: 1, closed: true, open: '09:00', close: '18:00' }];
+  const merged = applyDayHours(saved, 3, { closed: true, open: null, close: null });
+  assert.equal(merged.length, 7);
+  assert.deepEqual(merged[3], { day: 3, closed: true, open: '11:00', close: '20:00' });
+  assert.deepEqual(merged[1], { day: 1, closed: true, open: '09:00', close: '18:00' });
+  assert.deepEqual(applyDayHours([], 3, { closed: true, open: null, close: null })[3], {
+    day: 3,
+    closed: true,
+    open: '10:00',
+    close: '19:00',
+  });
+  assert.deepEqual(applyDayHours(saved, 3, { closed: false, open: '12:00', close: '' })[3], {
+    day: 3,
+    closed: false,
+    open: '12:00',
+    close: '20:00',
+  });
+});
+
+test('arrival can be recorded only for confirmed reservations of the day', () => {
+  const now = new Date(2026, 10, 2, 13);
+  assert.equal(canRecordArrival(reservation('today', new Date(2026, 10, 2, 14)), now), true);
+  assert.equal(canRecordArrival(reservation('later', new Date(2026, 10, 9, 14)), now), false);
+  assert.equal(canRecordArrival(reservation('past', new Date(2026, 10, 1, 14)), now), false);
+  assert.equal(canRecordArrival(reservation('p', new Date(2026, 10, 2, 14), 'pending'), now), false);
+  assert.equal(
+    canRecordArrival(reservation('a', new Date(2026, 10, 2, 14), 'confirmed', { arrived_at: now.toISOString() }), now),
+    false,
+  );
+});
+
+test('a reservation from midnight to midnight is not treated as all day', () => {
+  const start = new Date(2026, 10, 2);
+  const end = new Date(2026, 10, 3);
+  assert.equal(calendarEnd(start, end).getTime(), end.getTime() - 60_000);
+  const usual = new Date(2026, 10, 2, 15);
+  assert.equal(calendarEnd(new Date(2026, 10, 2, 14), usual), usual);
+  assert.equal(calendarEnd(start, usual), usual);
+});
+
+test('the end label shows when it falls on the next day', () => {
+  assert.equal(endClockLabel(15 * 60 + 30), '15:30');
+  assert.equal(endClockLabel(24 * 60), '翌 0:00');
+  assert.equal(endClockLabel(24 * 60 + 30), '翌 0:30');
+});
+
+test('pages never repeat a row', () => {
+  const merged = appendUnique([{ id: 'a' }, { id: 'b' }], [{ id: 'b' }, { id: 'c' }]);
+  assert.deepEqual(merged.map((row) => row.id), ['a', 'b', 'c']);
 });

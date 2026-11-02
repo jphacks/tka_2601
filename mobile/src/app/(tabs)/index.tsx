@@ -10,6 +10,7 @@ import { Screen } from '../../components/Screen';
 import { Card, CenterMessage, NavTextButton, PrimaryButton, Segmented, Separator } from '../../components/ui';
 import {
   addDays,
+  canRecordArrival,
   customerLabel,
   dayRange,
   isSameDay,
@@ -24,6 +25,7 @@ import {
 import { type BusinessHour, isClosedOn } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
 import { useBadges } from '../../lib/badges';
+import { useLiveRefresh } from '../../lib/liveRefresh';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { hourMinute, monthDay, sectionTitle } from '../../lib/format';
@@ -120,7 +122,7 @@ function NextReservationCard({
   onArrive: () => void;
 }) {
   const startsAt = new Date(reservation.starts_at);
-  // 到着を記録できるのは当日の予約だけ。別の日なら日付も出す
+  // 別の日なら日付も出す
   const isToday = isSameDay(startsAt, new Date());
   return (
     <View style={styles.nextCard}>
@@ -137,7 +139,7 @@ function NextReservationCard({
         <Text style={styles.nextName}>{customerLabel(reservation)}</Text>
         {reservation.service_name ? <Text style={styles.nextService}>{reservation.service_name}</Text> : null}
       </Pressable>
-      {isToday ? <PrimaryButton label="到着を記録" loading={busy} onPress={onArrive} /> : null}
+      {canRecordArrival(reservation, new Date()) ? <PrimaryButton label="到着を記録" loading={busy} onPress={onArrive} /> : null}
     </View>
   );
 }
@@ -185,6 +187,18 @@ export default function ReservationsScreen() {
         .catch(() => undefined);
     }, [household.id, load]),
   );
+
+  // 開いたまま日付が変わっていたら今日へ戻す。日付が変わると上の処理が読み直す
+  const lastDay = useRef(startOfDayDate(new Date()));
+  useLiveRefresh(() => {
+    const today = startOfDayDate(new Date());
+    if (isSameDay(today, lastDay.current)) {
+      load();
+      return;
+    }
+    lastDay.current = today;
+    setDate(today);
+  });
 
   async function refresh() {
     setRefreshing(true);
@@ -244,7 +258,7 @@ export default function ReservationsScreen() {
   return (
     <Screen waves={false}>
       <View style={styles.topBar}>
-        {canCreate ? <NavTextButton label="追加" accessibilityLabel="予約を追加" onPress={() => addReservation()} /> : null}
+        {canCreate ? <NavTextButton label="追加" accessibilityLabel="予約を追加" onPress={() => addReservation(view === 'day' || view === 'week' ? date : undefined)} /> : null}
       </View>
       <Text style={styles.largeTitle} accessibilityRole="header">
         予約

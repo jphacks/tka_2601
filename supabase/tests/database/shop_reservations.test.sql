@@ -3,7 +3,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(53);
+select plan(69);
 
 -- 準備の来客で Webhook が送信待ちに入らないよう、Vault の値をいったん消す（このトランザクションの中だけ）
 delete from vault.secrets where name in ('push_function_url', 'push_webhook_secret');
@@ -73,6 +73,13 @@ select throws_ok(
   '42501', null, 'メンバーは予約帳に直接書けない');
 select throws_ok('select * from public.calendar_connections', '42501', null, 'メンバーは接続（更新トークン）を読めない');
 select throws_ok('select * from public.calendar_oauth_states', '42501', null, 'メンバーは OAuth の state を読めない');
+select throws_ok('select * from public.calendar_oauth_pending', '42501', null, 'メンバーは保留のトークンを読めない');
+select throws_ok(
+  $$select public.reservation_create_if_free('b1000000-0000-4000-8000-000000000001', '偽', null, null, now(), now() + interval '1 hour', null, 'confirmed', 'app')$$,
+  '42501', null, 'メンバーは重なりを確かめて作る関数を呼べない');
+select throws_ok(
+  $$select public.notification_publish('b1000000-0000-4000-8000-000000000001', 'chime', 't', 'b', '{}', 'x')$$,
+  '42501', null, 'メンバーは通知を発行できない');
 select throws_ok('select * from public.calendar_own_writes', '42501', null, 'メンバーは自分の書き込みの記録を読めない');
 select throws_ok('select * from public.square_connections', '42501', null, 'メンバーは Square の接続（トークン）を読めない');
 select throws_ok('select * from public.reservation_external_states', '42501', null, 'メンバーは外部の予約の状態を直接読めない');
@@ -160,6 +167,37 @@ select isnt(
   public.notification_create('b2000000-0000-4000-8000-000000000002', 'reservation_cancelled', 't', 'b', '{}', 'dup'),
   null, '別の店なら同じキーでも作る');
 
+-- 発行は記録と送信待ちを一緒に作り、同じキーで呼び直すと足りない送信待ちだけを入れる
+select isnt(
+  public.notification_publish('b1000000-0000-4000-8000-000000000001', 'reservation_arrived', 't', 'b', '{}', 'publish'),
+  null, '発行すると id を返す');
+reset role;
+select is(
+  (select count(*)::int from public.push_deliveries d join public.notifications n on n.id = d.notification_id where n.dedupe_key = 'publish'),
+  2, '発行で送信待ちも入る');
+set local role service_role;
+select is(
+  public.notification_publish('b1000000-0000-4000-8000-000000000001', 'reservation_arrived', 't', 'b', '{}', 'publish'),
+  (select id from public.notifications where dedupe_key = 'publish'),
+  '同じキーの発行は同じ id を返す');
+reset role;
+select is(
+  (select count(*)::int from public.push_deliveries d join public.notifications n on n.id = d.notification_id where n.dedupe_key = 'publish'),
+  2, '呼び直しても送信待ちは増えない');
+select is((select count(*)::int from public.notifications where dedupe_key = 'publish'), 1, '呼び直しても記録は増えない');
+-- 記録だけあって送信待ちがない通知（enqueue の前に落ちた場合）にも、呼び直しで送信待ちが入る
+insert into public.notifications (id, household_id, kind, title, body, dedupe_key)
+values ('c1000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'reservation_arrived', 't', 'b', 'orphan');
+set local role service_role;
+select is(
+  public.notification_publish('b1000000-0000-4000-8000-000000000001', 'reservation_arrived', 't', 'b', '{}', 'orphan'),
+  'c1000000-0000-4000-8000-000000000001'::uuid, '記録があればその id を返す');
+reset role;
+select is(
+  (select count(*)::int from public.push_deliveries where notification_id = 'c1000000-0000-4000-8000-000000000001'),
+  2, '足りない送信待ちを入れる');
+set local role service_role;
+
 -- オフにした人（オーナーの reservation_updated）には送らない
 select is(
   public.push_enqueue(public.notification_create('b1000000-0000-4000-8000-000000000001', 'reservation_updated', 't', 'b', '{}', 'off')),
@@ -212,6 +250,10 @@ select is((select count(*)::int from public.push_deliveries d join public.notifi
 select vault.create_secret('http://example.invalid/functions/v1/push', 'push_function_url');
 select vault.create_secret('test-secret', 'push_webhook_secret');
 
+insert into public.calendar_oauth_pending (code, provider, household_id, user_id, payload_encrypted, created_at) values
+  ('old', 'square', 'b1000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'x', now() - interval '11 minutes'),
+  ('new', 'square', 'b1000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'x', now());
+
 select private.poll_calendar_connections();
 select is(
   (select count(*)::int from net.http_request_queue where url = 'http://example.invalid/functions/v1/calendar-sync'),
@@ -230,8 +272,37 @@ select results_eq(
   $$values ('POLL'::text, 'test-secret'::text)$$,
   '接続があれば、合言葉を付けて calendar-sync を呼ぶ');
 select is((select count(*)::int from public.calendar_own_writes), 0, '古い書き込みの記録を片付ける');
+select is((select array_agg(code) from public.calendar_oauth_pending), array['new'], '10 分たった保留のトークンを片付ける');
 select is((select count(*)::int from cron.job where jobname in ('calendar-sync', 'device-offline') and schedule = '* * * * *'), 2,
   'pg_cron が1分ごとに確かめる');
+
+-- 重なりを確かめて作る ----------------------------------------------------------
+
+set local role service_role;
+select lives_ok(
+  $$select public.reservation_create_if_free('b2000000-0000-4000-8000-000000000002', '先', null, null,
+    '2099-01-01 10:00+09', '2099-01-01 11:00+09', null, 'pending', 'ai')$$,
+  '空いていれば作る');
+select throws_ok(
+  $$select public.reservation_create_if_free('b2000000-0000-4000-8000-000000000002', '後', null, null,
+    '2099-01-01 10:30+09', '2099-01-01 11:30+09', null, 'pending', 'ai')$$,
+  'PT409', null, '重なれば PT409');
+select lives_ok(
+  $$select public.reservation_create_if_free('b2000000-0000-4000-8000-000000000002', '隣', null, null,
+    '2099-01-01 11:00+09', '2099-01-01 12:00+09', null, 'pending', 'ai')$$,
+  '終わりと始まりが同じ時刻なら重ならない');
+select lives_ok(
+  $$select public.reservation_create_if_free('b1000000-0000-4000-8000-000000000001', '別の店', null, null,
+    '2099-01-01 10:30+09', '2099-01-01 11:30+09', null, 'pending', 'ai')$$,
+  '別の店の予約とは重ならない');
+reset role;
+update public.reservations set status = 'confirmed' where customer_name = '別の店';
+set local role service_role;
+select lives_ok(
+  $$select public.reservation_create_if_free('b1000000-0000-4000-8000-000000000001', '確定と同じ枠', null, null,
+    '2099-01-01 10:30+09', '2099-01-01 11:30+09', null, 'pending', 'ai', null, array['pending'])$$,
+  '数える状態を仮予約だけにすると確定とは重ならない（Square の予約帳）');
+reset role;
 
 select * from finish();
 rollback;

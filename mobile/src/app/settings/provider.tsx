@@ -24,6 +24,7 @@ const CONNECTIONS: Record<
     loginLabel: string;
     resultParam: string;
     start: (returnUrl: string) => Promise<string>;
+    complete: (code: string) => Promise<ProviderState>;
     logout: () => Promise<void>;
     logoutTitle: string;
   }
@@ -32,6 +33,7 @@ const CONNECTIONS: Record<
     loginLabel: 'Google でログイン',
     resultParam: 'google',
     start: (returnUrl) => repositories.providers.startGoogleLogin(returnUrl),
+    complete: (code) => repositories.providers.completeGoogleLogin(code),
     logout: () => repositories.providers.logoutGoogle(),
     logoutTitle: 'Google からログアウトしますか',
   },
@@ -39,6 +41,7 @@ const CONNECTIONS: Record<
     loginLabel: 'Square にログイン',
     resultParam: 'square',
     start: (returnUrl) => repositories.providers.startSquareLogin(returnUrl),
+    complete: (code) => repositories.providers.completeSquareLogin(code),
     logout: () => repositories.providers.logoutSquare(),
     logoutTitle: 'Square からログアウトしますか',
   },
@@ -112,12 +115,15 @@ export default function ProviderScreen() {
       const url = await connection.start(returnUrl);
       const result = await WebBrowser.openAuthSessionAsync(url, returnUrl);
       if (result.type !== 'success') return;
-      const outcome = Linking.parse(result.url).queryParams?.[connection.resultParam];
+      const query = Linking.parse(result.url).queryParams;
+      const outcome = query?.[connection.resultParam];
       if (outcome === 'error') {
         Alert.alert('ログインできませんでした', '');
         return;
       }
-      if (outcome !== 'connected') return;
+      if (outcome !== 'pending' || typeof query?.code !== 'string') return;
+      // 同意画面から戻っただけでは接続されない。ログインした本人のセッションで完了させる
+      await connection.complete(query.code);
       // Square はカレンダーを選ばないので、ログインが済んだら予約先も切り替える
       if (kind === 'square') {
         await repositories.providers.select('square');

@@ -20,6 +20,11 @@ export type CalendarConnection = {
   connected_by: string | null;
 };
 
+// 接続を作るときに渡す項目。NOT NULL の列を含むので、一部だけの更新には使えない
+export type NewCalendarConnection = Omit<CalendarConnection, "last_synced_at">;
+export type CalendarConnectionPatch = Partial<Omit<CalendarConnection, "household_id">>;
+export type SquareConnectionPatch = Partial<Omit<SquareConnection, "household_id">>;
+
 export type OAuthProvider = "google_calendar" | "square";
 export type OAuthState = {
   state: string;
@@ -27,6 +32,16 @@ export type OAuthState = {
   user_id: string;
   return_url: string;
   provider: OAuthProvider;
+  created_at: string;
+};
+
+// 同意が済み、本人の確認を待っているトークン
+export type OAuthPending = {
+  code: string;
+  provider: OAuthProvider;
+  household_id: string;
+  user_id: string;
+  payload_encrypted: string;
   created_at: string;
 };
 
@@ -45,11 +60,17 @@ export function googleConfigFromEnv(): GoogleConfig | null {
 // 関数と試験の間で差し替える入口
 export interface CalendarStore {
   getConnection(householdId: string): Promise<CalendarConnection | null>;
-  saveConnection(connection: Partial<CalendarConnection> & { household_id: string }): Promise<void>;
+  // 接続を作る。すでにあれば置き換える
+  saveConnection(connection: NewCalendarConnection): Promise<void>;
+  // 接続の一部を変える。接続がなければ何もしない
+  updateConnection(householdId: string, patch: CalendarConnectionPatch): Promise<void>;
   deleteConnection(householdId: string): Promise<void>;
   saveState(state: Omit<OAuthState, "created_at">): Promise<void>;
   // 使い切り。取り出すと消える
   takeState(state: string): Promise<OAuthState | null>;
+  savePending(pending: Omit<OAuthPending, "created_at">): Promise<void>;
+  // 使い切り。取り出すと消える
+  takePending(code: string): Promise<OAuthPending | null>;
   getProviderKind(householdId: string): Promise<ProviderKind>;
   setProviderKind(householdId: string, kind: ProviderKind): Promise<void>;
   recordOwnWrite(householdId: string, eventId: string, etag: string): Promise<void>;
@@ -58,11 +79,21 @@ export interface CalendarStore {
   activeConnections(): Promise<CalendarConnection[]>;
   getSquareConnection(householdId: string): Promise<SquareConnection | null>;
   squareConnectionByMerchant(merchantId: string): Promise<SquareConnection | null>;
-  saveSquareConnection(connection: Partial<SquareConnection> & { household_id: string }): Promise<void>;
+  saveSquareConnection(connection: SquareConnection): Promise<void>;
+  updateSquareConnection(householdId: string, patch: SquareConnectionPatch): Promise<void>;
   deleteSquareConnection(householdId: string): Promise<void>;
   // 予約先の予約について MONBAN だけが持つ到着の時刻
   externalArrivals(householdId: string, provider: "square", externalIds: string[]): Promise<Map<string, string>>;
   recordExternalArrival(householdId: string, provider: "square", externalId: string, arrivedAt: string): Promise<void>;
+}
+
+// .in() の値は URL に入るので、長くなりすぎないように分けて問い合わせる
+const IN_BATCH = 50;
+
+function batches<T>(values: T[]): T[][] {
+  const result: T[][] = [];
+  for (let i = 0; i < values.length; i += IN_BATCH) result.push(values.slice(i, i + IN_BATCH));
+  return result;
 }
 
 export function createCalendarStore(admin: SupabaseClient): CalendarStore {
@@ -74,6 +105,12 @@ export function createCalendarStore(admin: SupabaseClient): CalendarStore {
     },
     async saveConnection(connection) {
       const { error } = await admin.from("calendar_connections").upsert({ ...connection, updated_at: new Date().toISOString() });
+      if (error) throw error;
+    },
+    async updateConnection(householdId, patch) {
+      const { error } = await admin.from("calendar_connections")
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("household_id", householdId);
       if (error) throw error;
     },
     async deleteConnection(householdId) {
@@ -89,6 +126,15 @@ export function createCalendarStore(admin: SupabaseClient): CalendarStore {
       if (error) throw error;
       return data as OAuthState | null;
     },
+    async savePending(pending) {
+      const { error } = await admin.from("calendar_oauth_pending").insert(pending);
+      if (error) throw error;
+    },
+    async takePending(code) {
+      const { data, error } = await admin.from("calendar_oauth_pending").delete().eq("code", code).select("*").maybeSingle();
+      if (error) throw error;
+      return data as OAuthPending | null;
+    },
     async getProviderKind(householdId) {
       const { data, error } = await admin.from("shop_profiles").select("reservation_provider").eq("household_id", householdId).maybeSingle();
       if (error) throw error;
@@ -103,12 +149,15 @@ export function createCalendarStore(admin: SupabaseClient): CalendarStore {
       if (error) throw error;
     },
     async ownEtags(householdId, eventIds) {
-      if (eventIds.length === 0) return new Set();
-      const { data, error } = await admin.from("calendar_own_writes").select("event_id, etag")
-        .eq("household_id", householdId)
-        .in("event_id", eventIds);
-      if (error) throw error;
-      return new Set((data as { event_id: string; etag: string }[]).map((r) => `${r.event_id}:${r.etag}`));
+      const own = new Set<string>();
+      for (const batch of batches(eventIds)) {
+        const { data, error } = await admin.from("calendar_own_writes").select("event_id, etag")
+          .eq("household_id", householdId)
+          .in("event_id", batch);
+        if (error) throw error;
+        for (const r of data as { event_id: string; etag: string }[]) own.add(`${r.event_id}:${r.etag}`);
+      }
+      return own;
     },
     async activeConnections() {
       const { data: profiles, error } = await admin.from("shop_profiles").select("household_id").eq("reservation_provider", "google_calendar");
@@ -135,19 +184,30 @@ export function createCalendarStore(admin: SupabaseClient): CalendarStore {
       const { error } = await admin.from("square_connections").upsert({ ...connection, updated_at: new Date().toISOString() });
       if (error) throw error;
     },
+    async updateSquareConnection(householdId, patch) {
+      const { error } = await admin.from("square_connections")
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("household_id", householdId);
+      if (error) throw error;
+    },
     async deleteSquareConnection(householdId) {
       const { error } = await admin.from("square_connections").delete().eq("household_id", householdId);
       if (error) throw error;
     },
     async externalArrivals(householdId, provider, externalIds) {
-      if (externalIds.length === 0) return new Map();
-      const { data, error } = await admin.from("reservation_external_states").select("external_id, arrived_at")
-        .eq("household_id", householdId)
-        .eq("provider", provider)
-        .in("external_id", externalIds)
-        .not("arrived_at", "is", null);
-      if (error) throw error;
-      return new Map((data as { external_id: string; arrived_at: string }[]).map((r) => [r.external_id, new Date(r.arrived_at).toISOString()]));
+      const arrivals = new Map<string, string>();
+      for (const batch of batches(externalIds)) {
+        const { data, error } = await admin.from("reservation_external_states").select("external_id, arrived_at")
+          .eq("household_id", householdId)
+          .eq("provider", provider)
+          .in("external_id", batch)
+          .not("arrived_at", "is", null);
+        if (error) throw error;
+        for (const r of data as { external_id: string; arrived_at: string }[]) {
+          arrivals.set(r.external_id, new Date(r.arrived_at).toISOString());
+        }
+      }
+      return arrivals;
     },
     async recordExternalArrival(householdId, provider, externalId, arrivedAt) {
       const { error } = await admin.from("reservation_external_states").upsert({
@@ -187,7 +247,8 @@ export async function providerFor(admin: SupabaseClient, householdId: string): P
       if (!connection) throw new ProviderError(409, "Square の接続が済んでいません", "square_not_connected");
       return new SquareProvider({
         client: squareClientFor(admin, store, connection, config),
-        ledger: new TableProvider(admin, householdId, "monban"),
+        // 表の確定は店が Square に入れた予約と二重になるので、重なりには仮予約だけを数える
+        ledger: new TableProvider(admin, householdId, "monban", ["pending"]),
         store,
         householdId,
       });

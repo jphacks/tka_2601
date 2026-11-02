@@ -43,10 +43,21 @@ export function normalizeBusinessHours(saved: readonly Partial<BusinessHour>[]):
     return {
       day,
       closed: row?.closed ?? false,
-      open: row?.open ?? DEFAULT_OPEN,
-      close: row?.close ?? DEFAULT_CLOSE,
+      open: row?.open || DEFAULT_OPEN,
+      close: row?.close || DEFAULT_CLOSE,
     };
   });
+}
+
+// 1曜日の変更を合成する。時刻は変更後の値、今の設定、既定の値の順に埋め、空の時刻を保存しない
+export function applyDayHours(
+  saved: readonly Partial<BusinessHour>[],
+  day: number,
+  next: { closed: boolean; open: string | null; close: string | null },
+): BusinessHour[] {
+  return normalizeBusinessHours(saved).map((row) =>
+    row.day === day ? { day, closed: next.closed, open: next.open || row.open, close: next.close || row.close } : row,
+  );
 }
 
 // 定休日か。営業時間が未設定の店は定休日なしとして扱う
@@ -61,6 +72,11 @@ function hourOf(clock: string, fallback: number): number {
 
 // タイムラインに出す時間帯。営業時間と予約が収まる最小の幅で、最初と最後は時の区切りにする。
 // lastHour は最後の行の開始の時（18 なら 19 時で終わる）
+// 夏時間でも 24 時を超えないよう、その日の長さの範囲で時間に直す
+function hoursInDay(time: number, dayStart: number, dayEnd: number): number {
+  return (Math.min(time - dayStart, dayEnd - dayStart) / (dayEnd - dayStart)) * 24;
+}
+
 const DEFAULT_OPEN_HOUR = 10;
 const DEFAULT_CLOSE_HOUR = 19;
 
@@ -82,13 +98,17 @@ export function visibleHours(
     first = DEFAULT_OPEN_HOUR;
     last = DEFAULT_CLOSE_HOUR;
   }
+  // 予約は表示する日と重なる区間だけを見る。前の日から続く予約は 0 時から出す
   for (const reservation of reservations) {
-    const start = new Date(reservation.starts_at);
-    const end = new Date(reservation.ends_at);
-    first = Math.min(first, start.getHours() + start.getMinutes() / 60);
-    // 翌日にまたがる予定は 24 時で切る
-    const endHour = end.getDate() === start.getDate() ? end.getHours() + end.getMinutes() / 60 : 24;
-    last = Math.max(last, endHour);
+    const start = new Date(reservation.starts_at).getTime();
+    const end = new Date(reservation.ends_at).getTime();
+    for (const date of dates) {
+      const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+      const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime();
+      if (start >= dayEnd || end <= dayStart) continue;
+      first = Math.min(first, hoursInDay(Math.max(start, dayStart), dayStart, dayEnd));
+      last = Math.max(last, hoursInDay(Math.min(end, dayEnd), dayStart, dayEnd));
+    }
   }
   // 閉店の時刻の行まで出す。出さないと最後の予約の下端が切れる
   const lastHour = Math.min(Math.max(Math.ceil(last), 1), 23);

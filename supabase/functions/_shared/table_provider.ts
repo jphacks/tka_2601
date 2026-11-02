@@ -5,9 +5,11 @@ import {
   type NewReservation,
   ProviderError,
   type Reservation,
+  overlapError,
   type ReservationPatch,
   type ReservationProvider,
   type ReservationRange,
+  type ReservationStatus,
   type ReservationWrite,
 } from "./reservation.ts";
 
@@ -17,6 +19,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ROWS = 1000;
 
 type Row = Omit<Reservation, "read_only"> & { updated_at: string };
+type StatusFilter = "pending" | "active";
 
 function toReservation(row: Row): Reservation {
   const { updated_at: _, ...reservation } = row;
@@ -41,6 +44,8 @@ export class TableProvider implements ReservationProvider {
     private readonly admin: SupabaseClient,
     private readonly householdId: string,
     readonly kind: "monban" | "hotpepper",
+    // 重なりとして数える状態
+    private readonly blockingStatuses: ReservationStatus[] = ["pending", "confirmed"],
   ) {}
 
   async list({ from, to, status }: ReservationRange): Promise<Reservation[]> {
@@ -84,38 +89,69 @@ export class TableProvider implements ReservationProvider {
     return toWrite(data as unknown as Row);
   }
 
-  private async write(id: string, values: Record<string, unknown>): Promise<ReservationWrite> {
-    const { data, error } = await this.admin.from("reservations").update(values)
-      .eq("household_id", this.householdId)
-      .eq("id", id)
-      .select(COLUMNS)
-      .single();
-    if (error) throw error;
+  // 同じ店の予約を1つずつ処理する関数で、重なりを確かめてから作る
+  async createIfFree(input: NewReservation): Promise<ReservationWrite> {
+    const { data, error } = await this.admin.rpc("reservation_create_if_free", {
+      p_household_id: this.householdId,
+      p_customer_name: input.customer_name,
+      p_customer_phone: input.customer_phone,
+      p_service_name: input.service_name,
+      p_starts_at: input.starts_at,
+      p_ends_at: input.ends_at,
+      p_note: input.note,
+      p_status: input.status,
+      p_source: input.source,
+      p_visit_id: input.visit_id,
+      p_blocking_statuses: this.blockingStatuses,
+    }).select(COLUMNS).single();
+    if (error) {
+      if (error.code === "PT409") throw overlapError();
+      throw error;
+    }
     return toWrite(data as unknown as Row);
+  }
+
+  // 読んでから書くまでに状態が変わっていたら書かない。そのときは null を返す
+  private async write(id: string, values: Record<string, unknown>, expected: StatusFilter): Promise<ReservationWrite | null> {
+    let query = this.admin.from("reservations").update(values)
+      .eq("household_id", this.householdId)
+      .eq("id", id);
+    query = expected === "pending" ? query.eq("status", "pending") : query.neq("status", "cancelled");
+    const { data, error } = await query.select(COLUMNS).maybeSingle();
+    if (error) throw error;
+    return data ? toWrite(data as unknown as Row) : null;
   }
 
   async update(id: string, patch: ReservationPatch): Promise<ReservationWrite> {
     const current = await this.requireRow(id);
     if (current.status === "cancelled") throw new ProviderError(409, "キャンセルした予約は変更できません");
     checkPatchedOrder(toReservation(current), patch);
-    return this.write(id, patch);
+    const written = await this.write(id, patch, "active");
+    if (!written) throw new ProviderError(409, "キャンセルした予約は変更できません");
+    return written;
   }
 
   async approve(id: string): Promise<ReservationWrite> {
     const current = await this.requireRow(id);
     if (current.status !== "pending") throw new ProviderError(409, "仮予約ではありません");
-    return this.write(id, { status: "confirmed" });
+    const written = await this.write(id, { status: "confirmed" }, "pending");
+    if (!written) throw new ProviderError(409, "仮予約ではありません");
+    return written;
   }
 
   // すでにキャンセルや到着済みなら書かない。版が変わらないので二重に通知もしない
   async cancel(id: string): Promise<ReservationWrite> {
     const current = await this.requireRow(id);
-    return current.status === "cancelled" ? toWrite(current) : this.write(id, { status: "cancelled" });
+    if (current.status === "cancelled") return toWrite(current);
+    return await this.write(id, { status: "cancelled" }, "active") ?? toWrite(await this.requireRow(id));
   }
 
   async arrive(id: string): Promise<ReservationWrite> {
     const current = await this.requireRow(id);
     if (current.status === "cancelled") throw new ProviderError(409, "キャンセルした予約です");
-    return current.arrived_at ? toWrite(current) : this.write(id, { arrived_at: new Date().toISOString() });
+    if (current.arrived_at) return toWrite(current);
+    const written = await this.write(id, { arrived_at: new Date().toISOString() }, "active");
+    if (!written) throw new ProviderError(409, "キャンセルした予約です");
+    return written;
   }
 }

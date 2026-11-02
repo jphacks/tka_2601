@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,16 +32,22 @@ export default function ApprovalsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // 処理中の予約。同じ予約を二重に操作させない
+  const [processing, setProcessing] = useState<readonly string[]>([]);
+  // 続けて操作したとき、遅れて届いた前の一覧で上書きしない
+  const request = useRef(0);
 
   const load = useCallback(async () => {
+    const current = ++request.current;
     try {
       const today = startOfDayDate(new Date());
       const result = await repositories.reservations.list({ from: today, to: addDays(today, PENDING_RANGE_DAYS) }, 'pending');
+      if (current !== request.current) return;
       setRows(result.reservations);
       setProvider(result.provider);
       setError(null);
     } catch (e) {
-      setError(errorMessage(e) ?? '読み込めませんでした');
+      if (current === request.current) setError(errorMessage(e) ?? '読み込めませんでした');
     }
   }, []);
 
@@ -59,12 +65,15 @@ export default function ApprovalsScreen() {
 
   async function run(action: (id: string) => Promise<void>, reservation: Reservation, failure: string) {
     setDialog(null);
+    setProcessing((current) => [...current, reservation.id]);
     try {
       await action(reservation.id);
       await load();
       refreshBadges();
     } catch (e) {
       Alert.alert(failure, errorMessage(e) ?? '');
+    } finally {
+      setProcessing((current) => current.filter((id) => id !== reservation.id));
     }
   }
 
@@ -90,6 +99,7 @@ export default function ApprovalsScreen() {
         ) : (
           rows.map((reservation) => {
             const name = customerLabel(reservation);
+            const busy = processing.includes(reservation.id);
             return (
               <View key={reservation.id} style={styles.card}>
                 <Pressable
@@ -111,11 +121,13 @@ export default function ApprovalsScreen() {
                   <View style={styles.actions}>
                     <SoftButton
                       label="お断り"
+                      disabled={busy}
                       onPress={() => setDialog({ type: 'decline', reservation })}
                       style={styles.action}
                     />
                     <PrimaryButton
                       label="承認"
+                      loading={busy}
                       onPress={() => setDialog({ type: 'approve', reservation })}
                       style={styles.action}
                     />

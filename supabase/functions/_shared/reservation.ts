@@ -50,6 +50,8 @@ export interface ReservationProvider {
   list(range: ReservationRange): Promise<Reservation[]>;
   get(id: string): Promise<Reservation | null>;
   create(input: NewReservation): Promise<ReservationWrite>;
+  // 時間が重なれば 409（reservation_overlap）で作らない。AI の仮予約に使う
+  createIfFree(input: NewReservation): Promise<ReservationWrite>;
   update(id: string, patch: ReservationPatch): Promise<ReservationWrite>;
   approve(id: string): Promise<ReservationWrite>;
   cancel(id: string): Promise<ReservationWrite>;
@@ -75,6 +77,8 @@ export async function findOverlaps(
   const found = await provider.list({ from: startsAt, to: endsAt });
   return found.filter((r) => r.id !== excludeId && Date.parse(r.starts_at) < end && Date.parse(r.ends_at) > start);
 }
+
+export const overlapError = () => new ProviderError(409, "その時間にはすでに予約があります", "reservation_overlap");
 
 // 予約先の種類から実装を選ぶ。予約帳とホットペッパーは同じ表を使う
 export function selectProvider<T>(
@@ -107,9 +111,12 @@ function requiredName(value: unknown): string {
   return text;
 }
 
+// オフセットのない日時は実行環境の時刻で解釈され、東京とずれて保存されるので受け付けない
+const HAS_OFFSET = /T.*(?:Z|[+-]\d{2}:\d{2})$/i;
+
 export function parseTime(value: unknown, key: string): string {
-  const time = typeof value === "string" ? Date.parse(value) : NaN;
-  if (Number.isNaN(time)) throw new ProviderError(400, `${key} は ISO 8601 の日時にしてください`);
+  const time = typeof value === "string" && HAS_OFFSET.test(value) ? Date.parse(value) : NaN;
+  if (Number.isNaN(time)) throw new ProviderError(400, `${key} は Z か +09:00 の付いた ISO 8601 の日時にしてください`);
   return new Date(time).toISOString();
 }
 

@@ -16,6 +16,9 @@ export const supabaseProviderRepository: ReservationProviderRepository = {
     const { url } = await callFunction<{ url: string }>('reservations/google/start', 'POST', { return_url: returnUrl });
     return url;
   },
+  async completeGoogleLogin(code) {
+    return toProviderState(await callFunction<Row>('reservations/google/complete', 'POST', { code }));
+  },
   async listGoogleCalendars() {
     const { calendars } = await callFunction<{ calendars: GoogleCalendar[] }>('reservations/google/calendars', 'GET');
     return calendars;
@@ -29,6 +32,9 @@ export const supabaseProviderRepository: ReservationProviderRepository = {
   async startSquareLogin(returnUrl) {
     const { url } = await callFunction<{ url: string }>('reservations/square/start', 'POST', { return_url: returnUrl });
     return url;
+  },
+  async completeSquareLogin(code) {
+    return toProviderState(await callFunction<Row>('reservations/square/complete', 'POST', { code }));
   },
   async logoutSquare() {
     await callFunction('reservations/square', 'DELETE');

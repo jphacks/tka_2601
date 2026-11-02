@@ -109,6 +109,16 @@ test('assistant proposals keep valid shapes', () => {
   });
   assert.equal(hours.type, 'set_business_hours');
   assert.equal(hours.after.closed, true);
+
+  // 営業時間が未設定の曜日は null のまま渡し、空文字にしない
+  const unset = toAssistantProposal({
+    type: 'set_business_hours',
+    day: 3,
+    before: { closed: false, open: null, close: null },
+    after: { closed: true, open: null, close: null },
+  });
+  assert.deepEqual(unset.before, { closed: false, open: null, close: null });
+  assert.deepEqual(unset.after, { closed: true, open: null, close: null });
 });
 
 test('broken assistant proposals never reach the write path', () => {

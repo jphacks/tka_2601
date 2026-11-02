@@ -44,6 +44,8 @@ MONBAN を、個人経営のネイルサロン、マッサージ店、貸し会�
 
 AI がインターホンで受けた予約は、必ず仮予約（`pending`）で入る。店はアプリの承認リストで確定するか断る。予約先がホットペッパーのときは SALON BOARD に、Square のときは Square に入力してから承認する。Square では AI の仮予約を `reservations` に置いて一覧に合わせ、承認したあとは一覧から外す（店が Square に入れた予約が読まれるため）。Square で `PENDING` の予約も承認リストに出るが、承認は Square で行う。AI が受ける時点で、仮予約を含む既存の予約と時間が重なれば `409` を返して受け付けない。アプリの手入力では重なりを止めない。
 
+予約帳とホットペッパーでは、店ごとに1件ずつ処理する関数（`reservation_create_if_free`）で重なりを確かめるので、同じ枠に AI の仮予約が同時に来ても1件しか入らない。Google カレンダーと Square には同時の書き込みを止める手段がないため、確かめてから書くまでの間に入った予約は防げない。この重なりは承認リストで店が確かめる。
+
 ## 3. API
 
 ### 3.1 アプリが使う Edge Function「reservations」
@@ -62,14 +64,20 @@ AI がインターホンで受けた予約は、必ず仮予約（`pending`）�
 | `GET /reservations/provider` | なし | `{"provider": "...", "capabilities": {"create"}, "google": {"connected", "account_email", "calendar_id", "calendar_name", "status", "last_error"}, "square": {"connected", "merchant_name", "status", "last_error"}}` |
 | `PUT /reservations/provider` | `{"provider": "..."}` | 同上。Google は接続とカレンダーの選択が、Square は接続が済んでいなければ `409` |
 | `POST /reservations/google/start` | `{"return_url": "..."}` | `{"url": "<Google の同意画面>"}` |
-| `GET /reservations/google/callback` | Google が呼ぶ（JWT なし、使い切りの `state`） | `return_url` へ転送する |
+| `GET /reservations/google/callback` | Google が呼ぶ（JWT なし、使い切りの `state`） | トークンを暗号化して保留にし、`return_url?google=pending&code=<使い切りの値>` へ転送する。断られたら `cancelled`、失敗したら `error` |
+| `POST /reservations/google/complete` | `{"code": "..."}` | 接続を確定する。返事は `GET /reservations/provider` と同じ形。接続を始めた本人でなければ `403`（`oauth_user_mismatch`）で保留を消す。期限切れや不明な値は `404`（`oauth_code_invalid`） |
 | `GET /reservations/google/calendars` | なし | `{"calendars": [{"id", "name", "primary"}]}` |
 | `PUT /reservations/google/calendar` | `{"calendar_id": "..."}` | 選んだカレンダーの差分の起点を取り直す |
 | `DELETE /reservations/google` | なし | 接続を消す。予約先は `monban` に戻す |
 | `POST /reservations/square/start` | `{"return_url": "..."}` | `{"url": "<Square の同意画面>"}` |
-| `GET /reservations/square/callback` | Square が呼ぶ（JWT なし、使い切りの `state`） | `return_url?square=connected`、`cancelled`、`error` へ転送する |
+| `GET /reservations/square/callback` | Square が呼ぶ（JWT なし、使い切りの `state`） | トークンを暗号化して保留にし、`return_url?square=pending&code=<使い切りの値>` へ転送する。断られたら `cancelled`、失敗したら `error` |
+| `POST /reservations/square/complete` | `{"code": "..."}` | Google と同じ。Square のアカウントが別の店で使われていれば `409`（`square_merchant_in_use`） |
 | `DELETE /reservations/square` | なし | 接続を消す。予約先が `square` なら `monban` に戻す |
 | `POST /reservations/square/webhook` | Square が呼ぶ（JWT なし、署名を確かめる） | 予約の変化を通知する |
+
+コールバックには JWT がなく、誰が同意したかが分からない。同意の URL を他人に開かせて、他人の予約を自分のグループへ結び付ける攻撃を防ぐため、トークンを保留にしてから本人を確かめる。保留は使い切りで、10 分で無効になる。
+
+日時は `Z` か `+09:00` の付いた ISO 8601 で送る。オフセットのない日時は `400` を返す。
 
 `Reservation` は次の形で、どの予約先でも同じである。
 
@@ -99,7 +107,7 @@ AI がインターホンで受けた予約は、必ず仮予約（`pending`）�
 | 要求 | 内容 |
 |---|---|
 | `GET /device/settings` | 既存の項目に `contract_version`（形を壊す変更で上げる）と `shop`（店名、業種、口調、あいさつ、営業時間、メニュー、予約なしの来客への対応、予約先）を足す |
-| `GET /device/reservations?from=&to=` | 3.1 と同じ形で予約を返す |
+| `GET /device/reservations?from=&to=` | 3.1 の形から `customer_phone` と `note` を除いて予約を返す。期間は 31 日まで（超えると `400`） |
 | `POST /device/reservations` | 仮予約を作る。`customer_name`、`starts_at`、`ends_at` が要る。時間が重なれば `409`（Square の予約と仮予約の両方を見る） |
 | `POST /device/reservations/<id>/arrive` | 到着を記録し、店に通知する |
 | `PUT /device/heartbeat` | 本体の死活通信。接続切れの検知に使う |
@@ -134,6 +142,8 @@ pg_cron が1分ごとに Edge Function「calendar-sync」を呼び、`syncToken`
 - 差分が 410 を返したら起点を取り直し、その回は通知しない。
 - MONBAN が自分で書いた変更は `calendar_own_writes` の etag で見分け、差分では通知しない。
 - 1回の差分が 10 件を超えたら（繰り返しの予定の変更など）、1件にまとめて通知する。
+- 削除された予定に時刻がなければ、終日かどうか分からないので、キャンセルにせず「予約先の予定が削除されました」と通知する。
+- 通知の記録と送信待ちは1つのトランザクションで作る。失敗したら目印を進めず、次の回に読み直す。同じ変更は `dedupe_key` で二重にならず、足りない送信待ちだけが入る。
 - 読めなくなったら接続を `error` にして1回だけ通知し、読めるようになったら `active` に戻す。
 
 ### 4.2 Square の変更を知る方法
@@ -170,6 +180,7 @@ Square の Webhook（`booking.created`、`booking.updated`）で知る。差分�
 
 - `shop` を読み、`house_rules` を店舗向けに組み立てる。今の規則（[spec.md 5.6](spec.md#56-house_rules)）は住宅向けで、「留守と言わない」「資料はポストに」など店舗に合わない。800 字の上限も見直す。
 - 予約の確認では、訪問者に名前を尋ねて照合する。**予約者の名前や時間を AI から読み上げない。** インターホンは屋外から誰でも話しかけられるためである。
+- `GET /device/reservations` の項目のうち、顧客名とメニューは Google カレンダーの件名や Square の入力など、外部の人が書けることがある。**会話の LLM のプロンプトに指示として入れない。** 照合は中継の処理で行い、LLM には結果（見つかった、見つからない）だけを渡す。電話番号とメモはこの API で返さない。
 - 予約なしの来客には `walk_in_policy` に従う。仮予約を受けたら「確定はお店からご連絡します」と伝え、確定したとは言わない。
 - 予約の読み書きが失敗しても会話を止めず、店から連絡すると伝える。
 
@@ -190,7 +201,7 @@ Square の Webhook（`booking.created`、`booking.updated`）で知る。差分�
 | 項目 | 論点 |
 |---|---|
 | 顧客情報の保存期間 | 予約帳の顧客名と電話番号、通知の文面の保存期間。今は自動では消さない。個人情報保護法の観点で決める |
-| Google の審査 | `calendar.events` はセンシティブなスコープで、審査前は新規ユーザーが 100 人までに制限される。店舗に広げる前に審査を受ける |
+| Google の審査 | `calendar.events` はセンシティブなスコープで、審査前は新規ユーザーが 100 人までに制限される。OAuth の同意画面が Testing の状態だと、更新トークンが 7 日で切れ、店は 7 日ごとに接続し直すことになる。店舗に広げる前に審査を受ける |
 | 枠の複数化 | 複数のスタッフや部屋を持つ店が出てきたら、重なりの判定を見直す |
 | 塾の定期の授業 | Google カレンダーの繰り返しの予定は扱える。予約帳に繰り返しの入力はない |
 | ホットペッパーの予約の取り込み | 今は手入力だけである。SALON BOARD の CSV の取り込みは、実物の形式を確かめてから決める |

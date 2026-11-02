@@ -89,6 +89,9 @@ for update to authenticated
 using (id in (select private.my_household_ids()))
 with check (id in (select private.my_household_ids()));
 
+-- 既定の権限が残っていても同じ結果になるよう、いったん外してから与える
+revoke all on public.shop_profiles, public.shop_services from anon, authenticated, service_role;
+
 -- 予約先の切り替えは Google の接続を確かめるため、Edge Function だけが行う
 grant select on public.shop_profiles to authenticated;
 grant update (business_type, tone, greeting, business_hours, walk_in_policy)
@@ -175,6 +178,52 @@ revoke all on public.reservations from anon, authenticated, service_role;
 grant select, insert, update, delete on public.reservations to service_role;
 alter table public.reservations enable row level security;
 
+-- 店ごとに1つずつ処理し、同じ枠に2件入らないようにして予約を作る。
+-- 重なれば PT409 を返す。p_blocking_statuses は重なりとして数える状態
+create function public.reservation_create_if_free(
+  p_household_id uuid,
+  p_customer_name text,
+  p_customer_phone text,
+  p_service_name text,
+  p_starts_at timestamptz,
+  p_ends_at timestamptz,
+  p_note text,
+  p_status text,
+  p_source text,
+  p_visit_id uuid default null,
+  p_blocking_statuses text[] default array['pending', 'confirmed']
+)
+returns setof public.reservations
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtextextended('reservations:' || p_household_id::text, 0));
+  if exists (
+    select 1 from public.reservations r
+    where r.household_id = p_household_id
+      and r.status = any (p_blocking_statuses)
+      and r.starts_at < p_ends_at
+      and r.ends_at > p_starts_at
+  ) then
+    raise exception 'その時間にはすでに予約があります' using errcode = 'PT409';
+  end if;
+  return query
+    insert into public.reservations (
+      household_id, customer_name, customer_phone, service_name, starts_at, ends_at, note, status, source, visit_id
+    ) values (
+      p_household_id, p_customer_name, p_customer_phone, p_service_name, p_starts_at, p_ends_at, p_note, p_status, p_source, p_visit_id
+    )
+    returning *;
+end;
+$$;
+
+revoke execute on function public.reservation_create_if_free(uuid, text, text, text, timestamptz, timestamptz, text, text, text, uuid, text[])
+  from public, anon, authenticated;
+grant execute on function public.reservation_create_if_free(uuid, text, text, text, timestamptz, timestamptz, text, text, text, uuid, text[])
+  to service_role;
+
 -- 3. Google カレンダーの接続 --------------------------------------------------
 -- 更新トークンは Edge Function が暗号化して入れる。どちらの表も住人のロールには権限を与えない
 
@@ -210,6 +259,20 @@ create table public.calendar_oauth_states (
 
 create index calendar_oauth_states_household_id_idx on public.calendar_oauth_states (household_id);
 create index calendar_oauth_states_user_id_idx on public.calendar_oauth_states (user_id);
+
+-- 同意が済んだトークンの置き場所。同意した人と始めた人が同じだと確かめるまで接続にしない。
+-- 使い切りで、10 分で無効にする
+create table public.calendar_oauth_pending (
+  code text primary key,
+  provider text not null check (provider in ('google_calendar', 'square')),
+  household_id uuid not null references public.households (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  payload_encrypted text not null,
+  created_at timestamptz not null default now()
+);
+
+create index calendar_oauth_pending_household_id_idx on public.calendar_oauth_pending (household_id);
+create index calendar_oauth_pending_user_id_idx on public.calendar_oauth_pending (user_id);
 
 -- MONBAN 自身が書いた版。差分を読んだときに、同じ変更を二重に通知しないために使う
 create table public.calendar_own_writes (
@@ -247,15 +310,16 @@ create table public.reservation_external_states (
   primary key (household_id, provider, external_id)
 );
 
-revoke all on public.calendar_connections, public.calendar_oauth_states, public.calendar_own_writes,
-  public.square_connections, public.reservation_external_states
+revoke all on public.calendar_connections, public.calendar_oauth_states, public.calendar_oauth_pending,
+  public.calendar_own_writes, public.square_connections, public.reservation_external_states
   from anon, authenticated, service_role;
 grant select, insert, update, delete
-  on public.calendar_connections, public.calendar_oauth_states, public.calendar_own_writes,
-    public.square_connections, public.reservation_external_states
+  on public.calendar_connections, public.calendar_oauth_states, public.calendar_oauth_pending,
+    public.calendar_own_writes, public.square_connections, public.reservation_external_states
   to service_role;
 alter table public.calendar_connections enable row level security;
 alter table public.calendar_oauth_states enable row level security;
+alter table public.calendar_oauth_pending enable row level security;
 alter table public.calendar_own_writes enable row level security;
 alter table public.square_connections enable row level security;
 alter table public.reservation_external_states enable row level security;
@@ -481,6 +545,43 @@ revoke execute on function public.push_claim(uuid, integer) from public, anon, a
 grant execute on function public.push_enqueue(uuid) to service_role;
 grant execute on function public.push_claim(uuid, integer) to service_role;
 
+-- 通知の記録と送信待ちを1つのトランザクションで作り、通知の id を返す。
+-- 同じ dedupe_key の通知がすでにあれば、足りない送信待ちだけを入れる。送り直しても受け付け済みの端末には送らない
+create function public.notification_publish(
+  p_household_id uuid,
+  p_kind text,
+  p_title text,
+  p_body text,
+  p_data jsonb,
+  p_dedupe_key text,
+  p_visit_id uuid default null,
+  p_actor_user_id uuid default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_notification_id uuid;
+begin
+  v_notification_id := public.notification_create(
+    p_household_id, p_kind, p_title, p_body, p_data, p_dedupe_key, p_visit_id, p_actor_user_id
+  );
+  if v_notification_id is null then
+    select id into v_notification_id from public.notifications
+    where household_id = p_household_id and dedupe_key = p_dedupe_key;
+  end if;
+  perform public.push_enqueue(v_notification_id);
+  return v_notification_id;
+end;
+$$;
+
+revoke execute on function public.notification_publish(uuid, text, text, text, jsonb, text, uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function public.notification_publish(uuid, text, text, text, jsonb, text, uuid, uuid)
+  to service_role;
+
 -- 6. 本体の死活通信と接続切れ --------------------------------------------------
 -- last_seen_at は来客の書き込みでも進むだけで、定期的には更新されない。
 -- 接続切れの判定には使わず、死活通信を送っている本体だけを見る
@@ -586,8 +687,9 @@ declare
   function_url text;
   webhook_secret text;
 begin
-  -- 使い残しの state と、差分で確かめ終えた自分の書き込みを片付ける
+  -- 使い残しの state と保留のトークン、差分で確かめ終えた自分の書き込みを片付ける
   delete from public.calendar_oauth_states where created_at < now() - interval '10 minutes';
+  delete from public.calendar_oauth_pending where created_at < now() - interval '10 minutes';
   delete from public.calendar_own_writes where created_at < now() - interval '1 day';
 
   if not exists (

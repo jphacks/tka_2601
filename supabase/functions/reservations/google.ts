@@ -3,6 +3,7 @@ import { type CalendarStore, clientForConnection, type GoogleConfig } from "../_
 import { GOOGLE_AUTH_URL, GOOGLE_REVOKE_URL, GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL } from "../_shared/google_calendar.ts";
 import { ProviderError } from "../_shared/reservation.ts";
 import { decryptToken, encryptToken } from "../_shared/token_crypto.ts";
+import { type CompletingMember, holdTokens, takeTokens } from "./oauth_pending.ts";
 
 export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
@@ -50,7 +51,9 @@ function appRedirect(returnUrl: string, result: string): Response {
   return new Response(null, { status: 302, headers: { Location: `${returnUrl}${separator}google=${result}` } });
 }
 
-// Google が呼ぶ。JWT はなく、使い切りの state で確かめる
+type HeldGoogleTokens = { refresh_token: string; account_email: string | null };
+
+// Google が呼ぶ。JWT はなく、使い切りの state で確かめる。トークンは保留にして、接続にはしない
 export async function handleCallback(deps: GoogleDeps, url: URL): Promise<Response> {
   const config = requireConfig(deps.config);
   const doFetch = deps.fetch ?? fetch;
@@ -82,25 +85,40 @@ export async function handleCallback(deps: GoogleDeps, url: URL): Promise<Respon
     const infoRes = await doFetch(GOOGLE_USERINFO_URL, { headers: { Authorization: `Bearer ${tokens.access_token}` } });
     const email = infoRes.ok ? ((await infoRes.json().catch(() => null))?.email as string | undefined) ?? null : null;
 
-    // 同じアカウントで接続し直したときは、選んだカレンダーと差分の起点を残す
-    const previous = await deps.store.getConnection(saved.household_id);
-    const sameAccount = previous !== null && previous.account_email === email;
-    await deps.store.saveConnection({
-      household_id: saved.household_id,
-      account_email: email,
-      calendar_id: sameAccount ? previous.calendar_id : null,
-      calendar_name: sameAccount ? previous.calendar_name : null,
-      sync_token: sameAccount ? previous.sync_token : null,
-      refresh_token_encrypted: await encryptToken(tokens.refresh_token, config.tokenKey),
-      status: "active",
-      last_error: null,
-      connected_by: saved.user_id,
-    });
-    return appRedirect(saved.return_url, "connected");
+    const held: HeldGoogleTokens = { refresh_token: tokens.refresh_token, account_email: email };
+    const pendingCode = await holdTokens(deps.store, config.tokenKey, "google_calendar", saved, held);
+    return appRedirect(saved.return_url, `pending&code=${pendingCode}`);
   } catch (e) {
     console.error("Google OAuth failed", e);
     return appRedirect(saved.return_url, "error");
   }
+}
+
+// アプリが JWT 付きで呼ぶ。始めた本人だと確かめてから接続にする
+export async function completeOAuth(deps: GoogleDeps, member: CompletingMember, code: unknown): Promise<void> {
+  const config = requireConfig(deps.config);
+  const held = await takeTokens<HeldGoogleTokens>(
+    deps.store,
+    config.tokenKey,
+    "google_calendar",
+    code,
+    member,
+    deps.now?.() ?? new Date(),
+  );
+  // 同じアカウントで接続し直したときは、選んだカレンダーと差分の起点を残す
+  const previous = await deps.store.getConnection(member.householdId);
+  const sameAccount = previous !== null && previous.account_email === held.account_email;
+  await deps.store.saveConnection({
+    household_id: member.householdId,
+    account_email: held.account_email,
+    calendar_id: sameAccount ? previous.calendar_id : null,
+    calendar_name: sameAccount ? previous.calendar_name : null,
+    sync_token: sameAccount ? previous.sync_token : null,
+    refresh_token_encrypted: await encryptToken(held.refresh_token, config.tokenKey),
+    status: "active",
+    last_error: null,
+    connected_by: member.userId,
+  });
 }
 
 async function requireClient(deps: GoogleDeps, householdId: string) {
@@ -122,8 +140,7 @@ export async function selectCalendar(deps: GoogleDeps, householdId: string, cale
   const calendar = (await client.listCalendars()).find((c) => c.id === calendarId);
   if (!calendar) throw new ProviderError(404, "カレンダーが見つかりません");
   const syncToken = await client.baseline(calendarId, (deps.now?.() ?? new Date()).toISOString());
-  await deps.store.saveConnection({
-    household_id: householdId,
+  await deps.store.updateConnection(householdId, {
     calendar_id: calendarId,
     calendar_name: calendar.name,
     sync_token: syncToken,

@@ -7,7 +7,7 @@ import Svg, { Path } from 'react-native-svg';
 import { NavBar, Screen } from '../../components/Screen';
 import { DefinitionList, PrimaryButton, SoftButton } from '../../components/ui';
 import type { AssistantProposal, DayHours, SetBusinessHoursProposal } from '../../domain/assistant';
-import { normalizeBusinessHours } from '../../domain/shop';
+import { applyDayHours } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
 import { useBadges } from '../../lib/badges';
 import { repositories } from '../../lib/container';
@@ -15,12 +15,14 @@ import { errorMessage } from '../../lib/errors';
 import { dateTimeRange, weekdayName } from '../../lib/format';
 import { colors, radius } from '../../theme';
 
-const MAX_TEXT_LENGTH = 300;
+// サーバーが受け付ける長さ
+const MAX_TEXT_LENGTH = 200;
 
 type Phase = 'idle' | 'sending' | 'ready' | 'saving' | 'done' | 'failed';
 
 function hoursLabel(hours: DayHours): string {
-  return hours.closed ? '定休日' : `${hours.open}〜${hours.close}`;
+  if (hours.closed) return '定休日';
+  return hours.open && hours.close ? `${hours.open}〜${hours.close}` : '未設定';
 }
 
 function cardTitle(proposal: AssistantProposal): string {
@@ -74,7 +76,11 @@ function openForm(proposal: AssistantProposal | null) {
       },
     });
   } else if (proposal?.type === 'update_reservation') {
-    router.push({ pathname: '/reservations/edit', params: { id: proposal.reservation_id } });
+    const minutes = (new Date(proposal.after.ends_at).getTime() - new Date(proposal.after.starts_at).getTime()) / 60_000;
+    router.push({
+      pathname: '/reservations/edit',
+      params: { id: proposal.reservation_id, date: proposal.after.starts_at, duration: String(Math.round(minutes)) },
+    });
   } else if (proposal?.type === 'set_business_hours') {
     router.push('/settings/shop');
   } else {
@@ -113,10 +119,18 @@ export default function AssistantScreen() {
   async function saveBusinessHours(next: SetBusinessHoursProposal) {
     const profile = await repositories.shop.getProfile(household.id);
     if (!profile) throw new Error('店舗の設定を読み込めませんでした');
-    const hours = normalizeBusinessHours(profile.business_hours).map((row) =>
-      row.day === next.day ? { day: row.day, ...next.after } : row,
-    );
-    await repositories.shop.updateProfile(household.id, { business_hours: hours });
+    await repositories.shop.updateProfile(household.id, {
+      business_hours: applyDayHours(profile.business_hours, next.day, next.after),
+    });
+  }
+
+  // フォームで直すならカードを閉じる。残すと、戻ってから同じ案をもう一度書き込める
+  function correct(target: AssistantProposal) {
+    setRequest(null);
+    setProposal(null);
+    setFailure(null);
+    setPhase('idle');
+    openForm(target);
   }
 
   // 確認カードで承認されてから書き込む
@@ -190,7 +204,7 @@ export default function AssistantScreen() {
                   <SoftButton
                     label="修正"
                     disabled={phase === 'saving'}
-                    onPress={() => openForm(proposal)}
+                    onPress={() => correct(proposal)}
                     style={styles.action}
                   />
                   <PrimaryButton

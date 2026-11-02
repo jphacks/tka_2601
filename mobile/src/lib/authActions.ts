@@ -73,11 +73,21 @@ export async function signInWithGoogle(): Promise<void> {
   if (exchangeError) throw exchangeError;
 }
 
-export async function signOut(): Promise<void> {
+// 端末を通知の送り先から外せなかったときの失敗。店の通知が届き続けるので、画面で確かめる
+export class PushCleanupFailed extends Error {}
+
+// keepPushToken は、外せなくてもログアウトすると利用者が決めたときに付ける
+export async function signOut({ keepPushToken = false }: { keepPushToken?: boolean } = {}): Promise<void> {
   const supabase = requireSupabase();
   const { data } = await supabase.auth.getSession();
   const userId = data.session?.user.id;
-  if (userId) await unregisterPushToken(userId).catch(() => undefined);
+  if (userId && !keepPushToken) {
+    try {
+      await unregisterPushToken(userId);
+    } catch (error) {
+      throw new PushCleanupFailed(error instanceof Error ? error.message : String(error));
+    }
+  }
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
 }

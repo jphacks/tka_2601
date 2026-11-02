@@ -146,3 +146,17 @@ export function nextReservation(reservations: readonly Reservation[], now: Date)
 export function customerLabel(reservation: Pick<Reservation, 'customer_name' | 'source'>): string {
   return reservation.source === 'external' ? reservation.customer_name : `${reservation.customer_name}様`;
 }
+
+// 到着を記録できるのは当日の確定した予約だけ
+export function canRecordArrival(reservation: Reservation, now: Date): boolean {
+  if (reservation.status !== 'confirmed' || reservation.arrived_at) return false;
+  const dayStart = startOfDayDate(now).getTime();
+  const dayEnd = addDays(now, 1).getTime();
+  return new Date(reservation.starts_at).getTime() < dayEnd && new Date(reservation.ends_at).getTime() > dayStart;
+}
+
+// カレンダーのライブラリは 0:00〜0:00 の予定を終日として本文から外すので、終わりを 1 分前にして渡す
+export function calendarEnd(start: Date, end: Date): Date {
+  const atMidnight = (date: Date) => date.getHours() === 0 && date.getMinutes() === 0;
+  return atMidnight(start) && atMidnight(end) ? new Date(end.getTime() - 60_000) : end;
+}

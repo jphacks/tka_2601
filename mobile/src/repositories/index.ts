@@ -30,10 +30,12 @@ export interface ReservationProviderRepository {
   getState(): Promise<ProviderState>;
   select(provider: ReservationProvider): Promise<ProviderState>;
   startGoogleLogin(returnUrl: string): Promise<string>;
+  completeGoogleLogin(code: string): Promise<ProviderState>;
   listGoogleCalendars(): Promise<GoogleCalendar[]>;
   selectGoogleCalendar(calendarId: string): Promise<void>;
   logoutGoogle(): Promise<void>;
   startSquareLogin(returnUrl: string): Promise<string>;
+  completeSquareLogin(code: string): Promise<ProviderState>;
   logoutSquare(): Promise<void>;
 }
 

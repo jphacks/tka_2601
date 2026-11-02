@@ -1,5 +1,5 @@
 // 予約の操作の失敗を HTTP の返事に直す。知らない失敗はそのまま投げる
-import { GoogleApiError, GoogleAuthError } from "./google_calendar.ts";
+import { GoogleApiError, GoogleAuthError, GoogleSyncExpired } from "./google_calendar.ts";
 import { ProviderError } from "./reservation.ts";
 import { SquareApiError, SquareAuthError } from "./square.ts";
 
@@ -10,7 +10,7 @@ export function reservationErrorResponse(e: unknown): Response {
   if (e instanceof GoogleAuthError) {
     return Response.json({ error: "Google カレンダーに接続し直してください", code: "google_reauth_required" }, { status: 502 });
   }
-  if (e instanceof GoogleApiError) {
+  if (e instanceof GoogleApiError || e instanceof GoogleSyncExpired) {
     console.error(e.message);
     return Response.json({ error: "Google カレンダーに接続できません", code: "google_unavailable" }, { status: 502 });
   }
@@ -21,6 +21,8 @@ export function reservationErrorResponse(e: unknown): Response {
     console.error(e.message);
     return Response.json({ error: "Square に接続できません", code: "square_unavailable" }, { status: 502 });
   }
+  // パスの % が不正なとき
+  if (e instanceof URIError) return Response.json({ error: "パスが正しくありません" }, { status: 400 });
   throw e;
 }
 

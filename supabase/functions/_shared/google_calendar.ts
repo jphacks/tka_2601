@@ -2,7 +2,9 @@
 // 予約の写しは持たず、読むたびに API を呼ぶ。fetch は試験で差し替えられる
 import {
   checkPatchedOrder,
+  findOverlaps,
   type NewReservation,
+  overlapError,
   ProviderError,
   type Reservation,
   type ReservationPatch,
@@ -38,11 +40,24 @@ export class GoogleAuthError extends Error {}
 
 // API の失敗。5xx とネットワークは時間をおけば直る見込みがある
 export class GoogleApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly reason?: string) {
     super(message);
   }
   get transient(): boolean {
+    // レート制限は 403 でも返る
+    if (this.status === 403 && RATE_LIMIT_REASONS.has(this.reason ?? "")) return true;
     return this.status === 0 || this.status === 429 || this.status >= 500;
+  }
+}
+
+const RATE_LIMIT_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
+
+// 失敗の本文の error.errors[0].reason を読む
+function errorReason(text: string): string | undefined {
+  try {
+    return JSON.parse(text)?.error?.errors?.[0]?.reason;
+  } catch {
+    return undefined;
   }
 }
 
@@ -100,11 +115,16 @@ export class GoogleClient {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 404) return null;
-    if (res.status === 410) throw new GoogleSyncExpired("syncToken が無効です");
     if (res.status === 401) throw new GoogleAuthError("Google の認証が無効です");
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new GoogleApiError(`Google Calendar HTTP ${res.status} ${text.slice(0, 200)}`, res.status);
+      const reason = errorReason(text);
+      if (res.status === 410) {
+        // 410 は消された予定（deleted）と、syncToken の失効の両方で返る
+        if (reason === "deleted") return null;
+        throw new GoogleSyncExpired("syncToken が無効です");
+      }
+      throw new GoogleApiError(`Google Calendar HTTP ${res.status} ${text.slice(0, 200)}`, res.status, reason);
     }
     return await res.json() as T;
   }
@@ -312,6 +332,12 @@ export class GoogleProvider implements ReservationProvider {
 
   async create(input: NewReservation): Promise<ReservationWrite> {
     return this.toWrite(await this.client.insertEvent(this.calendarId, reservationToEvent(input)));
+  }
+
+  // カレンダーには同時の書き込みを止める手段がないので、読んでから書くまでの重なりは承認リストで防ぐ
+  async createIfFree(input: NewReservation): Promise<ReservationWrite> {
+    if ((await findOverlaps(this, input.starts_at, input.ends_at)).length > 0) throw overlapError();
+    return await this.create(input);
   }
 
   async update(id: string, patch: ReservationPatch): Promise<ReservationWrite> {

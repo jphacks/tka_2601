@@ -409,3 +409,15 @@ Deno.test("文との突き合わせ: LLM が落とした時刻を文から拾う
   ) as UpdateReservationProposal;
   assertEquals(update.after.starts_at, "2026-11-02T06:30:00.000Z");
 });
+
+Deno.test("変更: 「2時間」を時刻として読まない", async () => {
+  const target = reservation({ starts_at: "2026-11-03T05:00:00.000Z", ends_at: "2026-11-03T06:30:00.000Z" });
+  const proposal = await resolve(
+    { action: "update", customer_name: "田中", target_date: "2026-11-03" },
+    [target],
+    "monban",
+    "田中さんの明日の予約を2時間にのばして",
+  );
+  // LLM が時刻を落としても、開始を 02:00 にする案を作らない
+  assertEquals(proposal.type === "unknown" ? proposal.reason : proposal.type, "変更後の日時を読み取れませんでした");
+});

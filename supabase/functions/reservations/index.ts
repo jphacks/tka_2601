@@ -15,7 +15,7 @@ import { withSupabase } from "@supabase/server";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.118.0";
 import { createCalendarStore, googleConfigFromEnv, providerFor, squareClientFor } from "../_shared/calendar_store.ts";
 import { authenticateMember } from "../_shared/member_auth.ts";
-import { notifySafely } from "../_shared/notify.ts";
+import { notify, notifySafely } from "../_shared/notify.ts";
 import { squareConfigFromEnv } from "../_shared/square.ts";
 import { handleReservationsRequest } from "./handler.ts";
 
@@ -31,6 +31,9 @@ export default {
       authenticate: (request) => authenticateMember(admin, request),
       providerFor: (householdId) => providerFor(admin, householdId),
       notify: (notification) => notifySafely(admin, notification),
+      notifyOrThrow: async (notification) => {
+        await notify(admin, notification);
+      },
     });
   }),
 };

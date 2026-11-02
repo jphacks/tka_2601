@@ -76,9 +76,18 @@ export function usePushNotifications(userId: string | null) {
   }, [userId, response]);
 }
 
-// ログアウトの前に、この端末を送り先から外す
+// 通知が許可されていれば、この端末のトークンを返す。許可を尋ねない
+async function currentExpoPushToken(): Promise<string | null> {
+  const projectId = easProjectId();
+  if (!projectId || !(await Notifications.getPermissionsAsync()).granted) return null;
+  return (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+}
+
+// ログアウトの前に、この端末を送り先から外す。起動時の登録に失敗していても前回の行が残るので、
+// 覚えていなければ取り直す。消せなければ例外を投げる
 export async function unregisterPushToken(userId: string): Promise<void> {
-  if (!registeredToken) return;
-  await repositories.pushTokens.remove(userId, registeredToken);
+  const token = registeredToken ?? (await currentExpoPushToken());
+  if (!token) return;
+  await repositories.pushTokens.remove(userId, token);
   registeredToken = null;
 }

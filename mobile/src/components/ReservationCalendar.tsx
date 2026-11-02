@@ -6,6 +6,7 @@ import { Platform, Pressable, StyleSheet, Text, TouchableOpacity, type Touchable
 import { Calendar, type CalendarTouchableOpacityProps, type ICalendarEventBase } from 'react-native-big-calendar';
 
 import {
+  calendarEnd,
   customerLabel,
   datesInRange,
   dayRange,
@@ -141,7 +142,7 @@ export function ReservationCalendar({
       active.map((reservation) => ({
         title: reservation.customer_name,
         start: new Date(reservation.starts_at),
-        end: new Date(reservation.ends_at),
+        end: calendarEnd(new Date(reservation.starts_at), new Date(reservation.ends_at)),
         reservation,
       })),
     [active],
@@ -284,7 +285,8 @@ export function ReservationCalendar({
 
   return (
     <Calendar<CalendarEvent>
-      key={mode}
+      // 時間帯が変わるとスクロールの位置も変わるので作り直す
+      key={`${mode}:${firstHour}:${lastHour}`}
       mode={mode}
       date={date}
       events={events}
@@ -300,6 +302,8 @@ export function ReservationCalendar({
       theme={THEME}
       showAllDayEventCell={false}
       overlapOffset={8}
+      // 既定の処理は日にちだけで並べるので、週が月をまたぐと重なりを見落とす
+      enableEnrichedEvents
       eventCellStyle={eventCellStyle}
       renderEvent={renderEvent}
       renderHeader={(mode === 'week' ? WeekHeader : NoHeader) as never}

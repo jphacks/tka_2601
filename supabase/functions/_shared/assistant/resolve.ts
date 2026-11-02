@@ -188,7 +188,8 @@ function serviceInText(text: string, services: ShopService[]): ShopService | nul
 
 // 文に書かれた時刻を順に返す。LLM が時刻を落としたときに使う
 function timesInText(text: string): string[] {
-  const pattern = /(午前|午後)?\s*(\d{1,2})(?:時(半|(\d{1,2})分)?|:(\d{2}))/g;
+  // 「2時間」は長さなので時刻として読まない
+  const pattern = /(午前|午後)?\s*(\d{1,2})(?:時(?!間)(半|(\d{1,2})分)?|:(\d{2}))/g;
   const times: string[] = [];
   for (const m of text.normalize("NFKC").matchAll(pattern)) {
     const hour = Number(m[2]) + (m[1] === "午後" && Number(m[2]) < 12 ? 12 : 0);

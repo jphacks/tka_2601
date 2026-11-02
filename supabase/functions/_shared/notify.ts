@@ -39,9 +39,9 @@ const RETRY_AFTER_SECONDS = 60;
 
 type RpcAdmin = Pick<SupabaseClient, "rpc">;
 
-// 同じ dedupe_key の通知がすでにあれば何も送らない
+// 記録と送信待ちは1つのトランザクションで作る。同じ dedupe_key で送り直しても、受け付け済みの端末には送らない
 export async function notify(admin: RpcAdmin, notification: NewNotification, send: SendOptions = defaultSend()) {
-  const { data: id, error } = await admin.rpc("notification_create", {
+  const { data: id, error } = await admin.rpc("notification_publish", {
     p_household_id: notification.household_id,
     p_kind: notification.kind,
     p_title: notification.title,
@@ -52,10 +52,6 @@ export async function notify(admin: RpcAdmin, notification: NewNotification, sen
     p_actor_user_id: notification.actor_user_id ?? null,
   });
   if (error) throw error;
-  if (!id) return { notification_id: null, sent: 0, tickets: [] as ExpoTicket[], results: [] as DeliveryResult[] };
-
-  const { error: enqueueError } = await admin.rpc("push_enqueue", { p_notification_id: id });
-  if (enqueueError) throw enqueueError;
   const claimed = await claim(admin, { p_notification_id: id });
   const { tickets, results } = await deliver(admin, claimed, send);
   return { notification_id: id as string, sent: claimed.length, tickets, results };

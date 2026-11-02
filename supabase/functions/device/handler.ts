@@ -1,8 +1,8 @@
 import { readJsonObject, reservationErrorResponse } from "../_shared/errors.ts";
 import type { NewNotification } from "../_shared/notify.ts";
-import { findOverlaps, parseRange, ProviderError, type ReservationProvider } from "../_shared/reservation.ts";
+import type { ReservationProvider } from "../_shared/reservation.ts";
 import { reservationNotice } from "../_shared/reservation_notice.ts";
-import { parseAiReservation, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
+import { parseAiReservation, parseDeviceRange, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
 import { type DatabaseError, visitErrorResponse } from "./errors.ts";
 
 export type DeviceAdmin = {
@@ -77,7 +77,7 @@ export async function handleDeviceRequest(
         return await arrive(decodeURIComponent(arrivePath[1]), device.household_id, reservations);
       }
       if (req.method === "GET") {
-        const range = parseRange(new URL(req.url).searchParams);
+        const range = parseDeviceRange(new URL(req.url).searchParams);
         const provider = await reservations.providerFor(device.household_id);
         return Response.json(reservationListBody(provider.kind, await provider.list(range)));
       }
@@ -155,10 +155,7 @@ async function createPending(
   const { input, visitId } = parseAiReservation(await readJsonObject(req));
   if (visitId && await deps.visitBelongs(householdId, visitId)) input.visit_id = visitId;
   const provider = await deps.providerFor(householdId);
-  if ((await findOverlaps(provider, input.starts_at, input.ends_at)).length > 0) {
-    throw new ProviderError(409, "その時間にはすでに予約があります", "reservation_overlap");
-  }
-  const write = await provider.create(input);
+  const write = await provider.createIfFree(input);
   await deps.notify(
     reservationNotice(householdId, "reservation_pending", write.reservation, write.dedupeKey("reservation_pending")),
   );

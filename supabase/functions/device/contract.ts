@@ -3,8 +3,11 @@
 import {
   type NewReservation,
   parseNewReservation,
+  parseRange,
+  ProviderError,
   type ProviderKind,
   type Reservation,
+  type ReservationRange,
 } from "../_shared/reservation.ts";
 
 // 形を壊す変更をしたら上げる。中継はこの値で読み方を切り替えられる
@@ -46,21 +49,31 @@ export function settingsBody(device: DeviceSettings, shop: unknown) {
   };
 }
 
+// 本体の鍵で読める範囲を絞る。電話番号とメモは渡さない。メモは予約先で外部の人が書けるので、LLM にも渡さない
 function reservationFields(reservation: Reservation) {
   return {
     id: reservation.id,
     customer_name: reservation.customer_name,
-    customer_phone: reservation.customer_phone,
     service_name: reservation.service_name,
     starts_at: reservation.starts_at,
     ends_at: reservation.ends_at,
     status: reservation.status,
     source: reservation.source,
-    note: reservation.note,
     arrived_at: reservation.arrived_at,
     visit_id: reservation.visit_id,
     read_only: reservation.read_only,
   };
+}
+
+const MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
+
+// 一度に読める期間は 31 日まで
+export function parseDeviceRange(params: URLSearchParams): ReservationRange {
+  const range = parseRange(params);
+  if (Date.parse(range.to) - Date.parse(range.from) > MAX_RANGE_MS) {
+    throw new ProviderError(400, "期間は 31 日までにしてください");
+  }
+  return range;
 }
 
 export function reservationListBody(provider: ProviderKind, reservations: Reservation[]) {

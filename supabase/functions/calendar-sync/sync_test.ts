@@ -42,7 +42,9 @@ Deno.test("差分の分類: 新規、仮、変更、キャンセル、通知し�
   assertEquals(classifyChange(event("a", { status: "tentative" }), now), "reservation_pending");
   assertEquals(classifyChange(event("a", { updated: "2026-11-01T01:00:00.000Z" }), now), "reservation_updated");
   assertEquals(classifyChange(event("a", { status: "cancelled" }), now), "reservation_cancelled");
-  assertEquals(classifyChange({ id: "a", status: "cancelled" }, now), "reservation_cancelled");
+  // 時刻の分からない削除は、終日かどうか分からないので個別のキャンセルにしない
+  assertEquals(classifyChange({ id: "a", status: "cancelled" }, now), "reservation_updated");
+  assertEquals(classifyChange({ id: "a", status: "cancelled", start: { date: "2026-11-03" } }, now), null);
   assertEquals(classifyChange(event("a", { start: { date: "2026-11-03" }, end: { date: "2026-11-04" } }), now), null);
   const past = { start: { dateTime: "2026-11-01T05:00:00.000Z" }, end: { dateTime: "2026-11-01T06:00:00.000Z" } };
   assertEquals(classifyChange(event("a", past), now), null);
@@ -79,8 +81,36 @@ Deno.test("差分が多いときは1件にまとめる", async () => {
   const { sync, sent } = run(() => Response.json({ items: many, nextSyncToken: "token-2" }));
   assertEquals((await sync()).notified, 1);
   assertEquals(sent[0].kind, "reservation_updated");
-  assertEquals(sent[0].dedupe_key, "google:bulk:token-2");
+  // 読み始めの目印から作るので、読み直しても同じキーになる
+  assertEquals(sent[0].dedupe_key, "google:bulk:token-1");
   assertEquals(sent[0].body, `${BULK_THRESHOLD + 1} 件（11月3日（火）14:00 から）`);
+});
+
+Deno.test("時刻の分からない削除は、予定が消えたことだけを知らせる", async () => {
+  const { sync, sent } = run(() => Response.json({ items: [{ id: "gone", etag: '"gone"', status: "cancelled" }], nextSyncToken: "token-2" }));
+  await sync();
+  assertEquals(sent.map((n) => [n.kind, n.title, n.dedupe_key]), [["reservation_updated", "予約先の予定が削除されました", 'google:gone:"gone"']]);
+  assertEquals(sent[0].data, {});
+});
+
+Deno.test("目印の保存では、変える項目だけを送る", async () => {
+  const { sync, state } = run(() => Response.json({ items: [], nextSyncToken: "token-2" }));
+  await sync();
+  assertEquals(Object.keys(state.saved.at(-1)!).sort(), ["last_error", "last_synced_at", "status", "sync_token"]);
+  assertEquals(state.connection?.refresh_token_encrypted, baseConnection.refresh_token_encrypted);
+});
+
+Deno.test("403 のレート制限は一時的な失敗として扱う", async () => {
+  const limited = () =>
+    Response.json({ error: { code: 403, errors: [{ reason: "rateLimitExceeded" }] } }, { status: 403 });
+  const recent = { ...baseConnection, last_synced_at: "2026-11-01T23:55:00.000Z" };
+  const first = run(limited, { connection: recent });
+  await first.sync();
+  assertEquals([first.state.connection?.status, first.sent.length], ["active", 0]);
+
+  const denied = run(() => Response.json({ error: { errors: [{ reason: "forbidden" }] } }, { status: 403 }), { connection: recent });
+  await denied.sync();
+  assertEquals([denied.state.connection?.status, denied.sent.length], ["error", 1]);
 });
 
 Deno.test("境界の件数まではまとめない", async () => {

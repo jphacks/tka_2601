@@ -151,8 +151,9 @@ function toBusinessHour(value: unknown): BusinessHour | null {
   return {
     day: value.day,
     closed: value.closed === true,
-    open: text(value.open, '10:00'),
-    close: text(value.close, '19:00'),
+    // 空の時刻が保存されていても既定の値で扱う
+    open: text(value.open) || '10:00',
+    close: text(value.close) || '19:00',
   };
 }
 
@@ -192,7 +193,7 @@ function toTimeSpan(value: unknown): TimeSpan | null {
 
 function toDayHours(value: unknown): DayHours | null {
   if (!isRow(value)) return null;
-  return { closed: value.closed === true, open: text(value.open), close: text(value.close) };
+  return { closed: value.closed === true, open: nullableText(value.open), close: nullableText(value.close) };
 }
 
 const UNREADABLE: AssistantProposal = { type: 'unknown', reason: '', warnings: [] };

@@ -2,7 +2,9 @@
 // AI の仮予約は Square に書かず reservations 表に入れ、店が Square に入力してから承認する
 import type { NewNotification } from "./notify.ts";
 import {
+  findOverlaps,
   type NewReservation,
+  overlapError,
   ProviderError,
   type Reservation,
   type ReservationPatch,
@@ -30,8 +32,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOW_MS = 31 * DAY_MS;
 // 期間より前に始まって重なる予約も読む。Square の検索は開始の時刻だけを見るため（メニューの所要時間の上限と同じ）
 const LOOKBACK_MS = 12 * 60 * 60 * 1000;
-// アクセストークンは 30 日で切れる。Square の勧めに合わせて残り 7 日で更新する
-const REFRESH_MARGIN_MS = 7 * DAY_MS;
+// アクセストークンは 30 日で切れる。Square は 7 日以内ごとの更新を勧めているので、発行から 7 日で更新する
+const REFRESH_MARGIN_MS = 23 * DAY_MS;
 
 export type SquareConfig = {
   applicationId: string;
@@ -95,8 +97,17 @@ export class SquareApiError extends Error {
   }
 }
 
+// 通信の失敗も一時的な失敗として扱う
+async function sendToSquare(doFetch: typeof fetch, url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await doFetch(url, init);
+  } catch (e) {
+    throw new SquareApiError(`Square network error: ${e instanceof Error ? e.message : String(e)}`, 0);
+  }
+}
+
 export type SquareTokenStore = {
-  saveSquareConnection(connection: Partial<SquareConnection> & { household_id: string }): Promise<void>;
+  updateSquareConnection(householdId: string, patch: Partial<Omit<SquareConnection, "household_id">>): Promise<void>;
 };
 
 // アクセストークンの更新と、接続の状態の記録
@@ -120,7 +131,7 @@ export class SquareTokens {
 
   private async refresh(): Promise<string> {
     const refreshToken = await decryptToken(this.connection.refresh_token_encrypted, this.config.tokenKey);
-    const res = await this.doFetch(`${this.config.baseUrl}/oauth2/token`, {
+    const res = await sendToSquare(this.doFetch, `${this.config.baseUrl}/oauth2/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -137,13 +148,12 @@ export class SquareTokens {
       throw new SquareAuthError(`Square token HTTP ${res.status}`);
     }
     const update = {
-      household_id: this.connection.household_id,
       access_token_encrypted: await encryptToken(tokens.access_token, this.config.tokenKey),
       access_token_expires_at: tokens.expires_at as string,
       status: "active" as const,
       last_error: null,
     };
-    await this.store.saveSquareConnection(update);
+    await this.store.updateSquareConnection(this.connection.household_id, update);
     this.connection = { ...this.connection, ...update };
     return tokens.access_token;
   }
@@ -151,14 +161,14 @@ export class SquareTokens {
   // 正常に読めたので、エラーの記録を消す
   async markHealthy(): Promise<void> {
     if (this.connection.status !== "error") return;
-    await this.store.saveSquareConnection({ household_id: this.connection.household_id, status: "active", last_error: null });
+    await this.store.updateSquareConnection(this.connection.household_id, { status: "active", last_error: null });
     this.connection = { ...this.connection, status: "active", last_error: null };
   }
 
   // 接続を error にする。正常からエラーに変わったときだけ通知する
   async markFailed(message: string): Promise<void> {
     const wasActive = this.connection.status !== "error";
-    await this.store.saveSquareConnection({ household_id: this.connection.household_id, status: "error", last_error: message });
+    await this.store.updateSquareConnection(this.connection.household_id, { status: "error", last_error: message });
     this.connection = { ...this.connection, status: "error", last_error: message };
     if (!wasActive) return;
     await this.notify({
@@ -182,7 +192,7 @@ export class SquareClient {
   // 見つからないときは null
   private async request<T>(method: string, path: string, body?: unknown): Promise<T | null> {
     const token = await this.tokens.accessToken();
-    const res = await this.doFetch(`${this.config.baseUrl}${path}`, {
+    const res = await sendToSquare(this.doFetch, `${this.config.baseUrl}${path}`, {
       method,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -351,7 +361,7 @@ function logLookupFailure<T>(e: unknown): Map<string, T> {
 export type SquareProviderDeps = {
   client: Pick<SquareClient, "listBookings" | "getBooking" | "customers" | "serviceNames">;
   // AI の仮予約を置く表
-  ledger: Pick<ReservationProvider, "list" | "get" | "create" | "update" | "approve" | "cancel" | "arrive">;
+  ledger: Pick<ReservationProvider, "list" | "get" | "createIfFree" | "update" | "approve" | "cancel" | "arrive">;
   store: {
     externalArrivals(householdId: string, provider: "square", externalIds: string[]): Promise<Map<string, string>>;
     recordExternalArrival(householdId: string, provider: "square", externalId: string, arrivedAt: string): Promise<void>;
@@ -396,8 +406,14 @@ export class SquareProvider implements ReservationProvider {
 
   // AI の仮予約だけを表に入れる。アプリから足すときは Square に入れてもらう
   async create(input: NewReservation): Promise<ReservationWrite> {
+    return await this.createIfFree(input);
+  }
+
+  // Square の予約と表の仮予約の両方を見る。Square には同時の書き込みを止める手段がないので、そちらとの競合は承認リストで防ぐ
+  async createIfFree(input: NewReservation): Promise<ReservationWrite> {
     if (input.source !== "ai") throw readOnlyError();
-    return await this.deps.ledger.create(input);
+    if ((await findOverlaps(this, input.starts_at, input.ends_at)).length > 0) throw overlapError();
+    return await this.deps.ledger.createIfFree(input);
   }
 
   async update(id: string, patch: ReservationPatch): Promise<ReservationWrite> {

@@ -14,6 +14,7 @@
 // Expo からは DeviceNotRegistered の ticket が返るのが正しい。
 
 import { createClient } from "npm:@supabase/supabase-js@2.118.0";
+import { createCalendarStore } from "../functions/_shared/calendar_store.ts";
 import {
   DEVICE_ID,
   localStatus,
@@ -412,6 +413,8 @@ try {
   check("予約を変更できる", moved.status === 200 && moved.json.reservation.note === "初回", moved);
   check("知らない予約は 404", (await reservations("GET", `/${crypto.randomUUID()}`)).status === 404);
   check("日時の誤りは 400", (await reservations("POST", "", { customer_name: "佐藤", starts_at: "x", ends_at: "y" })).status === 400);
+  const noOffset = await reservations("POST", "", { customer_name: "佐藤", starts_at: "2099-01-02T14:00:00", ends_at: "2099-01-02T15:00:00" });
+  check("オフセットのない日時は 400", noOffset.status === 400, noOffset);
 
   // ボイスエージェントの役: 仮予約、重なりの拒否、到着
   const overlap = await device("POST", "/reservations", {
@@ -436,6 +439,35 @@ try {
     ends_at: inDays(3, 6),
   });
   check("仮予約とも重なれば 409", pendingOverlap.status === 409, pendingOverlap);
+
+  // 同じ枠への仮予約が同時に来ても、1件しか入らない
+  const racing = await Promise.all(Array.from({ length: 5 }, (_, i) =>
+    device("POST", "/reservations", { customer_name: `同時${i}`, starts_at: inDays(5, 5), ends_at: inDays(5, 6) })
+  ));
+  check(
+    "同時の仮予約は1件だけ受ける",
+    racing.filter((r) => r.status === 201).length === 1 && racing.filter((r) => r.status === 409).length === 4,
+    racing.map((r) => r.status),
+  );
+  const raced = racing.find((r) => r.status === 201)?.json.reservation as Row | undefined;
+  if (raced) await reservations("POST", `/${raced.id}/cancel`);
+
+  const withContact = await device("POST", "/reservations", {
+    customer_name: "電話あり",
+    customer_phone: "090-1111-2222",
+    note: "メモ",
+    starts_at: inDays(6, 5),
+    ends_at: inDays(6, 6),
+  });
+  check("本体の返事に電話番号とメモは入らない", withContact.status === 201 && !("customer_phone" in withContact.json.reservation) && !("note" in withContact.json.reservation), withContact);
+  const deviceList = await device("GET", `/reservations${range}`);
+  const deviceRows = deviceList.json.reservations as Record<string, unknown>[];
+  check("本体の一覧に電話番号とメモは入らない", deviceList.status === 200 && deviceRows.length > 0 && deviceRows.every((r) => !("customer_phone" in r) && !("note" in r)), deviceList);
+  const appRow = await reservations("GET", `/${(withContact.json.reservation as Row).id}`);
+  check("アプリでは電話番号とメモを読める", appRow.json.reservation.customer_phone === "090-1111-2222" && appRow.json.reservation.note === "メモ", appRow);
+  await reservations("POST", `/${(withContact.json.reservation as Row).id}/cancel`);
+  const longRange = await device("GET", `/reservations?from=${inDays(1, 0)}&to=${inDays(40, 0)}`);
+  check("本体は 31 日を超えて読めない（400）", longRange.status === 400, longRange);
 
   const approvals = await reservations("GET", `${range}&status=pending`);
   check("承認リストに仮予約だけが出る", (approvals.json.reservations as Row[]).length === 1 && (approvals.json.reservations as Row[])[0].id === pendingRow.id, approvals);
@@ -499,6 +531,10 @@ try {
   const noCalendar = await reservations("PUT", "/provider", { provider: "google_calendar" });
   check("Google は接続するまで予約先にできない（409）", noCalendar.status === 409 && noCalendar.json.code === "google_not_connected", noCalendar);
   check("予約帳に戻せる", (await reservations("PUT", "/provider", { provider: "monban" })).json.provider === "monban");
+  const unknownCode = await reservations("POST", "/google/complete", { code: "unknown" });
+  check("OAuth の設定がなければ完了も 503", unknownCode.status === 503, unknownCode);
+  const unknownSquareCode = await reservations("POST", "/square/complete", { code: "unknown" });
+  check("Square の設定がなければ完了も 503", unknownSquareCode.status === 503, unknownSquareCode);
   const start = await reservations("POST", "/google/start", { return_url: "tka2601://settings/provider" });
   check("OAuth の設定がなければ 503", start.status === 503 && start.json.code === "google_not_configured", start);
   const callback = await fetch(`${status.API_URL}/functions/v1/reservations/google/callback?state=unknown&code=x`, { redirect: "manual" });
@@ -523,6 +559,61 @@ try {
   check("Square の設定がなければ Webhook も 503", squareWebhook.status === 503, squareWebhook.status);
   const squareDisconnect = await reservations("DELETE", "/square");
   check("Square に接続していなくても解除は成功し、予約先は変わらない", squareDisconnect.status === 200 && squareDisconnect.json.provider === "monban", squareDisconnect);
+
+  // 接続の読み書き: 本物のストアを本物の DB に対して動かす。部分更新で NOT NULL 違反にならないこと
+  {
+    const store = createCalendarStore(admin);
+    await store.saveConnection({
+      household_id: memberHousehold,
+      account_email: "shop@example.com",
+      calendar_id: null,
+      calendar_name: null,
+      refresh_token_encrypted: "encrypted-refresh",
+      sync_token: null,
+      status: "active",
+      last_error: null,
+      connected_by: residentId,
+    });
+    await store.updateConnection(memberHousehold, { calendar_id: "cal@example.com", calendar_name: "予約", sync_token: "t1" });
+    let connection = await store.getConnection(memberHousehold);
+    check(
+      "接続の部分更新で他の項目が残る",
+      connection?.calendar_id === "cal@example.com" && connection.sync_token === "t1" && connection.refresh_token_encrypted === "encrypted-refresh",
+      connection,
+    );
+    await store.updateConnection(memberHousehold, { status: "error", last_error: "読めない" });
+    connection = await store.getConnection(memberHousehold);
+    check("接続の状態だけを変えられる", connection?.status === "error" && connection.last_error === "読めない" && connection.sync_token === "t1", connection);
+    await store.updateConnection("eeeeeeee-0000-4000-8000-00000000ffff", { status: "error" });
+    check("接続のない店の部分更新は何もしない", (await store.getConnection("eeeeeeee-0000-4000-8000-00000000ffff")) === null);
+    await store.deleteConnection(memberHousehold);
+
+    await store.saveSquareConnection({
+      household_id: memberHousehold,
+      merchant_id: "e2e-merchant",
+      merchant_name: "e2e の店",
+      access_token_encrypted: "encrypted-access",
+      refresh_token_encrypted: "encrypted-refresh",
+      access_token_expires_at: "2099-01-01T00:00:00Z",
+      status: "active",
+      last_error: null,
+      connected_by: residentId,
+    });
+    await store.updateSquareConnection(memberHousehold, { status: "error", last_error: "切れた" });
+    const square = await store.squareConnectionByMerchant("e2e-merchant");
+    check("Square の接続の部分更新で他の項目が残る", square?.status === "error" && square.access_token_encrypted === "encrypted-access", square);
+    await store.deleteSquareConnection(memberHousehold);
+
+    await store.savePending({ code: "e2e-code", provider: "square", household_id: memberHousehold, user_id: residentId, payload_encrypted: "x" });
+    const taken = await store.takePending("e2e-code");
+    check("保留のトークンは使い切り", taken?.user_id === residentId && (await store.takePending("e2e-code")) === null, taken);
+
+    const manyIds = Array.from({ length: 300 }, (_, i) => `event-${i}-${"x".repeat(40)}`);
+    await store.recordOwnWrite(memberHousehold, manyIds[250], '"1"');
+    const own = await store.ownEtags(memberHousehold, manyIds);
+    check("多くの予定でも自分の書き込みを読める", own.has(`${manyIds[250]}:"1"`), [...own]);
+    await sql(`delete from public.calendar_own_writes where household_id = '${memberHousehold}'`);
+  }
 
   // 自然言語の入力。解析器の精度は見ず、経路と「書き込まない」ことを確かめる
   async function assistant(body: unknown, token: string | null = jwt) {

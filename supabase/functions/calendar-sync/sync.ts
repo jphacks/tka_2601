@@ -17,8 +17,10 @@ export function classifyChange(event: GoogleEvent, now: Date): ReservationNotice
   // 終わった予定の変更は知らせない
   const end = event.end?.dateTime;
   if (end && Date.parse(end) < now.getTime()) return null;
-  if (event.status === "cancelled") return "reservation_cancelled";
-  if (!event.start?.dateTime) return null;
+  const timed = !!event.start?.dateTime && !!event.end?.dateTime;
+  // 削除された予定は id しか返らないことがあり、終日かどうか分からないので個別のキャンセルにしない
+  if (event.status === "cancelled") return timed ? "reservation_cancelled" : "reservation_updated";
+  if (!timed) return null;
   const isNew = event.created && event.updated &&
     Date.parse(event.updated) - Date.parse(event.created) < NEW_EVENT_MS;
   if (!isNew) return "reservation_updated";
@@ -28,32 +30,34 @@ export function classifyChange(event: GoogleEvent, now: Date): ReservationNotice
 export function changeNotice(householdId: string, event: GoogleEvent, kind: ReservationNoticeKind): NewNotification {
   const reservation = eventToReservation(event);
   if (reservation) return reservationNotice(householdId, kind, reservation, googleDedupeKey(event));
-  // 削除された予定は id と状態しか返らないことがある
+  // 時刻の分からない削除。予定はもうないので、予約の画面へは案内しない
   return {
     household_id: householdId,
     kind,
-    title: "予約がキャンセルされました",
-    body: "Google カレンダーの予定が削除されました",
-    data: { reservation_id: event.id },
+    title: "予約先の予定が削除されました",
+    body: "Google カレンダーを確かめてください",
+    data: {},
     dedupe_key: googleDedupeKey(event),
   };
 }
 
-export function bulkNotice(householdId: string, count: number, firstStart: string | undefined, syncToken: string): NewNotification {
+// dedupe_key は読み始めの目印から作る。読み直しても同じ差分なら同じキーになり、二重に通知しない
+export function bulkNotice(householdId: string, count: number, firstStart: string | undefined, fromToken: string): NewNotification {
   return {
     household_id: householdId,
     kind: "reservation_updated",
     title: "予約がまとめて変更されました",
     body: firstStart ? `${count} 件（${reservationTime(firstStart)} から）` : `${count} 件`,
     data: {},
-    dedupe_key: `google:bulk:${syncToken}`,
+    dedupe_key: `google:bulk:${fromToken}`,
   };
 }
 
 export type SyncDeps = {
   store: CalendarStore;
   client: (connection: CalendarConnection) => Promise<GoogleClient>;
-  // 失敗は投げてよい。差分の目印を進めないので次の回に送り直す（dedupe_key で二重にならない）
+  // 失敗は投げてよい。差分の目印を進めないので次の回に読み直す。
+  // 記録と送信待ちは同時に作られ、dedupe_key で二重にならず、足りない送信待ちだけが入る
   notify: (notification: NewNotification) => Promise<unknown>;
   now?: () => Date;
 };
@@ -74,7 +78,7 @@ export async function syncConnection(connection: CalendarConnection, deps: SyncD
     if (token) {
       try {
         const { items, nextSyncToken } = await client.changes(calendarId, token);
-        notified = await notifyChanges(householdId, items, nextSyncToken, now, deps);
+        notified = await notifyChanges(householdId, items, token, now, deps);
         token = nextSyncToken;
       } catch (e) {
         if (!(e instanceof GoogleSyncExpired)) throw e;
@@ -86,8 +90,7 @@ export async function syncConnection(connection: CalendarConnection, deps: SyncD
       outcome = "baseline";
     }
 
-    await deps.store.saveConnection({
-      household_id: householdId,
+    await deps.store.updateConnection(householdId, {
       sync_token: token,
       status: "active",
       last_error: null,
@@ -99,7 +102,7 @@ export async function syncConnection(connection: CalendarConnection, deps: SyncD
   }
 }
 
-async function notifyChanges(householdId: string, items: GoogleEvent[], syncToken: string, now: Date, deps: SyncDeps): Promise<number> {
+async function notifyChanges(householdId: string, items: GoogleEvent[], fromToken: string, now: Date, deps: SyncDeps): Promise<number> {
   const own = await deps.store.ownEtags(householdId, items.map((e) => e.id));
   const changes = items
     .filter((event) => !event.etag || !own.has(`${event.id}:${event.etag}`))
@@ -110,7 +113,7 @@ async function notifyChanges(householdId: string, items: GoogleEvent[], syncToke
 
   if (changes.length > BULK_THRESHOLD) {
     const starts = changes.map(({ event }) => event.start?.dateTime).filter((s): s is string => !!s).sort();
-    await deps.notify(bulkNotice(householdId, changes.length, starts[0], syncToken));
+    await deps.notify(bulkNotice(householdId, changes.length, starts[0], fromToken));
     return 1;
   }
   for (const { event, kind } of changes) await deps.notify(changeNotice(householdId, event, kind));
@@ -127,8 +130,7 @@ async function recordFailure(connection: CalendarConnection, e: unknown, now: Da
   const giveUp = !transient || Number.isNaN(since) || now.getTime() - since > TRANSIENT_ALERT_MS;
   const firstAlert = giveUp && connection.status === "active";
   try {
-    await deps.store.saveConnection({
-      household_id: householdId,
+    await deps.store.updateConnection(householdId, {
       status: giveUp ? "error" : connection.status,
       last_error: message.slice(0, 500),
     });

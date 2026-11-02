@@ -12,8 +12,8 @@ import {
   type ReservationWrite,
 } from "../_shared/reservation.ts";
 import { type ReservationNoticeKind, reservationNotice } from "../_shared/reservation_notice.ts";
-import { disconnectSquare, handleSquareCallback, handleSquareWebhook, type SquareDeps, startSquareOAuth } from "./square.ts";
-import { disconnect, type GoogleDeps, handleCallback, listCalendars, providerStatus, selectCalendar, startOAuth } from "./google.ts";
+import { completeSquareOAuth, disconnectSquare, handleSquareCallback, handleSquareWebhook, type SquareDeps, startSquareOAuth } from "./square.ts";
+import { completeOAuth, disconnect, type GoogleDeps, handleCallback, listCalendars, providerStatus, selectCalendar, startOAuth } from "./google.ts";
 
 export type Member = { userId: string; householdId: string };
 
@@ -54,6 +54,12 @@ export async function handleReservationsRequest(req: Request, deps: Reservations
       const body = await readJsonObject(req);
       return Response.json({ url: await startOAuth(deps, member.householdId, member.userId, body.return_url) });
     }
+    if (path === "/google/complete") {
+      if (req.method !== "POST") return methodNotAllowed();
+      const body = await readJsonObject(req);
+      await completeOAuth(deps, member, body.code);
+      return Response.json(await providerStatus(deps.store, member.householdId));
+    }
     if (path === "/google/calendars") {
       if (req.method !== "GET") return methodNotAllowed();
       return Response.json({ calendars: await listCalendars(deps, member.householdId) });
@@ -73,6 +79,12 @@ export async function handleReservationsRequest(req: Request, deps: Reservations
       if (req.method !== "POST") return methodNotAllowed();
       const body = await readJsonObject(req);
       return Response.json({ url: await startSquareOAuth(deps, member.householdId, member.userId, body.return_url) });
+    }
+    if (path === "/square/complete") {
+      if (req.method !== "POST") return methodNotAllowed();
+      const body = await readJsonObject(req);
+      await completeSquareOAuth(deps, member, body.code);
+      return Response.json(await providerStatus(deps.store, member.householdId));
     }
     if (path === "/square") {
       if (req.method !== "DELETE") return methodNotAllowed();

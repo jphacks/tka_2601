@@ -82,7 +82,7 @@ function provider(bookings: SquareBooking[] = [booking], overrides: { customers?
       return Promise.resolve([ledgerRow]);
     },
     get: () => Promise.resolve(ledgerRow),
-    create: (input: NewReservation) => {
+    createIfFree: (input: NewReservation) => {
       ledgerCalls.push(`create:${input.source}`);
       return Promise.resolve(write);
     },
@@ -265,10 +265,28 @@ Deno.test("Square の予約は読み取り専用。アプリからは足せず�
   await assertProviderError(() => instance.cancel("square:b1"), 409, "provider_read_only");
   assertEquals(ledgerCalls, []);
 
-  assertEquals((await instance.create({ ...input, status: "pending", source: "ai" })).reservation.id, ledgerRow.id);
-  assertEquals(ledgerCalls, ["create:ai"]);
+  const free = { starts_at: "2026-11-02T10:00:00.000Z", ends_at: "2026-11-02T11:00:00.000Z" };
+  assertEquals((await instance.createIfFree({ ...input, ...free, status: "pending", source: "ai" })).reservation.id, ledgerRow.id);
+  assertEquals(ledgerCalls.at(-1), "create:ai");
   assertEquals((await instance.approve(ledgerRow.id)).reservation.id, ledgerRow.id);
   assertEquals((await instance.cancel(ledgerRow.id)).reservation.id, ledgerRow.id);
+});
+
+Deno.test("AI の仮予約は Square の予約と重なれば受けない", async () => {
+  const { instance, ledgerCalls } = provider();
+  const input: NewReservation = {
+    customer_name: "田中",
+    customer_phone: null,
+    service_name: null,
+    starts_at: "2026-11-02T05:30:00.000Z",
+    ends_at: "2026-11-02T06:00:00.000Z",
+    note: null,
+    status: "pending",
+    source: "ai",
+    visit_id: null,
+  };
+  await assertProviderError(() => instance.createIfFree(input), 409, "reservation_overlap");
+  assertEquals(ledgerCalls.includes("create:ai"), false);
 });
 
 Deno.test("到着は Square の予約にも記録でき、通知のキーは予約ごとに1つ", async () => {
@@ -329,7 +347,7 @@ async function tokenSetup(handler: (url: URL, init: RequestInit) => Response, ov
     connection,
     config,
     {
-      saveSquareConnection(update) {
+      updateSquareConnection(_, update) {
         saved.push(update);
         return Promise.resolve();
       },
@@ -378,6 +396,41 @@ Deno.test("更新が拒否されたら接続を error にして1回だけ通知�
   assertEquals(saved[0].status, "error");
   assertEquals(sent.length, 1);
   assertEquals(sent[0].kind, "calendar_sync_failed");
+});
+
+Deno.test("発行から 7 日たったら更新する（残りが 23 日を切ったら）", async () => {
+  const fresh = await tokenSetup(() => new Response(null, { status: 500 }), { access_token_expires_at: "2026-11-25T01:00:00Z" });
+  assertEquals(await fresh.instance.accessToken(), "old-access");
+  assertEquals(fresh.calls.length, 0);
+
+  const aged = await tokenSetup(() => Response.json({ access_token: "new-access", expires_at: "2026-12-02T00:00:00Z" }), {
+    access_token_expires_at: "2026-11-24T23:00:00Z",
+  });
+  assertEquals(await aged.instance.accessToken(), "new-access");
+});
+
+Deno.test("通信の失敗は一時的な失敗として扱う", async () => {
+  const offline = (() => Promise.reject(new TypeError("network"))) as typeof fetch;
+  const connection = {
+    household_id: "h1",
+    merchant_id: "m1",
+    merchant_name: null,
+    access_token_encrypted: await encryptToken("old-access", tokenKey),
+    refresh_token_encrypted: await encryptToken("refresh", tokenKey),
+    access_token_expires_at: "2026-11-05T00:00:00Z",
+    status: "active" as const,
+    last_error: null,
+    connected_by: "u1",
+  };
+  const tokens = new SquareTokens(connection, config, { updateSquareConnection: () => Promise.resolve() }, () => Promise.resolve(), offline, () => new Date("2026-11-02T00:00:00Z"));
+  await assertRejects(() => tokens.accessToken(), SquareApiError);
+
+  const client = new SquareClient(config, {
+    accessToken: () => Promise.resolve("t"),
+    markFailed: () => Promise.resolve(),
+    markHealthy: () => Promise.resolve(),
+  }, offline);
+  await assertRejects(() => client.getBooking("b1"), SquareApiError);
 });
 
 Deno.test("更新の一時的な失敗では接続を error にしない", async () => {

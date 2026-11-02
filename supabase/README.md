@@ -132,18 +132,20 @@
 | `GET /reservations/provider` | なし | `{"provider": "...", "capabilities": {"create"}, "google": {"connected", "account_email", "calendar_id", "calendar_name", "status", "last_error"}, "square": {"connected", "merchant_name", "status", "last_error"}}` |
 | `PUT /reservations/provider` | `{"provider": "monban" \| "google_calendar" \| "square" \| "hotpepper"}` | 同上。Google は接続とカレンダーの選択が済むまで 409（`google_not_connected`）、Square は接続が済むまで 409（`square_not_connected`） |
 | `POST /reservations/google/start` | `{"return_url": "tka2601://..."}` | `{"url": "..."}`。設定がなければ 503（`google_not_configured`） |
-| `GET /reservations/google/callback` | Google が呼ぶ | `return_url?google=connected`（`cancelled`、`error`）へ転送する |
+| `GET /reservations/google/callback` | Google が呼ぶ | トークンを暗号化して保留にし、`return_url?google=pending&code=...`（`cancelled`、`error`）へ転送する |
+| `POST /reservations/google/complete` | `{"code": "..."}` | 始めた本人なら接続を確定し、`provider` の GET と同じ形を返す。他人は 403（`oauth_user_mismatch`）、期限切れや不明は 404（`oauth_code_invalid`） |
 | `GET /reservations/google/calendars` | なし | `{"calendars": [{"id", "name", "primary"}]}`。書き込めるものだけ |
 | `PUT /reservations/google/calendar` | `{"calendar_id": "..."}` | `GET /reservations/provider` と同じ。予約先は変えない |
 | `DELETE /reservations/google` | なし | 同上。接続を消し、予約先を予約帳に戻す |
 | `POST /reservations/square/start` | `{"return_url": "tka2601://..."}` | `{"url": "<Square の同意画面>"}`。設定がなければ 503（`square_not_configured`） |
-| `GET /reservations/square/callback` | Square が呼ぶ | `return_url?square=connected`、`cancelled`、`error` へ転送する |
+| `GET /reservations/square/callback` | Square が呼ぶ | トークンを暗号化して保留にし、`return_url?square=pending&code=...`（`cancelled`、`error`）へ転送する |
+| `POST /reservations/square/complete` | `{"code": "..."}` | Google と同じ。別の店で使われているアカウントは 409（`square_merchant_in_use`） |
 | `DELETE /reservations/square` | なし | `GET /reservations/provider` と同じ。接続を消し、予約先が Square なら予約帳に戻す |
 | `POST /reservations/square/webhook` | Square が呼ぶ。署名が違えば 403 | 予約の変化を通知する |
 
 失敗は `{"error": "理由", "code": "..."}` で返す。`code` はアプリが分岐に使うものだけに付ける。Google に届かないときは 502 で `google_unavailable`、接続し直しが要るときは 502 で `google_reauth_required` を返す。
 
-Google カレンダーに接続する手順は、`google/start` の URL を開き、戻ってきたら `google/calendars` から選んで `google/calendar` に送り、`provider` を `google_calendar` にする。Square は `square/start` の URL を開き、`square=connected` で戻ってきたら `provider` を `square` にする。
+Google カレンダーに接続する手順は、`google/start` の URL を開き、`google=pending&code=...` で戻ってきたら `google/complete` に `code` を送り、`google/calendars` から選んで `google/calendar` に送り、`provider` を `google_calendar` にする。Square は `square/start` の URL を開き、`square=pending&code=...` で戻ってきたら `square/complete` に `code` を送り、`provider` を `square` にする。コールバックには JWT がなく同意した人が分からないので、完了で始めた本人かを確かめてから接続にする。
 
 Square の予約は読み取りだけで、`read_only` が `true` になる。変更、承認、キャンセルと、アプリからの追加は 409（`provider_read_only`）を返す。到着の記録だけはできる。ログインが無効になると 502（`square_reauth_required`）、一時的な失敗は 502（`square_unavailable`）を返す。
 
@@ -235,13 +237,23 @@ deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_
 
 シードの本体は、グループに結び付けた状態で入る。`supabase db reset` をするとアカウントと鍵も消えるため、シードを流し直す。
 
+### デモデータ
+
+既存のアカウントのグループに、ネイルサロンを想定した店舗の設定、メニュー、今日を基準にした予約、来客と会話、通知を入れる。決まった id で書くので、何度実行しても増えず、日付が今日を基準に更新される。店名、業種、受け答え、営業時間は上書きし、予約先は予約帳に戻す。
+
+```bash
+deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_demo.ts resident@example.com
+```
+
+メールアドレスを省くと `supabase/.env` の `SEED_RESIDENT_EMAIL` を使う。既定ではローカルに入れる。クラウドに入れるときだけ `DEMO_SUPABASE_URL` と `DEMO_SUPABASE_SECRET_KEY` を渡す。来客を初めて入れると Webhook が動き、そのアカウントの端末に通知が届く。
+
 ## 試験
 
 | 試験 | 実行 | 内容 |
 |---|---|---|
-| pgTAP（183 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送、店舗の設定とメニューの権限、予約帳と接続（Square を含む）を直接読めないこと、通知のオンオフと操作した本人の除外、接続切れ、差分を読む呼び出し |
-| 結合（111 件） | `deno run --allow-read --allow-run --allow-net --allow-env supabase/tests/e2e_local.ts` | Data API での H1 と H3b、device での H2 と H4（同時の作成を含む）、グループの作成から招待での参加まで、ペアリング、設定、Webhook から Expo までと通知の文面、pg_cron の再送、予約帳の操作と通知、AI の仮予約と重なりの拒否、予約先の切り替え、Square の未設定と未接続、assistant の認証と入力の検証と「書き込まない」こと |
-| Edge Function（102 件） | `deno test --allow-env supabase/functions/` | 通知の条件と文面、Expo の試し直し、予定と予約の変換、差分の分類とまとめ通知、410 の扱い、自分の書き込みの除外、OAuth、更新トークンの暗号化、予約先の振り分け、device の経路、Square（状態の対応、ページングと期間の分割、顧客とメニュー、読み取り専用、合流、署名、Webhook、トークンの更新）、自然言語の入力（案への変換、文との突き合わせ、Ollama の成功と失敗、未設定の 503） |
+| pgTAP（199 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送、店舗の設定とメニューの権限、予約帳と接続（Square を含む）を直接読めないこと、通知のオンオフと操作した本人の除外、接続切れ、差分を読む呼び出し |
+| 結合（130 件） | `deno run --allow-read --allow-run --allow-net --allow-env supabase/tests/e2e_local.ts` | Data API での H1 と H3b、device での H2 と H4（同時の作成を含む）、グループの作成から招待での参加まで、ペアリング、設定、Webhook から Expo までと通知の文面、pg_cron の再送、予約帳の操作と通知、AI の仮予約と重なりの拒否、予約先の切り替え、Square の未設定と未接続、assistant の認証と入力の検証と「書き込まない」こと |
+| Edge Function（170 件） | `deno test --allow-env supabase/functions/` | 通知の条件と文面、Expo の試し直し、予定と予約の変換、差分の分類とまとめ通知、410 の扱い、自分の書き込みの除外、OAuth、更新トークンの暗号化、予約先の振り分け、device の経路、Square（状態の対応、ページングと期間の分割、顧客とメニュー、読み取り専用、合流、署名、Webhook、トークンの更新）、自然言語の入力（案への変換、文との突き合わせ、Ollama の成功と失敗、未設定の 503） |
 
 結合試験は、シードを入れたローカルで流す。Expo には実在しないトークンで送るため、Expo から `DeviceNotRegistered` の ticket が返れば正しい。マイグレーションを変えたら `supabase db advisors --local` も通す。
 

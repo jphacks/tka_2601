@@ -17,12 +17,15 @@ import {
 } from "../_shared/square.ts";
 import { encryptToken } from "../_shared/token_crypto.ts";
 import { isAllowedReturnUrl, STATE_TTL_MS } from "./google.ts";
+import { type CompletingMember, holdTokens, takeTokens } from "./oauth_pending.ts";
 
 export type SquareDeps = {
   store: CalendarStore;
   squareConfig?: SquareConfig | null;
   squareClient?: (connection: SquareConnection, config: SquareConfig) => Pick<SquareClient, "customers" | "serviceNames">;
   notify(notification: NewNotification): Promise<void>;
+  // Webhook で使う。失敗を投げて Square に送り直してもらう
+  notifyOrThrow(notification: NewNotification): Promise<void>;
   fetch?: typeof fetch;
   now?: () => Date;
 };
@@ -50,7 +53,15 @@ function appRedirect(returnUrl: string, result: string): Response {
   return new Response(null, { status: 302, headers: { Location: `${returnUrl}${separator}square=${result}` } });
 }
 
-// Square が呼ぶ。JWT はなく、使い切りの state で確かめる
+type HeldSquareTokens = {
+  access_token: string;
+  refresh_token: string;
+  merchant_id: string;
+  merchant_name: string | null;
+  expires_at: string;
+};
+
+// Square が呼ぶ。JWT はなく、使い切りの state で確かめる。トークンは保留にして、接続にはしない
 export async function handleSquareCallback(deps: SquareDeps, url: URL): Promise<Response> {
   const config = requireConfig(deps.squareConfig);
   const doFetch = deps.fetch ?? fetch;
@@ -83,22 +94,41 @@ export async function handleSquareCallback(deps: SquareDeps, url: URL): Promise<
     });
     const merchant = merchantRes.ok ? await merchantRes.json().catch(() => null) : null;
 
-    await deps.store.saveSquareConnection({
-      household_id: saved.household_id,
+    const held: HeldSquareTokens = {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
       merchant_id: tokens.merchant_id,
       merchant_name: merchant?.merchant?.business_name ?? null,
-      access_token_encrypted: await encryptToken(tokens.access_token, config.tokenKey),
-      refresh_token_encrypted: await encryptToken(tokens.refresh_token, config.tokenKey),
-      access_token_expires_at: tokens.expires_at,
-      status: "active",
-      last_error: null,
-      connected_by: saved.user_id,
-    });
-    return appRedirect(saved.return_url, "connected");
+      expires_at: tokens.expires_at,
+    };
+    const pendingCode = await holdTokens(deps.store, config.tokenKey, "square", saved, held);
+    return appRedirect(saved.return_url, `pending&code=${pendingCode}`);
   } catch (e) {
     console.error("Square OAuth failed", e);
     return appRedirect(saved.return_url, "error");
   }
+}
+
+// アプリが JWT 付きで呼ぶ。始めた本人だと確かめてから接続にする
+export async function completeSquareOAuth(deps: SquareDeps, member: CompletingMember, code: unknown): Promise<void> {
+  const config = requireConfig(deps.squareConfig);
+  const held = await takeTokens<HeldSquareTokens>(deps.store, config.tokenKey, "square", code, member, deps.now?.() ?? new Date());
+  // 1つの Square のアカウントは1つの店にだけ結び付ける
+  const other = await deps.store.squareConnectionByMerchant(held.merchant_id);
+  if (other && other.household_id !== member.householdId) {
+    throw new ProviderError(409, "この Square のアカウントは別の店で使われています", "square_merchant_in_use");
+  }
+  await deps.store.saveSquareConnection({
+    household_id: member.householdId,
+    merchant_id: held.merchant_id,
+    merchant_name: held.merchant_name,
+    access_token_encrypted: await encryptToken(held.access_token, config.tokenKey),
+    refresh_token_encrypted: await encryptToken(held.refresh_token, config.tokenKey),
+    access_token_expires_at: held.expires_at,
+    status: "active",
+    last_error: null,
+    connected_by: member.userId,
+  });
 }
 
 // 接続を消し、予約先を予約帳に戻す。Square への取り消しは失敗しても続ける
@@ -158,6 +188,12 @@ export async function handleSquareWebhook(deps: SquareDeps, req: Request): Promi
     : {};
   const reservation = bookingToReservation(booking, lookups);
   if (!reservation) return Response.json({ skipped: true });
-  await deps.notify(reservationNotice(connection.household_id, kind, reservation, squareDedupeKey(booking)));
+  // 記録に失敗したら 500 を返し、Square に送り直してもらう（dedupe_key で二重にならない）
+  try {
+    await deps.notifyOrThrow(reservationNotice(connection.household_id, kind, reservation, squareDedupeKey(booking)));
+  } catch (e) {
+    console.error("Square webhook notification failed", e);
+    return Response.json({ error: "通知を記録できませんでした" }, { status: 500 });
+  }
   return Response.json({ notified: true });
 }

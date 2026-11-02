@@ -10,8 +10,8 @@
 //     → {"auto_away_active": true}
 //   PUT /functions/v1/device/heartbeat
 //     本体の死活通信。15 分途絶えると店に通知する → {"last_heartbeat_at": "..."}
-//   GET /functions/v1/device/reservations?from=&to=
-//     → {"provider": "monban", "reservations": [...]}
+//   GET /functions/v1/device/reservations?from=&to=（31 日まで）
+//     → {"provider": "monban", "reservations": [...]}。電話番号とメモは返さない
 //   POST /functions/v1/device/reservations
 //     本文: customer_name, starts_at, ends_at, customer_phone, service_name, note, visit_id（後ろの4つは任意）
 //     → 201 {"reservation": {...}}。必ず仮予約になる。時間が重なれば 409

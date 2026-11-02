@@ -9,7 +9,7 @@ import { Card, GroupHeader, LinkRow, Separator, Toggle } from '../../components/
 import type { Device, DevicePatch } from '../../domain/device';
 import type { ShopProfile } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
-import { signOut } from '../../lib/authActions';
+import { PushCleanupFailed, signOut } from '../../lib/authActions';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { BUSINESS_TYPE_LABELS, MODE_LABELS, MODE_ORDER, PROVIDER_LABELS, TONE_LABELS } from '../../lib/labels';
@@ -60,10 +60,17 @@ export default function SettingsScreen() {
     }
   }
 
-  async function logout() {
+  async function logout(keepPushToken = false) {
     try {
-      await signOut();
+      await signOut({ keepPushToken });
     } catch (e) {
+      if (e instanceof PushCleanupFailed) {
+        Alert.alert('通知の設定を解除できませんでした', 'ログアウトしても、この端末に通知が届くことがあります。', [
+          { text: '戻る', style: 'cancel' },
+          { text: 'ログアウト', style: 'destructive', onPress: () => logout(true) },
+        ]);
+        return;
+      }
       Alert.alert('ログアウトできませんでした', errorMessage(e) ?? '');
     }
   }
@@ -158,7 +165,7 @@ export default function SettingsScreen() {
 
         <Card style={styles.logoutCard}>
           <Pressable
-            onPress={logout}
+            onPress={() => logout()}
             accessibilityRole="button"
             style={({ pressed }) => [styles.logout, pressed && styles.rowPressed]}
           >

@@ -21,6 +21,15 @@ Deno.test("新しい予約の入力を整え、受付元と状態は呼ぶ側が
   });
 });
 
+Deno.test("オフセットのない日時は受け付けない", () => {
+  for (const value of ["2026-11-05T14:00:00", "2026-11-05", "2026-11-05 14:00:00", "明日"]) {
+    assertThrows(() => parseNewReservation({ ...valid, starts_at: value }, origin), ProviderError, "Z か +09:00");
+  }
+  assertEquals(parseNewReservation({ ...valid, starts_at: "2026-11-02T04:00:00Z" }, origin).starts_at, "2026-11-02T04:00:00.000Z");
+  assertEquals(parseNewReservation({ ...valid, starts_at: "2026-11-02T04:00:00.000z" }, origin).starts_at, "2026-11-02T04:00:00.000Z");
+  assertEquals(parseNewReservation({ ...valid, starts_at: "2026-11-02T13:00:00+09:00" }, origin).starts_at, "2026-11-02T04:00:00.000Z");
+});
+
 Deno.test("入力の誤りは 400", () => {
   for (
     const body of [

@@ -17,7 +17,7 @@ import {
   SoftButton,
   TextButton,
 } from '../../components/ui';
-import { customerLabel, type Reservation, type ReservationProvider } from '../../domain/reservation';
+import { canRecordArrival, customerLabel, type Reservation, type ReservationProvider } from '../../domain/reservation';
 import { useBadges } from '../../lib/badges';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
@@ -167,7 +167,7 @@ export default function ReservationDetailScreen() {
                   <PrimaryButton label="承認" loading={busy} onPress={() => setDialog('approve')} style={styles.flex} />
                 </View>
               ) : null}
-              {!pending && !reservation.arrived_at ? (
+              {canRecordArrival(reservation, new Date()) ? (
                 <PrimaryButton
                   label="到着を記録"
                   loading={busy}

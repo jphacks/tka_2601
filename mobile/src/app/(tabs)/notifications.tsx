@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Screen } from '../../components/Screen';
 import { CenterMessage, Separator } from '../../components/ui';
+import { appendUnique } from '../../domain/collections';
 import {
   type AppNotification,
   isUnread,
@@ -14,6 +15,7 @@ import {
 } from '../../domain/notification';
 import { useAuth, useHousehold } from '../../lib/auth';
 import { useBadges } from '../../lib/badges';
+import { useLiveRefresh } from '../../lib/liveRefresh';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { dayKey, hourMinute, sectionTitle } from '../../lib/format';
@@ -58,15 +60,19 @@ export default function NotificationsScreen() {
   const [hasMore, setHasMore] = useState(true);
   const page = useRef(0);
   const loadingMore = useRef(false);
+  // 読み直しの回数。読み直す前に始めた続きの読み込みの結果を捨てる
+  const generation = useRef(0);
 
   const load = useCallback(async () => {
     if (!userId) return;
+    const current = ++generation.current;
     try {
       // 未読の印は開いた時点の位置で出し、読んだ位置は先へ進める
       const [previous, first] = await Promise.all([
         repositories.notifications.getReadThrough(userId),
         repositories.notifications.list(household.id, 0),
       ]);
+      if (current !== generation.current) return;
       page.current = 0;
       setReadThrough(previous);
       setRows(first);
@@ -78,7 +84,7 @@ export default function NotificationsScreen() {
         refreshBadges();
       }
     } catch (e) {
-      setError(errorMessage(e) ?? '読み込めませんでした');
+      if (current === generation.current) setError(errorMessage(e) ?? '読み込めませんでした');
     }
   }, [household.id, userId, refreshBadges]);
 
@@ -87,6 +93,8 @@ export default function NotificationsScreen() {
       load();
     }, [load]),
   );
+
+  useLiveRefresh(load);
 
   async function refresh() {
     setRefreshing(true);
@@ -97,13 +105,15 @@ export default function NotificationsScreen() {
   async function loadMore() {
     if (!hasMore || loadingMore.current || !rows) return;
     loadingMore.current = true;
+    const started = generation.current;
     try {
       const next = await repositories.notifications.list(household.id, page.current + 1);
+      if (started !== generation.current) return;
       page.current += 1;
-      setRows((current) => [...(current ?? []), ...next]);
+      setRows((current) => appendUnique(current ?? [], next));
       setHasMore(next.length === NOTIFICATIONS_PAGE_SIZE);
     } catch (e) {
-      setError(errorMessage(e) ?? '読み込めませんでした');
+      if (started === generation.current) setError(errorMessage(e) ?? '読み込めませんでした');
     } finally {
       loadingMore.current = false;
     }

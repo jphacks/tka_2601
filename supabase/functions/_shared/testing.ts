@@ -1,5 +1,5 @@
 // 試験で使う共通の部品（Deno のユニット試験だけが読む）
-import type { CalendarConnection, CalendarStore, OAuthState } from "./calendar_store.ts";
+import type { CalendarConnection, CalendarStore, OAuthPending, OAuthState } from "./calendar_store.ts";
 import type { ProviderKind } from "./reservation.ts";
 import type { SquareConnection } from "./square.ts";
 
@@ -18,6 +18,15 @@ export function fakeGoogle(handler: (url: URL, init: RequestInit) => Response) {
   return { fetch: fn as typeof fetch, calls };
 }
 
+// 本物の表と同じく、NOT NULL の列がない行は作れない（Postgres は衝突の判定より先に確かめる）
+function requireColumns(table: string, row: Record<string, unknown>, columns: string[]) {
+  for (const column of columns) {
+    if (row[column] === undefined || row[column] === null) {
+      throw new Error(`null value in column "${column}" of relation "${table}" violates not-null constraint`);
+    }
+  }
+}
+
 export function memoryStore(
   options: { connection?: CalendarConnection | null; square?: SquareConnection | null; provider?: ProviderKind; own?: string[] } = {},
 ) {
@@ -25,6 +34,7 @@ export function memoryStore(
     connection: options.connection ?? null,
     provider: options.provider ?? ("monban" as ProviderKind),
     states: new Map<string, OAuthState>(),
+    pending: new Map<string, OAuthPending>(),
     own: new Set(options.own ?? []),
     saved: [] as Partial<CalendarConnection>[],
     square: options.square ?? null,
@@ -34,8 +44,14 @@ export function memoryStore(
   const store: CalendarStore = {
     getConnection: () => Promise.resolve(state.connection),
     saveConnection(connection) {
+      requireColumns("calendar_connections", connection, ["household_id", "refresh_token_encrypted", "status"]);
       state.saved.push(connection);
-      state.connection = { ...(state.connection ?? {} as CalendarConnection), ...connection };
+      state.connection = { last_synced_at: null, ...connection };
+      return Promise.resolve();
+    },
+    updateConnection(_, patch) {
+      state.saved.push(patch);
+      if (state.connection) state.connection = { ...state.connection, ...patch };
       return Promise.resolve();
     },
     deleteConnection() {
@@ -51,6 +67,15 @@ export function memoryStore(
       state.states.delete(key);
       return Promise.resolve(saved);
     },
+    savePending(pending) {
+      state.pending.set(pending.code, { ...pending, created_at: new Date().toISOString() });
+      return Promise.resolve();
+    },
+    takePending(code) {
+      const pending = state.pending.get(code) ?? null;
+      state.pending.delete(code);
+      return Promise.resolve(pending);
+    },
     getProviderKind: () => Promise.resolve(state.provider),
     setProviderKind(_, kind) {
       state.provider = kind;
@@ -65,8 +90,21 @@ export function memoryStore(
     getSquareConnection: () => Promise.resolve(state.square),
     squareConnectionByMerchant: (merchantId) => Promise.resolve(state.square?.merchant_id === merchantId ? state.square : null),
     saveSquareConnection(connection) {
+      requireColumns("square_connections", connection, [
+        "household_id",
+        "merchant_id",
+        "access_token_encrypted",
+        "refresh_token_encrypted",
+        "access_token_expires_at",
+        "status",
+      ]);
       state.squareSaved.push(connection);
-      state.square = { ...(state.square ?? {} as SquareConnection), ...connection };
+      state.square = connection;
+      return Promise.resolve();
+    },
+    updateSquareConnection(_, patch) {
+      state.squareSaved.push(patch);
+      if (state.square) state.square = { ...state.square, ...patch };
       return Promise.resolve();
     },
     deleteSquareConnection() {

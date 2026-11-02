@@ -11,7 +11,7 @@ import type { ShopService } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
-import { clockLabel, minutesLabel, monthDay } from '../../lib/format';
+import { clockLabel, endClockLabel, minutesLabel, monthDay } from '../../lib/format';
 import { colors, radius } from '../../theme';
 
 const STEP_MINUTES = 15;
@@ -20,7 +20,8 @@ const DEFAULT_DURATION = 60;
 const MAX_DURATION = 12 * 60;
 const LAST_START = 24 * 60 - STEP_MINUTES;
 
-// date は開く日付。時刻が入っていれば開始の初期値にする。name などは自然言語の入力の「修正」から渡す
+// date は開く日付。時刻が入っていれば開始の初期値にする。name などは自然言語の入力の「修正」から渡す。
+// id と一緒に date や duration を渡すと、読み込んだ予約の日時より優先する
 type Params = {
   id?: string;
   date?: string;
@@ -63,14 +64,18 @@ export default function ReservationEditScreen() {
     repositories.reservations
       .get(params.id)
       .then((reservation) => {
-        const start = new Date(reservation.starts_at);
+        const start = new Date(params.date ?? reservation.starts_at);
         const end = new Date(reservation.ends_at);
         setName(reservation.customer_name);
         setPhone(reservation.customer_phone ?? '');
         setServiceName(reservation.service_name);
         setDate(startOfDayDate(start));
         setStartMinutes(start.getHours() * 60 + start.getMinutes());
-        setDuration(Math.round((end.getTime() - start.getTime()) / 60_000));
+        setDuration(
+          params.duration
+            ? Number(params.duration)
+            : Math.round((end.getTime() - new Date(reservation.starts_at).getTime()) / 60_000),
+        );
         setNote(reservation.note ?? '');
         setLoaded(true);
       })
@@ -222,7 +227,7 @@ export default function ReservationEditScreen() {
             <Separator />
             <View style={styles.dateRow}>
               <Text style={styles.rowLabel}>終了</Text>
-              <Text style={styles.endValue}>{clockLabel(startMinutes + duration)}</Text>
+              <Text style={styles.endValue}>{endClockLabel(startMinutes + duration)}</Text>
             </View>
           </Card>
 

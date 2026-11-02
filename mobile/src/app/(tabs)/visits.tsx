@@ -5,10 +5,12 @@ import { ActivityIndicator, RefreshControl, SectionList, StyleSheet, Text, View 
 import { Screen } from '../../components/Screen';
 import { CenterMessage, Separator } from '../../components/ui';
 import { VisitRow } from '../../components/VisitRow';
+import { appendUnique } from '../../domain/collections';
 import { VISITS_PAGE_SIZE, type VisitSummary } from '../../domain/visit';
 import { useHousehold } from '../../lib/auth';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
+import { useLiveRefresh } from '../../lib/liveRefresh';
 import { dayKey, sectionTitle } from '../../lib/format';
 import { colors, radius } from '../../theme';
 
@@ -35,16 +37,20 @@ export default function VisitListScreen() {
   const [hasMore, setHasMore] = useState(true);
   const loadingMore = useRef(false);
   const page = useRef(0);
+  // 読み直しの回数。読み直す前に始めた続きの読み込みの結果を捨てる
+  const generation = useRef(0);
 
   const loadFirstPage = useCallback(async () => {
+    const current = ++generation.current;
     try {
       const rows = await repositories.visits.list(household.id, 0);
+      if (current !== generation.current) return;
       page.current = 0;
       setVisits(rows);
       setHasMore(rows.length === VISITS_PAGE_SIZE);
       setError(null);
     } catch (e) {
-      setError(errorMessage(e) ?? '読み込めませんでした');
+      if (current === generation.current) setError(errorMessage(e) ?? '読み込めませんでした');
     }
   }, [household.id]);
 
@@ -55,6 +61,8 @@ export default function VisitListScreen() {
     }, [loadFirstPage]),
   );
 
+  useLiveRefresh(loadFirstPage);
+
   async function refresh() {
     setRefreshing(true);
     await loadFirstPage();
@@ -64,10 +72,12 @@ export default function VisitListScreen() {
   async function loadMore() {
     if (!hasMore || loadingMore.current || !visits) return;
     loadingMore.current = true;
+    const started = generation.current;
     try {
       const next = await repositories.visits.list(household.id, page.current + 1);
+      if (started !== generation.current) return;
       page.current += 1;
-      setVisits((current) => [...(current ?? []), ...next]);
+      setVisits((current) => appendUnique(current ?? [], next));
       setHasMore(next.length === VISITS_PAGE_SIZE);
     } finally {
       loadingMore.current = false;

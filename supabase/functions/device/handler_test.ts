@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertStrictEquals } from "jsr:@std/assert@1.0.19";
 import type { NewNotification } from "../_shared/notify.ts";
-import type { Reservation, ReservationProvider } from "../_shared/reservation.ts";
+import { ProviderError, type Reservation, type ReservationProvider } from "../_shared/reservation.ts";
 import { type DeviceAdmin, type DeviceReservationDeps, handleDeviceRequest } from "./handler.ts";
 
 const device = {
@@ -256,7 +256,8 @@ function reservationDeps(existing: Reservation[] = [], visitOk = true) {
       ranges.push(r);
       return Promise.resolve(existing);
     },
-    create(input: unknown) {
+    createIfFree(input: unknown) {
+      if (existing.length > 0) return Promise.reject(new ProviderError(409, "その時間にはすでに予約があります", "reservation_overlap"));
       created.push(input);
       return Promise.resolve(write);
     },
@@ -274,23 +275,60 @@ function reservationDeps(existing: Reservation[] = [], visitOk = true) {
 }
 
 Deno.test("reservations are listed through the provider", async () => {
-  const { deps } = reservationDeps([reservation]);
+  const withContact = { ...reservation, customer_phone: "090-0000-0000", note: "外部の人が書いた文" };
+  const { deps } = reservationDeps([withContact]);
   const { admin } = fakeAdmin([authenticated()]);
   const response = await handleDeviceRequest(request(`/reservations${range}`, "", "GET"), admin, deps);
-  assertEquals(await response.json(), { provider: "monban", reservations: [reservation] });
+  const { customer_phone: _phone, note: _note, ...visible } = reservation;
+  // 電話番号とメモは本体の鍵では読めない
+  assertEquals(await response.json(), { provider: "monban", reservations: [visible] });
 
   const bad = fakeAdmin([authenticated()]);
   assertEquals((await handleDeviceRequest(request("/reservations", "", "GET"), bad.admin, deps)).status, 400);
 });
 
+Deno.test("the device can read at most 31 days at once", async () => {
+  const { deps, ranges } = reservationDeps();
+  const allowed = fakeAdmin([authenticated()]);
+  const ok = await handleDeviceRequest(
+    request("/reservations?from=2026-11-01T00:00:00Z&to=2026-12-02T00:00:00Z", "", "GET"),
+    allowed.admin,
+    deps,
+  );
+  assertEquals(ok.status, 200);
+  const denied = fakeAdmin([authenticated()]);
+  const tooLong = await handleDeviceRequest(
+    request("/reservations?from=2026-11-01T00:00:00Z&to=2026-12-02T00:00:01Z", "", "GET"),
+    denied.admin,
+    deps,
+  );
+  assertEquals(tooLong.status, 400);
+  assertEquals(ranges.length, 1);
+});
+
+Deno.test("a malformed percent in the reservation id returns 400", async () => {
+  const { deps } = reservationDeps();
+  const { admin } = fakeAdmin([authenticated()]);
+  const response = await handleDeviceRequest(request("/reservations/%E0%A4%A/arrive", "", "POST"), admin, deps);
+  assertEquals(response.status, 400);
+});
+
+Deno.test("reservation times without an offset are rejected", async () => {
+  const { deps, created } = reservationDeps();
+  const { admin } = fakeAdmin([authenticated()]);
+  const body = JSON.stringify({ customer_name: "田中", starts_at: "2026-11-05T14:00:00", ends_at: "2026-11-05T15:00:00" });
+  const response = await handleDeviceRequest(request("/reservations", body, "POST"), admin, deps);
+  assertEquals(response.status, 400);
+  assertEquals(created.length, 0);
+});
+
 Deno.test("AI reservations are always pending and notify the shop", async () => {
-  const { deps, sent, created, ranges } = reservationDeps();
+  const { deps, sent, created } = reservationDeps();
   const { admin } = fakeAdmin([authenticated()]);
   const response = await handleDeviceRequest(request("/reservations", booking, "POST"), admin, deps);
   assertEquals(response.status, 201);
   const input = created[0] as { status: string; source: string; visit_id: string };
   assertEquals([input.status, input.source, input.visit_id], ["pending", "ai", "visit-1"]);
-  assertEquals(ranges[0], { from: "2026-11-02T05:00:00.000Z", to: "2026-11-02T06:00:00.000Z" });
   assertEquals(sent.map((n) => [n.kind, n.actor_user_id, n.dedupe_key]), [["reservation_pending", null, "v1:reservation_pending"]]);
 });
 
