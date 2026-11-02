@@ -14,7 +14,7 @@
 
 ## 配布までの手順
 
-1. 原稿の運営者名と連絡先を埋め、GitHub Pages の `gh-pages` ブランチで公開する。
+1. 原稿を変えたら、`gh-pages` ブランチの `privacy.html` も同じ内容に更新する。GitHub Pages はこのブランチから公開している。
 2. Supabase のダッシュボードの Authentication > Providers > Email で、Confirm email をオフにする。無料プランの標準のメールではテスターに確認メールを届けられないためである。
 3. リポジトリの根で `deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/create_review_account.ts --cloud` を実行する。審査用のアカウント、お店、本体の行、デモデータができる。パスワードは初回に1回だけ表示される。
 4. EAS で production のビルドを作り、App Store Connect に上げる。
