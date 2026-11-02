@@ -1,9 +1,9 @@
 import type { Session } from '@supabase/supabase-js';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { fetchMembership } from './api';
-import { supabase } from './supabase';
-import type { Household } from './types';
+import type { Household } from '../domain/group';
+import { repositories } from './container';
+import { supabase } from '../infrastructure/supabase/client';
 
 type AuthContextValue = {
   // セッションと所属グループを読み終えたか
@@ -36,7 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshMembership = useCallback(async () => {
     if (!userId) return;
     try {
-      const membership = await fetchMembership(userId);
+      const membership = await repositories.groups.getMembership(userId);
       setHousehold(membership?.household ?? null);
     } catch {
       setHousehold(null);

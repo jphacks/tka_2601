@@ -435,3 +435,21 @@ entrypoint = "./functions/device/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/device/*.html" ]
+
+[functions.reservations]
+enabled = true
+verify_jwt = false
+import_map = "./functions/reservations/deno.json"
+entrypoint = "./functions/reservations/index.ts"
+
+[functions.calendar-sync]
+enabled = true
+verify_jwt = false
+import_map = "./functions/calendar-sync/deno.json"
+entrypoint = "./functions/calendar-sync/index.ts"
+
+[functions.assistant]
+enabled = true
+verify_jwt = false
+import_map = "./functions/assistant/deno.json"
+entrypoint = "./functions/assistant/index.ts"

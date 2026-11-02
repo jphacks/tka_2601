@@ -4,31 +4,44 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Check } from '../../components/icons';
-import { NavBar, Screen } from '../../components/Screen';
+import { Screen } from '../../components/Screen';
 import { Card, GroupHeader, LinkRow, Separator, Toggle } from '../../components/ui';
-import { type DevicePatch, getDevice, listMembers, updateDevice } from '../../lib/api';
+import type { Device, DevicePatch } from '../../domain/device';
+import type { ShopProfile } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
 import { signOut } from '../../lib/authActions';
+import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
-import { MODE_LABELS, MODE_ORDER } from '../../lib/labels';
-import type { Device } from '../../lib/types';
+import { BUSINESS_TYPE_LABELS, MODE_LABELS, MODE_ORDER, PROVIDER_LABELS, TONE_LABELS } from '../../lib/labels';
 import { colors } from '../../theme';
 
 export default function SettingsScreen() {
   const household = useHousehold();
   const insets = useSafeAreaInsets();
   const [device, setDevice] = useState<Device | null | undefined>(undefined);
+  const [profile, setProfile] = useState<ShopProfile | null>(null);
+  const [serviceCount, setServiceCount] = useState<number | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
 
   useFocusEffect(
     useCallback(() => {
-      getDevice(household.id)
+      repositories.devices
+        .get(household.id)
         .then(setDevice)
         .catch((e) => {
           setDevice(null);
           Alert.alert('設定を読み込めませんでした', errorMessage(e) ?? '');
         });
-      listMembers()
+      repositories.shop
+        .getProfile(household.id)
+        .then(setProfile)
+        .catch(() => setProfile(null));
+      repositories.shop
+        .listServices(household.id)
+        .then((services) => setServiceCount(services.length))
+        .catch(() => setServiceCount(null));
+      repositories.groups
+        .listMembers()
         .then((members) => setMemberCount(members.length))
         .catch(() => setMemberCount(null));
     }, [household.id]),
@@ -40,7 +53,7 @@ export default function SettingsScreen() {
     const previous = device;
     setDevice({ ...device, ...patch });
     try {
-      await updateDevice(device.id, patch);
+      await repositories.devices.update(device.id, patch);
     } catch (e) {
       setDevice(previous);
       Alert.alert('変更できませんでした', errorMessage(e) ?? '');
@@ -56,10 +69,16 @@ export default function SettingsScreen() {
   }
 
   return (
-    <Screen>
-      <NavBar title="設定" backLabel="来客" onBack={() => router.back()} />
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
-        <GroupHeader title="動作モード" first />
+    <Screen waves={false}>
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
+        <View style={styles.topBar} />
+        <Text style={styles.largeTitle} accessibilityRole="header">
+          設定
+        </Text>
+
+        <Text style={styles.firstHeader} accessibilityRole="header">
+          動作モード
+        </Text>
         <Card>
           {device ? (
             MODE_ORDER.map((mode, index) => {
@@ -86,6 +105,35 @@ export default function SettingsScreen() {
           )}
         </Card>
 
+        <GroupHeader title="お店" />
+        <Card>
+          <LinkRow
+            label="店舗情報"
+            value={profile ? BUSINESS_TYPE_LABELS[profile.business_type] : undefined}
+            onPress={() => router.push('/settings/shop')}
+          />
+          <Separator />
+          <LinkRow
+            label="メニュー"
+            value={serviceCount !== null ? `${serviceCount}件` : undefined}
+            onPress={() => router.push('/settings/services')}
+          />
+          <Separator />
+          <LinkRow
+            label="受け答え"
+            value={profile ? TONE_LABELS[profile.tone] : undefined}
+            onPress={() => router.push('/settings/responses')}
+          />
+          <Separator />
+          <LinkRow
+            label="予約先"
+            value={profile ? PROVIDER_LABELS[profile.reservation_provider] : undefined}
+            onPress={() => router.push('/settings/provider')}
+          />
+          <Separator />
+          <LinkRow label="通知" onPress={() => router.push('/settings/notifications')} />
+        </Card>
+
         <GroupHeader title="外出モード" />
         <Card>
           <View style={styles.switchRow}>
@@ -99,29 +147,7 @@ export default function SettingsScreen() {
           </View>
         </Card>
 
-        <GroupHeader title="モードの自動切替" />
-        <Card>
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>だれもいないとき外出にする</Text>
-            <Toggle
-              label="だれもいないとき外出にする"
-              value={device?.auto_away ?? false}
-              disabled={!device}
-              onChange={(next) => change({ auto_away: next })}
-            />
-          </View>
-        </Card>
-
-        <GroupHeader title="AI への指示" />
-        <Card>
-          <LinkRow
-            label="追加の指示"
-            value={device?.extra_instructions ? '設定済み' : '未設定'}
-            onPress={() => router.push('/settings/instructions')}
-          />
-        </Card>
-
-        <GroupHeader title="グループ" />
+        <GroupHeader title="メンバー" />
         <Card>
           <LinkRow
             label={household.name}
@@ -145,6 +171,16 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  topBar: { height: 44 },
+  largeTitle: { paddingHorizontal: 20, paddingBottom: 4, fontSize: 34, fontWeight: '700', color: colors.text },
+  firstHeader: {
+    paddingTop: 16,
+    paddingHorizontal: 32,
+    paddingBottom: 7,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
   modeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -166,7 +202,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   switchLabel: { flex: 1, fontSize: 17, color: colors.text },
-  logoutCard: { marginTop: 32 },
+  logoutCard: { marginTop: 24 },
   logout: { minHeight: 52, alignItems: 'center', justifyContent: 'center' },
   logoutLabel: { fontSize: 17, color: colors.navy },
 });

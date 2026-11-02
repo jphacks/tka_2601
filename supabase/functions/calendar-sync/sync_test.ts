@@ -1,0 +1,155 @@
+// deno test supabase/functions/calendar-sync/
+import { assertEquals } from "jsr:@std/assert@1.0.19";
+import { GoogleClient, type GoogleEvent } from "../_shared/google_calendar.ts";
+import type { NewNotification } from "../_shared/notify.ts";
+import { baseConnection, fakeGoogle, memoryStore } from "../_shared/testing.ts";
+import { BULK_THRESHOLD, classifyChange, syncConnection } from "./sync.ts";
+
+const now = new Date("2026-11-02T00:00:00.000Z");
+const future = {
+  start: { dateTime: "2026-11-03T05:00:00.000Z" },
+  end: { dateTime: "2026-11-03T06:00:00.000Z" },
+};
+const created = "2026-11-01T00:00:00.000Z";
+
+function event(id: string, values: Partial<GoogleEvent> = {}): GoogleEvent {
+  return { id, etag: `"${id}"`, status: "confirmed", summary: id, created, updated: created, ...future, ...values };
+}
+
+function run(handler: (url: URL) => Response, options: Parameters<typeof memoryStore>[0] = {}) {
+  const { store, state } = memoryStore({ connection: baseConnection, provider: "google_calendar", ...options });
+  const google = fakeGoogle(handler);
+  const sent: NewNotification[] = [];
+  return {
+    state,
+    sent,
+    google,
+    sync: (connection = state.connection!) =>
+      syncConnection(connection, {
+        store,
+        client: () => Promise.resolve(new GoogleClient({ clientId: "i", clientSecret: "s" }, "r", google.fetch)),
+        notify: (notification) => {
+          sent.push(notification);
+          return Promise.resolve();
+        },
+        now: () => now,
+      }),
+  };
+}
+
+Deno.test("差分の分類: 新規、仮、変更、キャンセル、通知しない予定", () => {
+  assertEquals(classifyChange(event("a"), now), "reservation_created");
+  assertEquals(classifyChange(event("a", { status: "tentative" }), now), "reservation_pending");
+  assertEquals(classifyChange(event("a", { updated: "2026-11-01T01:00:00.000Z" }), now), "reservation_updated");
+  assertEquals(classifyChange(event("a", { status: "cancelled" }), now), "reservation_cancelled");
+  assertEquals(classifyChange({ id: "a", status: "cancelled" }, now), "reservation_cancelled");
+  assertEquals(classifyChange(event("a", { start: { date: "2026-11-03" }, end: { date: "2026-11-04" } }), now), null);
+  const past = { start: { dateTime: "2026-11-01T05:00:00.000Z" }, end: { dateTime: "2026-11-01T06:00:00.000Z" } };
+  assertEquals(classifyChange(event("a", past), now), null);
+});
+
+Deno.test("差分を通知し、次の目印を保存して接続を active にする", async () => {
+  const { sync, sent, state, google } = run(() =>
+    Response.json({ items: [event("a"), event("b", { status: "cancelled" })], nextSyncToken: "token-2" })
+  );
+  assertEquals((await sync()).outcome, "synced");
+  assertEquals(sent.map((n) => [n.kind, n.dedupe_key]), [
+    ["reservation_created", 'google:a:"a"'],
+    ["reservation_cancelled", 'google:b:"b"'],
+  ]);
+  assertEquals(sent[0].actor_user_id, null);
+  assertEquals(state.connection?.sync_token, "token-2");
+  assertEquals(state.connection?.last_synced_at, now.toISOString());
+  const eventsCall = google.calls.find((c) => c.url.pathname.endsWith("/events"))!;
+  assertEquals(eventsCall.url.searchParams.get("syncToken"), "token-1");
+  assertEquals(eventsCall.url.searchParams.get("singleEvents"), "true");
+});
+
+Deno.test("MONBAN が自分で書いた版は通知しない", async () => {
+  const { sync, sent } = run(
+    () => Response.json({ items: [event("mine"), event("other")], nextSyncToken: "token-2" }),
+    { own: ['mine:"mine"'] },
+  );
+  assertEquals((await sync()).notified, 1);
+  assertEquals(sent.map((n) => n.data?.reservation_id), ["other"]);
+});
+
+Deno.test("差分が多いときは1件にまとめる", async () => {
+  const many = Array.from({ length: BULK_THRESHOLD + 1 }, (_, i) => event(`e${i}`));
+  const { sync, sent } = run(() => Response.json({ items: many, nextSyncToken: "token-2" }));
+  assertEquals((await sync()).notified, 1);
+  assertEquals(sent[0].kind, "reservation_updated");
+  assertEquals(sent[0].dedupe_key, "google:bulk:token-2");
+  assertEquals(sent[0].body, `${BULK_THRESHOLD + 1} 件（11月3日（火）14:00 から）`);
+});
+
+Deno.test("境界の件数まではまとめない", async () => {
+  const many = Array.from({ length: BULK_THRESHOLD }, (_, i) => event(`e${i}`));
+  const { sync, sent } = run(() => Response.json({ items: many, nextSyncToken: "token-2" }));
+  await sync();
+  assertEquals(sent.length, BULK_THRESHOLD);
+});
+
+Deno.test("差分が 410 を返したら起点を取り直し、その回は通知しない", async () => {
+  const { sync, sent, state } = run((url) =>
+    url.searchParams.has("syncToken")
+      ? new Response("", { status: 410 })
+      : Response.json({ items: [event("old")], nextSyncToken: "fresh" })
+  );
+  const result = await sync();
+  assertEquals([result.outcome, result.notified, sent.length], ["baseline", 0, 0]);
+  assertEquals(state.connection?.sync_token, "fresh");
+});
+
+Deno.test("目印がなければ起点を取るだけで通知しない", async () => {
+  const { sync, sent, google } = run(() => Response.json({ items: [event("old")], nextSyncToken: "first" }), {
+    connection: { ...baseConnection, sync_token: null },
+  });
+  assertEquals((await sync()).outcome, "baseline");
+  assertEquals(sent.length, 0);
+  const eventsCall = google.calls.find((c) => c.url.pathname.endsWith("/events"))!;
+  assertEquals(eventsCall.url.searchParams.get("timeMin"), now.toISOString());
+});
+
+Deno.test("認証の失敗はすぐ error にして1回だけ通知し、目印は進めない", async () => {
+  const { sync, sent, state } = run(() => new Response("", { status: 401 }));
+  assertEquals((await sync()).outcome, "failed");
+  assertEquals(state.connection?.status, "error");
+  assertEquals(state.connection?.sync_token, "token-1");
+  assertEquals(sent.map((n) => n.kind), ["calendar_sync_failed"]);
+  await sync();
+  assertEquals(sent.length, 1);
+});
+
+Deno.test("一時的な失敗は 10 分までは通知せず、続いたら通知する", async () => {
+  const recent = { ...baseConnection, last_synced_at: "2026-11-01T23:55:00.000Z" };
+  const first = run(() => new Response("", { status: 503 }), { connection: recent });
+  await first.sync();
+  assertEquals([first.state.connection?.status, first.sent.length], ["active", 0]);
+
+  const stale = { ...baseConnection, last_synced_at: "2026-11-01T23:40:00.000Z" };
+  const later = run(() => new Response("", { status: 503 }), { connection: stale });
+  await later.sync();
+  assertEquals([later.state.connection?.status, later.sent.length], ["error", 1]);
+});
+
+Deno.test("読めるようになったら active に戻り、次の失敗でまた通知できる", async () => {
+  const { sync, state } = run(() => Response.json({ items: [], nextSyncToken: "token-2" }), {
+    connection: { ...baseConnection, status: "error", last_error: "前の失敗" },
+  });
+  await sync();
+  assertEquals([state.connection?.status, state.connection?.last_error], ["active", null]);
+});
+
+Deno.test("通知に失敗したら目印を進めず、次の回に送り直す", async () => {
+  const { store, state } = memoryStore({ connection: baseConnection, provider: "google_calendar" });
+  const google = fakeGoogle(() => Response.json({ items: [event("a")], nextSyncToken: "token-2" }));
+  const result = await syncConnection(baseConnection, {
+    store,
+    client: () => Promise.resolve(new GoogleClient({ clientId: "i", clientSecret: "s" }, "r", google.fetch)),
+    notify: () => Promise.reject(new Error("db down")),
+    now: () => now,
+  });
+  assertEquals(result.outcome, "failed");
+  assertEquals(state.connection?.sync_token, "token-1");
+});

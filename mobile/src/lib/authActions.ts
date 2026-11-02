@@ -4,7 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 
 import { Cancelled, hasErrorCode } from './errors';
 import { unregisterPushToken } from './push';
-import { requireSupabase } from './supabase';
+import { requireSupabase } from '../infrastructure/supabase/client';
 
 export async function signInWithEmail(email: string, password: string): Promise<void> {
   const { error } = await requireSupabase().auth.signInWithPassword({ email: email.trim(), password });

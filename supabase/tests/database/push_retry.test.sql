@@ -3,7 +3,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(21);
 
 -- 準備の来客で Webhook が送信待ちに入らないよう、Vault の値をいったん消す（このトランザクションの中だけ）
 delete from vault.secrets where name in ('push_function_url', 'push_webhook_secret');
@@ -25,13 +25,20 @@ insert into public.devices (id, household_id, name, mode) values
 insert into public.visits (id, household_id, device_id, mode, chimed_at, status) values
   ('d1000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001',
    'c1000000-0000-4000-8000-000000000001', 'normal', now(), 'ringing');
+insert into public.notifications (id, household_id, kind, title, body, data, dedupe_key, visit_id) values
+  ('e1000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'chime',
+   '来客があります', '10:32 にチャイムが鳴りました', '{"visit_id": "d1000000-0000-4000-8000-000000000001"}',
+   'visit:d1:chime', 'd1000000-0000-4000-8000-000000000001'),
+  ('e2000000-0000-4000-8000-000000000002', 'b1000000-0000-4000-8000-000000000001', 'ended',
+   '宅配', '不在票をお願いしました', '{"visit_id": "d1000000-0000-4000-8000-000000000001"}',
+   'visit:d1:ended', 'd1000000-0000-4000-8000-000000000001');
 
 -- 住人と anon は使えない ------------------------------------------------------
 
 set local role authenticated;
 set local request.jwt.claims to '{"sub": "a1000000-0000-4000-8000-000000000001", "role": "authenticated"}';
 select throws_ok('select * from public.push_deliveries', '42501', null, '住人は送信待ちを読めない');
-select throws_ok($$select public.push_enqueue('d1000000-0000-4000-8000-000000000001', 'chime')$$, '42501', null,
+select throws_ok($$select public.push_enqueue('e1000000-0000-4000-8000-000000000001')$$, '42501', null,
   '住人は送信待ちに入れられない');
 reset role;
 set local role anon;
@@ -41,18 +48,22 @@ reset role;
 -- 送信待ちに入れる ------------------------------------------------------------
 
 set local role service_role;
-select is(public.push_enqueue('d1000000-0000-4000-8000-000000000001', 'chime'), 2,
+select is(public.push_enqueue('e1000000-0000-4000-8000-000000000001'), 2,
   '家の住人の端末ごとに入れ、同じトークンは1つにまとめる');
-select is(public.push_enqueue('d1000000-0000-4000-8000-000000000001', 'chime'), 0,
-  '同じ来客の同じ通知は二度入れない');
-select is(public.push_enqueue('d1000000-0000-4000-8000-000000000001', 'ended'), 2, '対応後の通知は別に入れる');
+select is(public.push_enqueue('e1000000-0000-4000-8000-000000000001'), 0,
+  '同じ通知は二度入れない');
+select is(public.push_enqueue('e2000000-0000-4000-8000-000000000002'), 2, '別の通知は別に入れる');
 
 -- 取り出しと記録 --------------------------------------------------------------
 
 create temporary table first_claim on commit drop as
-  select * from public.push_claim('d1000000-0000-4000-8000-000000000001', 'chime');
+  select * from public.push_claim('e1000000-0000-4000-8000-000000000001');
 select is((select count(*)::int from first_claim), 2, '来客時の通知を2件取り出す');
-select is((select count(*)::int from public.push_claim('d1000000-0000-4000-8000-000000000001', 'chime')), 0,
+select results_eq(
+  $$select distinct kind, title, body, data ->> 'visit_id' from first_claim$$,
+  $$values ('chime'::text, '来客があります'::text, '10:32 にチャイムが鳴りました'::text, 'd1000000-0000-4000-8000-000000000001'::text)$$,
+  '取り出すときに文面と data も返す');
+select is((select count(*)::int from public.push_claim('e1000000-0000-4000-8000-000000000001')), 0,
   '取り出した送信待ちは、送信中のあいだ取り出せない');
 
 select lives_ok(
@@ -61,7 +72,7 @@ select lives_ok(
     (select min(id) from first_claim), (select max(id) from first_claim)),
   '1件は受け付け、1件は送り直しと記録する');
 select results_eq(
-  $$select token from public.push_claim(null, null) where kind = 'chime'$$,
+  $$select token from public.push_claim() where kind = 'chime'$$,
   $$select token from first_claim where id = (select max(id) from first_claim)$$,
   '送り直しだけが再び取り出され、受け付け済みの端末には送らない');
 select lives_ok(
@@ -86,7 +97,7 @@ select is(
   (select count(*)::int from net.http_request_queue where url = 'http://example.invalid/functions/v1/push'),
   0, '送る時期が来た送信待ちがなければ、再送を頼まない');
 
-update public.push_deliveries set next_attempt_at = now() where kind = 'ended';
+update public.push_deliveries set next_attempt_at = now() where notification_id = 'e2000000-0000-4000-8000-000000000002';
 select private.retry_push_deliveries();
 select results_eq(
   $$select convert_from(body, 'UTF8')::jsonb ->> 'type', headers ->> 'x-webhook-secret' from net.http_request_queue
@@ -94,13 +105,14 @@ select results_eq(
   $$values ('RETRY'::text, 'test-secret'::text)$$,
   '送る時期が来た送信待ちがあれば、合言葉を付けて push に再送を頼む');
 
-update public.push_deliveries set expires_at = now() - interval '1 second' where kind = 'ended';
+update public.push_deliveries set expires_at = now() - interval '1 second' where notification_id = 'e2000000-0000-4000-8000-000000000002';
 select private.retry_push_deliveries();
-select is((select count(*)::int from public.push_deliveries where kind = 'ended' and status = 'failed' and last_error = 'expired'),
+select is((select count(*)::int from public.push_deliveries
+    where notification_id = 'e2000000-0000-4000-8000-000000000002' and status = 'failed' and last_error = 'expired'),
   2, '10 分を過ぎた送信待ちはあきらめる');
 
 set local role service_role;
-select is((select count(*)::int from public.push_claim(null, 'ended')), 0, 'あきらめた送信待ちは取り出さない');
+select is((select count(*)::int from public.push_claim('e2000000-0000-4000-8000-000000000002')), 0, 'あきらめた送信待ちは取り出さない');
 reset role;
 
 select is((select count(*)::int from cron.job where jobname = 'push-retry' and schedule = '* * * * *'), 1,
@@ -108,6 +120,8 @@ select is((select count(*)::int from cron.job where jobname = 'push-retry' and s
 
 delete from public.visits where id = 'd1000000-0000-4000-8000-000000000001';
 select is((select count(*)::int from public.push_deliveries), 0, '来客を消すと送信待ちも消える');
+select is((select count(*)::int from public.notifications where household_id = 'b1000000-0000-4000-8000-000000000001'), 0,
+  '来客を消すと通知も消える');
 
 select * from finish();
 rollback;

@@ -71,7 +71,7 @@ const residentId = await ensureUser(
   required(seedEnv, "SEED_RESIDENT_PASSWORD", "supabase/.env"),
 );
 
-await check(admin.from("households").upsert({ id: HOUSEHOLD_ID, name: "テストの家" }));
+await check(admin.from("households").upsert({ id: HOUSEHOLD_ID, name: "テストのネイルサロン" }));
 await check(
   admin.from("household_members").upsert({
     household_id: HOUSEHOLD_ID,

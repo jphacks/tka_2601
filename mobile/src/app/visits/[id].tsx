@@ -7,11 +7,11 @@ import { MoreCircle } from '../../components/icons';
 import { ConfirmDialog, MenuPopover } from '../../components/overlays';
 import { NavBar, Screen } from '../../components/Screen';
 import { CenterMessage, IntentBadge } from '../../components/ui';
-import { deleteVisit, getVisit } from '../../lib/api';
+import type { Visit, VisitMessage } from '../../domain/visit';
+import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { callSeconds, durationLabel, hourMinute, hourMinuteSecond, monthDay } from '../../lib/format';
 import { endReasonLabel, intentLabel, MODE_LABELS, outcomeLabel, SPEAKER_LABELS, visitTitle } from '../../lib/labels';
-import type { Visit, VisitMessage } from '../../lib/types';
 import { colors, radius } from '../../theme';
 
 function callRange(visit: Visit): string {
@@ -24,7 +24,7 @@ function callRange(visit: Visit): string {
 }
 
 export default function VisitDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, back: backTo } = useLocalSearchParams<{ id: string; back?: string }>();
   const insets = useSafeAreaInsets();
   const [data, setData] = useState<{ visit: Visit; messages: VisitMessage[] } | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export default function VisitDetailScreen() {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
-    getVisit(id)
+    repositories.visits.get(id)
       .then(setData)
       .catch((e) => setError(errorMessage(e) ?? '読み込めませんでした'));
   }, [id]);
@@ -40,7 +40,7 @@ export default function VisitDetailScreen() {
   async function remove() {
     setConfirmOpen(false);
     try {
-      await deleteVisit(id);
+      await repositories.visits.remove(id);
       router.back();
     } catch (e) {
       Alert.alert('削除できませんでした', errorMessage(e) ?? '');
@@ -54,7 +54,7 @@ export default function VisitDetailScreen() {
     <Screen>
       <NavBar
         title={visit ? visitTitle(visit) : undefined}
-        backLabel="来客"
+        backLabel={backTo ?? '来客'}
         onBack={back}
         right={
           visit ? (

@@ -3,6 +3,7 @@ export const colors = {
   navy: '#1F3A5F',
   navyPressed: '#172C48',
   navyTint: '#E8EDF4',
+  segmentTrack: '#E3E6EC',
   background: '#F2F2F7',
   card: '#FFFFFF',
   text: '#1C1C1E',

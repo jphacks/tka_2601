@@ -2,6 +2,9 @@
 //   住人のアプリ: Auth でログインし、Data API で読む・モードを変える・消す
 //   本体（PSoC 6）: Edge Function「device」にデバイス鍵を付けて書く・モードを読む
 //   通知: Webhook から Edge Function「push」、Expo まで
+//   予約: Edge Function「reservations」と「device」の予約帳、通知のオンオフ、予約先の切り替え
+//   自然言語の入力: Edge Function「assistant」。解析器の精度は Deno のユニット試験と手元の確認で見る
+//   Google カレンダーとの実際の通信は通らない（OAuth クライアントが要る。Deno のユニット試験で見る）
 // 権限の細かい組み合わせは tests/database/history_access.test.sql（pgTAP）で見る。
 //
 // 使い方（リポジトリの根から。先に supabase start と scripts/seed_local.ts を済ませる）:
@@ -56,7 +59,7 @@ const residentId = (await resident.auth.getUser()).data.user!.id;
 
 // 本体（PSoC）の役。fetch で device 関数を呼ぶ
 async function device(
-  method: "GET" | "PUT",
+  method: "GET" | "PUT" | "POST",
   path: string,
   body?: unknown,
   key = seedEnv.SEED_DEVICE_KEY,
@@ -209,7 +212,8 @@ try {
 
   // 送信待ち: Expo が DeviceNotRegistered を返した端末は、送り直さずにあきらめる
   const deliveries = await sql<{ kind: string; status: string; attempts: number; last_error: string }>(
-    `select kind, status, attempts, last_error from public.push_deliveries where visit_id = '${visitId}' order by kind`,
+    `select n.kind, d.status, d.attempts, d.last_error from public.push_deliveries d
+     join public.notifications n on n.id = d.notification_id where n.visit_id = '${visitId}' order by n.kind`,
   );
   check(
     "送信待ちは来客時と対応後の2件で、どちらも1回送ってあきらめた",
@@ -219,7 +223,10 @@ try {
 
   // 再送: pg_cron が呼ぶ関数 → push の RETRY → Expo（送る時期が来た送信待ちを1件作って確かめる）
   await sql(
-    `insert into public.push_deliveries (visit_id, kind, token) values ('${concurrentId}', 'ended', '${FAKE_PUSH_TOKEN}')`,
+    `insert into public.push_deliveries (notification_id, token)
+     select id, '${FAKE_PUSH_TOKEN}' from public.notifications
+     where visit_id = '${concurrentId}' and kind = 'chime' limit 1
+     on conflict (notification_id, token) do update set status = 'pending', attempts = 0, next_attempt_at = now(), expires_at = now() + interval '10 minutes'`,
   );
   const retryStarted = new Date().toISOString();
   await sql("select private.retry_push_deliveries()");
@@ -227,7 +234,8 @@ try {
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 1000));
     retried = await sql(
-      `select status, attempts, last_error from public.push_deliveries where visit_id = '${concurrentId}' and kind = 'ended'`,
+      `select d.status, d.attempts, d.last_error from public.push_deliveries d
+       join public.notifications n on n.id = d.notification_id where n.visit_id = '${concurrentId}' and n.kind = 'chime'`,
     );
     if (retried[0]?.status !== "pending") break;
   }
@@ -352,6 +360,216 @@ try {
   check("グループのメンバーは結び付けた本体の来客を読める", ownerVisits.data?.[0]?.intent === "acquaintance", ownerVisits);
   const residentVisits = await resident.from("visits").select("id").eq("id", pairedVisit);
   check("ほかのグループの住人は読めない", residentVisits.data?.length === 0, residentVisits);
+
+  // 店舗の設定、予約、通知（docs/reservations.md） -----------------------------------------
+  const memberHousehold = (await resident.from("household_members").select("household_id").eq("user_id", residentId).single()).data!.household_id as string;
+  const profile = await resident.from("shop_profiles").select("tone, reservation_provider").eq("household_id", memberHousehold).single();
+  check("設定の行があり、口調の既定は最も丁寧", profile.data?.tone === "very_polite", profile);
+  await resident.from("shop_profiles").update({ business_type: "nail_salon", greeting: "いらっしゃいませ" }).eq("household_id", memberHousehold);
+  const service = await resident.from("shop_services").insert({ household_id: memberHousehold, name: "ジェルネイル", duration_minutes: 90 }).select("id").single();
+  check("メニューを足せる", !service.error, service);
+  const shopSettings = (await device("GET", "/settings")).json;
+  const shop = shopSettings.shop as { business_type: string; greeting: string; services: { name: string }[]; reservation_provider: string } | null;
+  check(
+    "本体は設定と一緒に店舗の設定を読める",
+    shop?.business_type === "nail_salon" && shop.greeting === "いらっしゃいませ" && shop.services[0]?.name === "ジェルネイル" &&
+      typeof shopSettings.mode === "string",
+    shopSettings,
+  );
+
+  // アプリの役: Edge Function「reservations」を JWT 付きで呼ぶ
+  const jwt = (await resident.auth.getSession()).data.session!.access_token;
+  async function reservations(method: string, path: string, body?: unknown, token: string | null = jwt) {
+    const headers: Record<string, string> = { "Content-Type": "application/json", apikey: status.PUBLISHABLE_KEY };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${status.API_URL}/functions/v1/reservations${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: res.status, json: await res.json() };
+  }
+  type Row = { id: string; status: string; source: string; arrived_at: string | null; customer_name: string };
+
+  check("ログインなしは 401", (await reservations("GET", "/provider", undefined, null)).status === 401);
+  const providerState = await reservations("GET", "/provider");
+  check("予約先の既定は予約帳", providerState.status === 200 && providerState.json.provider === "monban" && providerState.json.google.connected === false, providerState);
+
+  const inDays = (days: number, hour: number) => new Date(Date.UTC(2099, 0, days, hour)).toISOString();
+  const range = `?from=${inDays(1, 0)}&to=${inDays(10, 0)}`;
+  const manual = await reservations("POST", "", {
+    customer_name: "田中",
+    customer_phone: "090-0000-0000",
+    service_name: "ジェルネイル",
+    starts_at: inDays(2, 5),
+    ends_at: inDays(2, 6),
+  });
+  const manualRow = manual.json.reservation as Row;
+  check("手入力の予約は確定で入る", manual.status === 201 && manualRow.status === "confirmed" && manualRow.source === "app", manual);
+  const listed = await reservations("GET", range);
+  check("一覧に入る", listed.status === 200 && listed.json.provider === "monban" && (listed.json.reservations as Row[]).some((r) => r.id === manualRow.id), listed);
+  const moved = await reservations("PATCH", `/${manualRow.id}`, { note: "初回" });
+  check("予約を変更できる", moved.status === 200 && moved.json.reservation.note === "初回", moved);
+  check("知らない予約は 404", (await reservations("GET", `/${crypto.randomUUID()}`)).status === 404);
+  check("日時の誤りは 400", (await reservations("POST", "", { customer_name: "佐藤", starts_at: "x", ends_at: "y" })).status === 400);
+
+  // ボイスエージェントの役: 仮予約、重なりの拒否、到着
+  const overlap = await device("POST", "/reservations", {
+    customer_name: "佐藤",
+    starts_at: inDays(2, 5),
+    ends_at: inDays(2, 6),
+  });
+  check("AI の予約は既存の予約と重なれば 409", overlap.status === 409 && overlap.json.code === "reservation_overlap", overlap);
+  const pending = await device("POST", "/reservations", {
+    customer_name: "佐藤",
+    starts_at: inDays(3, 5),
+    ends_at: inDays(3, 6),
+    status: "confirmed",
+    visit_id: concurrentId,
+  });
+  const pendingRow = (pending.json.reservation ?? {}) as Row;
+  check("AI の予約は必ず仮予約になる", pending.status === 201 && pendingRow.status === "pending" && pendingRow.source === "ai", pending);
+  check("AI の予約は来客に結び付く", (pending.json.reservation as { visit_id: string }).visit_id === concurrentId, pending);
+  const pendingOverlap = await device("POST", "/reservations", {
+    customer_name: "鈴木",
+    starts_at: inDays(3, 5),
+    ends_at: inDays(3, 6),
+  });
+  check("仮予約とも重なれば 409", pendingOverlap.status === 409, pendingOverlap);
+
+  const approvals = await reservations("GET", `${range}&status=pending`);
+  check("承認リストに仮予約だけが出る", (approvals.json.reservations as Row[]).length === 1 && (approvals.json.reservations as Row[])[0].id === pendingRow.id, approvals);
+  const approved = await reservations("POST", `/${pendingRow.id}/approve`);
+  check("承認すると確定になる", approved.status === 200 && approved.json.reservation.status === "confirmed", approved);
+  check("確定した予約は承認できない（409）", (await reservations("POST", `/${pendingRow.id}/approve`)).status === 409);
+
+  const arrived = await device("POST", `/reservations/${pendingRow.id}/arrive`);
+  check("本体が到着を記録できる", arrived.status === 200 && typeof arrived.json.reservation.arrived_at === "string", arrived);
+  const arrivedAgain = await device("POST", `/reservations/${pendingRow.id}/arrive`);
+  check("到着を2回送っても時刻は変わらない", arrivedAgain.json.reservation.arrived_at === arrived.json.reservation.arrived_at, arrivedAgain);
+  const otherShop = await device("POST", `/reservations/${pendingRow.id}/arrive`, undefined, OTHER_DEVICE_KEY);
+  check("他の店の本体は到着を記録できない（404）", otherShop.status === 404, otherShop);
+  const cancelled = await reservations("POST", `/${manualRow.id}/cancel`);
+  check("キャンセルできる", cancelled.status === 200 && cancelled.json.reservation.status === "cancelled", cancelled);
+  const afterCancel = await reservations("GET", range);
+  check("キャンセルは既定の一覧に出ない", !(afterCancel.json.reservations as Row[]).some((r) => r.id === manualRow.id), afterCancel);
+  const reused = await device("POST", "/reservations", { customer_name: "高橋", starts_at: inDays(2, 5), ends_at: inDays(2, 6) });
+  check("キャンセルした枠には AI が予約を受けられる", reused.status === 201, reused);
+
+  // 通知: AI の操作は全員に送り、アプリの操作は本人に送らない
+  const inbox = await resident.from("notifications").select("kind, title, data, actor_user_id").order("created_at", { ascending: false }).limit(100);
+  const kinds = (inbox.data ?? []).map((n) => n.kind);
+  check(
+    "予約の通知が種類ごとに残る",
+    ["reservation_created", "reservation_updated", "reservation_pending", "reservation_arrived", "reservation_cancelled"].every((k) => kinds.includes(k)),
+    kinds,
+  );
+  check("到着の通知は2回送っても1件", kinds.filter((k) => k === "reservation_arrived").length === 1, kinds);
+  const sentTo = await sql<{ kind: string; deliveries: number }>(
+    `select n.kind, count(d.id)::int as deliveries from public.notifications n
+     left join public.push_deliveries d on d.notification_id = n.id
+     where n.kind in ('reservation_created', 'reservation_pending') and n.household_id = '${memberHousehold}'
+     group by n.kind`,
+  );
+  check(
+    "アプリの操作は本人の端末に送らず、AI の操作は送る",
+    sentTo.find((r) => r.kind === "reservation_created")?.deliveries === 0 && (sentTo.find((r) => r.kind === "reservation_pending")?.deliveries ?? 0) >= 1,
+    sentTo,
+  );
+
+  // 通知の種類ごとのオンオフ（本人の設定）
+  const pref = await resident.from("notification_preferences").upsert({ user_id: residentId, kind: "reservation_pending", enabled: false });
+  check("通知の種類をオフにできる", !pref.error, pref);
+  const quiet = await device("POST", "/reservations", { customer_name: "伊藤", starts_at: inDays(4, 5), ends_at: inDays(4, 6), visit_id: crypto.randomUUID() });
+  check("知らない来客は結び付けず、予約は受ける", quiet.status === 201 && quiet.json.reservation.visit_id === null, quiet);
+  const quietDeliveries = await sql<{ deliveries: number }>(
+    `select count(d.id)::int as deliveries from public.notifications n left join public.push_deliveries d on d.notification_id = n.id
+     where n.data ->> 'reservation_id' = '${quiet.json.reservation?.id}'`,
+  );
+  check("オフにした種類は端末に送らないが、通知の一覧には残る", quietDeliveries[0]?.deliveries === 0, quietDeliveries);
+  await resident.from("notification_preferences").delete().eq("user_id", residentId);
+
+  // 予約先の切り替えと Google の接続
+  const toHotpepper = await reservations("PUT", "/provider", { provider: "hotpepper" });
+  check("予約先をホットペッパーにできる", toHotpepper.json.provider === "hotpepper", toHotpepper);
+  const hotpepperList = await reservations("GET", range);
+  check("ホットペッパーでも同じ予約帳を読む", hotpepperList.json.provider === "hotpepper" && (hotpepperList.json.reservations as Row[]).length > 0, hotpepperList);
+  const direct = await resident.from("shop_profiles").update({ reservation_provider: "monban" }).eq("household_id", memberHousehold);
+  check("予約先は直接変えられない（42501）", direct.error?.code === "42501", direct);
+  const noCalendar = await reservations("PUT", "/provider", { provider: "google_calendar" });
+  check("Google は接続するまで予約先にできない（409）", noCalendar.status === 409 && noCalendar.json.code === "google_not_connected", noCalendar);
+  check("予約帳に戻せる", (await reservations("PUT", "/provider", { provider: "monban" })).json.provider === "monban");
+  const start = await reservations("POST", "/google/start", { return_url: "tka2601://settings/provider" });
+  check("OAuth の設定がなければ 503", start.status === 503 && start.json.code === "google_not_configured", start);
+  const callback = await fetch(`${status.API_URL}/functions/v1/reservations/google/callback?state=unknown&code=x`, { redirect: "manual" });
+  await callback.body?.cancel();
+  check("OAuth の設定がなければコールバックも 503", callback.status === 503, callback.status);
+
+  const squareState = await reservations("GET", "/provider");
+  check(
+    "Square の状態を返し、接続がなければアプリから予約を足せる",
+    squareState.json.square?.connected === false && squareState.json.capabilities?.create === true,
+    squareState,
+  );
+  const noSquare = await reservations("PUT", "/provider", { provider: "square" });
+  check("Square は接続するまで予約先にできない（409）", noSquare.status === 409 && noSquare.json.code === "square_not_connected", noSquare);
+  const squareStart = await reservations("POST", "/square/start", { return_url: "tka2601://settings/provider" });
+  check("Square の設定がなければ 503", squareStart.status === 503 && squareStart.json.code === "square_not_configured", squareStart);
+  const squareCallback = await fetch(`${status.API_URL}/functions/v1/reservations/square/callback?state=unknown&code=x`, { redirect: "manual" });
+  await squareCallback.body?.cancel();
+  check("Square の設定がなければコールバックも 503", squareCallback.status === 503, squareCallback.status);
+  const squareWebhook = await fetch(`${status.API_URL}/functions/v1/reservations/square/webhook`, { method: "POST", body: "{}" });
+  await squareWebhook.body?.cancel();
+  check("Square の設定がなければ Webhook も 503", squareWebhook.status === 503, squareWebhook.status);
+  const squareDisconnect = await reservations("DELETE", "/square");
+  check("Square に接続していなくても解除は成功し、予約先は変わらない", squareDisconnect.status === 200 && squareDisconnect.json.provider === "monban", squareDisconnect);
+
+  // 自然言語の入力。解析器の精度は見ず、経路と「書き込まない」ことを確かめる
+  async function assistant(body: unknown, token: string | null = jwt) {
+    const headers: Record<string, string> = { "Content-Type": "application/json", apikey: status.PUBLISHABLE_KEY };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${status.API_URL}/functions/v1/assistant/parse`, { method: "POST", headers, body: JSON.stringify(body) });
+    return { status: res.status, json: await res.json() };
+  }
+  check("assistant はログインなしだと 401", (await assistant({ text: "x" }, null)).status === 401);
+  check("assistant は空の文を 400 にする", (await assistant({ text: " " })).status === 400);
+  check("assistant は 201 字を 400 にする", (await assistant({ text: "あ".repeat(201) })).status === 400);
+  const countReservations = async () =>
+    (await admin.from("reservations").select("id", { count: "exact", head: true }).eq("household_id", memberHousehold)).count;
+  const reservationsBefore = await countReservations();
+  const parsed = await assistant({ text: "木曜の14時に田中さん、ジェルネイルで" });
+  // 解析器が動いていなければ 503 が正しい
+  const proposalTypes = ["add_reservation", "update_reservation", "set_business_hours", "unknown"];
+  check(
+    "assistant は案を返すか、解析器に届かなければ 503 を返す",
+    (parsed.status === 200 && proposalTypes.includes(parsed.json.proposal?.type) && Array.isArray(parsed.json.proposal?.warnings)) ||
+      (parsed.status === 503 && parsed.json.code === "assistant_unavailable"),
+    parsed,
+  );
+  check("assistant は書き込まない", (await countReservations()) === reservationsBefore);
+
+  // 差分を読む関数は pg_cron の合言葉がなければ動かない
+  const syncUrl = `${status.API_URL}/functions/v1/calendar-sync`;
+  const noSecret = await fetch(syncUrl, { method: "POST", body: '{"type":"POLL"}' });
+  await noSecret.body?.cancel();
+  check("calendar-sync は合言葉なしだと 401", noSecret.status === 401, noSecret.status);
+  const functionsEnv = readEnvFile(`${supabaseDir}functions/.env`);
+  const withSecret = await fetch(syncUrl, {
+    method: "POST",
+    headers: { "x-webhook-secret": functionsEnv.PUSH_WEBHOOK_SECRET },
+    body: '{"type":"POLL"}',
+  });
+  check("calendar-sync は合言葉があれば動く", withSecret.status === 200, await withSecret.json());
+
+  // 本体の死活通信
+  const beat = await device("PUT", "/heartbeat");
+  check("本体は死活通信を送れる", beat.status === 200 && typeof beat.json.last_heartbeat_at === "string", beat);
+  await admin.from("devices").update({ last_heartbeat_at: null, offline_notified_at: null }).eq("id", DEVICE_ID);
+
+  await admin.from("reservations").delete().eq("household_id", memberHousehold);
+  await admin.from("shop_services").delete().eq("household_id", memberHousehold);
+  await admin.from("notifications").delete().eq("household_id", memberHousehold).like("kind", "reservation_%");
+  await resident.from("shop_profiles").update({ business_type: "other", greeting: "" }).eq("household_id", memberHousehold);
 
   // H3b: 住人は1件ずつ消せる ---------------------------------------------------
   const both = await resident.from("visits").delete().in("id", [visitId, missedId]).select("id");

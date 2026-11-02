@@ -1,18 +1,16 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 
-import { Gear } from '../components/icons';
-import { Screen } from '../components/Screen';
-import { CenterMessage, Separator } from '../components/ui';
-import { VisitRow } from '../components/VisitRow';
-import { listVisits, VISITS_PAGE_SIZE } from '../lib/api';
-import { useHousehold } from '../lib/auth';
-import { errorMessage } from '../lib/errors';
-import { dayKey, sectionTitle } from '../lib/format';
-import type { VisitSummary } from '../lib/types';
-import { colors, radius } from '../theme';
+import { Screen } from '../../components/Screen';
+import { CenterMessage, Separator } from '../../components/ui';
+import { VisitRow } from '../../components/VisitRow';
+import { VISITS_PAGE_SIZE, type VisitSummary } from '../../domain/visit';
+import { useHousehold } from '../../lib/auth';
+import { repositories } from '../../lib/container';
+import { errorMessage } from '../../lib/errors';
+import { dayKey, sectionTitle } from '../../lib/format';
+import { colors, radius } from '../../theme';
 
 type Section = { key: string; title: string; data: VisitSummary[] };
 
@@ -31,7 +29,6 @@ function groupByDay(visits: VisitSummary[]): Section[] {
 
 export default function VisitListScreen() {
   const household = useHousehold();
-  const insets = useSafeAreaInsets();
   const [visits, setVisits] = useState<VisitSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -41,7 +38,7 @@ export default function VisitListScreen() {
 
   const loadFirstPage = useCallback(async () => {
     try {
-      const rows = await listVisits(household.id, 0);
+      const rows = await repositories.visits.list(household.id, 0);
       page.current = 0;
       setVisits(rows);
       setHasMore(rows.length === VISITS_PAGE_SIZE);
@@ -68,7 +65,7 @@ export default function VisitListScreen() {
     if (!hasMore || loadingMore.current || !visits) return;
     loadingMore.current = true;
     try {
-      const next = await listVisits(household.id, page.current + 1);
+      const next = await repositories.visits.list(household.id, page.current + 1);
       page.current += 1;
       setVisits((current) => [...(current ?? []), ...next]);
       setHasMore(next.length === VISITS_PAGE_SIZE);
@@ -81,16 +78,7 @@ export default function VisitListScreen() {
 
   const header = (
     <View>
-      <View style={styles.topBar}>
-        <Pressable
-          onPress={() => router.push('/settings')}
-          accessibilityRole="button"
-          accessibilityLabel="設定"
-          style={({ pressed }) => [styles.gear, pressed && styles.pressed]}
-        >
-          <Gear />
-        </Pressable>
-      </View>
+      <View style={styles.topBar} />
       <Text style={styles.largeTitle} accessibilityRole="header">
         来客
       </Text>
@@ -98,7 +86,7 @@ export default function VisitListScreen() {
   );
 
   return (
-    <Screen>
+    <Screen waves={false}>
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
@@ -133,16 +121,15 @@ export default function VisitListScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.navy} />}
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+        contentContainerStyle={styles.content}
       />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  topBar: { height: 44, flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 8 },
-  gear: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  pressed: { opacity: 0.5 },
+  content: { paddingBottom: 32 },
+  topBar: { height: 44 },
   largeTitle: { paddingHorizontal: 20, paddingBottom: 4, fontSize: 34, fontWeight: '700', color: colors.text },
   sectionTitle: {
     paddingTop: 18,

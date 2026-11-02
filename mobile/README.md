@@ -1,15 +1,39 @@
-# MONBAN 住人アプリ（Expo）
+# MONBAN アプリ（Expo）
 
-インターホン自動応答デバイスの住人向けアプリ。来客の履歴、即時通知、動作モードの切り替えを行う。画面は Claude Design のキャンバス（https://claude.ai/artifact/G9j5naxUGESrVJmT1pxSab ）に合わせている。裏側は [supabase/](../supabase/README.md)（PR #4）を使う。
+インターホン自動応答デバイスの店舗向けアプリ。予約の一覧とカレンダー、AI が受けた仮予約の承認、通知、来客の履歴、AI の受け答えの設定、動作モードの切り替えを行う。予約と通知の仕様は [docs/reservations.md](../docs/reservations.md) にある。画面は Claude Design のキャンバス（https://claude.ai/artifact/G9j5naxUGESrVJmT1pxSab ）に合わせている。裏側は [supabase/](../supabase/README.md)（PR #4）を使う。
 
 ## 構成
 
 | パス | 内容 |
 |---|---|
 | `src/app/` | 画面（Expo Router）。`_layout.tsx` でログイン前・グループ未所属・所属済みの画面を分ける |
+| `src/app/(tabs)/` | 下のタブ。予約（最初の画面）、来客、通知、設定 |
+| `src/app/reservations/` | 予約の詳細、追加と編集、承認リスト |
+| `src/app/assistant/` | 自然言語の入力と確認カード |
+| `src/app/settings/` | 店舗情報、メニュー、受け答え、予約先、通知の種類、追加の指示、グループ、招待 |
 | `src/components/` | ナビバー、背景のシェイプ、ボタン、確認ダイアログなどの部品 |
-| `src/lib/` | Supabase の読み書き（`api.ts`）、ログイン（`authActions.ts`）、通知（`push.ts`）、表示の文言（`labels.ts`） |
+| `src/domain/` | 画面が使う型と、日付や営業時間などの純粋な規則 |
+| `src/repositories/` | データの操作のインターフェース |
+| `src/infrastructure/supabase/` | リポジトリの実装と、通信の形からドメインへの変換（`mappers.ts`） |
+| `src/lib/container.ts` | どの実装を使うかを決める唯一の場所 |
+| `src/lib/` | ログイン（`auth.tsx`、`authActions.ts`）、通知（`push.ts`）、タブの数字（`badges.tsx`）、表示の文言（`labels.ts`）、書式（`format.ts`） |
 | `src/theme.ts` | 色。テーマ色は紺（#1F3A5F）だけ |
+
+## 予約の読み書き
+
+予約はどの予約先でも Edge Function「reservations」を通して読み書きする。Square の予約は読み取りだけで（`read_only`）、詳細では到着だけを記録できる。Square を予約先にしている間は予約タブの追加を出さない。アプリは予約を保存せず、画面を開くたびに読む。通知の種類の画面は `notification_kinds` の表から作るので、種類を足してもアプリの更新は要らない。
+
+## リポジトリ層
+
+画面と部品は `src/lib/container.ts` の `repositories` とドメインだけを読み、`src/infrastructure` と Supabase のクライアントを読み込まない（`tests/architecture.test.mjs` で確かめる）。ボイスエージェントの仕様が変わったら、`src/infrastructure/supabase/mappers.ts` を直す。知らない意図、対応、状態は、ここで `unknown` などに丸めて画面を落とさない。実装を差し替えるときは、インターフェースを実装して `container.ts` を替える。
+
+## 予約の表示
+
+日、週、月は [react-native-big-calendar](https://github.com/acro5piano/react-native-big-calendar) で描く（`src/components/ReservationCalendar.tsx`）。ネイティブの依存はない。予約を追加するときの日付は `@react-native-community/datetimepicker` で選ぶ。こちらはネイティブの依存なので、入れたあとは開発ビルドを作り直す。
+
+## 自然言語の入力
+
+入力した文は Edge Function「assistant」が読み取り、案を返す。アプリは案を確認カードに出し、店の人が「追加」か「変更」を押してから既存のリポジトリで書き込む。読み取れないときや届かないときは、入力フォームへ案内する。
 
 ## 動かす
 
@@ -61,9 +85,19 @@ npx eas-cli@latest build --profile development-simulator --platform ios
 | Supabase の Auth > Providers > Google | Google Cloud の Web 用 OAuth クライアントの ID とシークレットを入れる。Google 側の承認済みリダイレクト URI は `https://<ref>.supabase.co/auth/v1/callback` |
 | Supabase の Auth > Providers > Email | メールの確認を有効にするなら、無料プランでは独自の SMTP が要る |
 | Apple Developer | バンドル ID の App ID を作り、Sign in with Apple と Push Notifications を有効にする |
+| Google Cloud のカレンダーの OAuth クライアント | 予約先の Google カレンダーに接続するために要る。設定は `supabase/README.md` にある |
+| Square Developer Console のアプリ | 予約先の Square 予約にログインするために要る。Redirect URL に `<公開 URL>/square/callback`（HTTPS 必須）、Webhook に `<公開 URL>/square/webhook`（`booking.created`、`booking.updated`）を登録する。設定は `supabase/README.md` にある |
 | EAS | プロジェクトは `@atsushihosaka/jphacks2026`（ID `886e1515-…`）。`app.json` の slug、owner、`extra.eas.projectId` を合わせてある。通知を送るには `npx eas-cli@latest credentials` で APNs のキーを登録する |
 
 ## 決まっていないこと
 
 - 招待リンクのスキーム（`tka2601`）と Android のパッケージ名（`com.jphacks.tka2601`）を MONBAN に合わせるか
 - 本体をグループに結び付ける画面（Supabase の `claim_device(code)` にペアリングコードを渡す）。デザインにもアプリにもまだない
+
+## 試験
+
+```bash
+npm test
+```
+
+純粋な処理（エラーの文、日付と営業時間の規則、未読の判定、通知の種類のまとめ）、通信の形の変換（知らない値、壊れた案）、層の依存の向きを確かめる。

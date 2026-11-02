@@ -6,8 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { QrCode } from '../../components/QrCode';
 import { NavBar, Screen } from '../../components/Screen';
 import { PrimaryButton } from '../../components/ui';
-import { getOrCreateInviteToken } from '../../lib/api';
 import { inviteLink } from '../../lib/app';
+import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { colors, radius } from '../../theme';
 
@@ -17,7 +17,8 @@ export default function InviteScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getOrCreateInviteToken()
+    repositories.groups
+      .getOrCreateInviteToken()
       .then((token) => setLink(inviteLink(token)))
       .catch((e) => setError(errorMessage(e) ?? '招待を作れませんでした'));
   }, []);
@@ -33,7 +34,7 @@ export default function InviteScreen() {
 
   return (
     <Screen>
-      <NavBar title="家族を招待" backLabel="グループ" onBack={() => router.back()} />
+      <NavBar title="メンバーを招待" backLabel="グループ" onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
         <View style={[styles.section, styles.qrSection]}>
           <Text style={styles.sectionTitle} accessibilityRole="header">
@@ -52,7 +53,7 @@ export default function InviteScreen() {
 
         <View style={[styles.section, styles.linkSection]}>
           <Text style={styles.sectionTitle} accessibilityRole="header">
-            離れている家族には
+            離れているメンバーには
           </Text>
           <PrimaryButton label="招待リンクを送る" disabled={!link} onPress={share} />
         </View>

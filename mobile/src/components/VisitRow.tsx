@@ -1,8 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import type { VisitSummary } from '../domain/visit';
 import { callSeconds, durationLabel, hourMinute } from '../lib/format';
 import { intentLabel, MODE_LABELS, outcomeLabel } from '../lib/labels';
-import type { VisitSummary } from '../lib/types';
 import { colors } from '../theme';
 import { ChevronRight } from './icons';
 import { IntentBadge } from './ui';

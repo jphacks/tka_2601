@@ -9,8 +9,8 @@ import { ChevronLeft } from './icons';
 // デザインは幅 390 で描いているので、画面幅に合わせて拡大する
 const DESIGN_WIDTH = 390;
 
-// 右上の丸い形と、下の2層の波
-export function BackgroundShapes() {
+// 右上の丸い形と、下の2層の波。タブの画面は内容が下まで届くので波を出さない
+export function BackgroundShapes({ waves = true }: { waves?: boolean }) {
   const { width } = useWindowDimensions();
   const scale = width / DESIGN_WIDTH;
   return (
@@ -25,20 +25,30 @@ export function BackgroundShapes() {
           fill={colors.shapeBlobSmall}
         />
       </Svg>
-      <Svg width={width} height={224 * scale} viewBox="0 620 390 224" style={styles.bottom}>
-        <Path d="M-40 668C30 626 104 650 168 694C236 740 318 744 420 700V880H-40Z" fill={colors.shapeWave} />
-        <Path d="M-40 758C42 722 120 760 196 792C268 822 344 812 420 780V880H-40Z" fill={colors.shapeWaveDeep} />
-      </Svg>
+      {waves ? (
+        <Svg width={width} height={224 * scale} viewBox="0 620 390 224" style={styles.bottom}>
+          <Path d="M-40 668C30 626 104 650 168 694C236 740 318 744 420 700V880H-40Z" fill={colors.shapeWave} />
+          <Path d="M-40 758C42 722 120 760 196 792C268 822 344 812 420 780V880H-40Z" fill={colors.shapeWaveDeep} />
+        </Svg>
+      ) : null}
     </View>
   );
 }
 
 // 画面の地。背景のシェイプを敷き、上の安全領域だけ空ける
-export function Screen({ children, safeTop = true }: { children: ReactNode; safeTop?: boolean }) {
+export function Screen({
+  children,
+  safeTop = true,
+  waves = true,
+}: {
+  children: ReactNode;
+  safeTop?: boolean;
+  waves?: boolean;
+}) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.screen, safeTop && { paddingTop: insets.top }]}>
-      <BackgroundShapes />
+      <BackgroundShapes waves={waves} />
       {children}
     </View>
   );

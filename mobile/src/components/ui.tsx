@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 
 import { colors, radius } from '../theme';
-import { ChevronRight } from './icons';
+import { Check, ChevronRight } from './icons';
 
 type ButtonProps = {
   label: string;
@@ -178,6 +178,203 @@ export function Toggle({
   );
 }
 
+// 1つだけ選ぶ行（右に紺のチェック）
+export function RadioRow({
+  label,
+  value,
+  selected,
+  onPress,
+}: {
+  label: string;
+  value?: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityLabel={value ? `${label}、${value}` : label}
+      accessibilityState={{ checked: selected }}
+      style={({ pressed }) => [styles.radioRow, pressed && styles.rowPressed]}
+    >
+      <Text style={[styles.radioLabel, selected && styles.radioSelected]}>{label}</Text>
+      {value ? <Text style={styles.radioValue}>{value}</Text> : null}
+      <View style={styles.radioCheck}>{selected ? <Check /> : null}</View>
+    </Pressable>
+  );
+}
+
+// 左にラベル、右に値を出す行
+export function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.infoRow} accessible accessibilityLabel={`${label} ${value}`}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+}
+
+// 2つ以上から1つを選ぶ切り替え（一覧、日、週、月）
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: readonly { value: T; label: string }[];
+  value: T;
+  onChange: (next: T) => void;
+}) {
+  return (
+    <View style={styles.segmented} accessibilityRole="tablist">
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <Pressable
+            key={option.value}
+            onPress={() => onChange(option.value)}
+            accessibilityRole="tab"
+            accessibilityLabel={option.label}
+            accessibilityState={{ selected }}
+            style={[styles.segment, selected && styles.segmentSelected]}
+          >
+            <Text style={[styles.segmentLabel, selected && styles.segmentLabelSelected]}>{option.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+// 左にラベル、右に − 値 + を並べる行。時刻や所要時間を決まった刻みで変える
+export function Stepper({
+  label,
+  value,
+  onDecrease,
+  onIncrease,
+  disabled,
+  compact,
+}: {
+  label: string;
+  value: string;
+  onDecrease: () => void;
+  onIncrease: () => void;
+  disabled?: boolean;
+  // 行の内側に置くとき、左右の余白を親に任せる
+  compact?: boolean;
+}) {
+  return (
+    <View style={[styles.stepperRow, compact && styles.stepperCompact, disabled && styles.disabled]}>
+      <Text style={styles.stepperLabel}>{label}</Text>
+      <Pressable
+        onPress={onDecrease}
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}を減らす`}
+        style={({ pressed }) => [styles.stepperButton, pressed && styles.pressed]}
+      >
+        <Text style={styles.stepperSign}>−</Text>
+      </Pressable>
+      <Text style={styles.stepperValue} accessibilityLabel={`${label} ${value}`}>
+        {value}
+      </Text>
+      <Pressable
+        onPress={onIncrease}
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}を増やす`}
+        style={({ pressed }) => [styles.stepperButton, pressed && styles.pressed]}
+      >
+        <Text style={styles.stepperSign}>+</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// 丸い選択肢（メニュー、業種）
+export function Chip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityLabel={label}
+      accessibilityState={{ checked: selected }}
+      style={({ pressed }) => [styles.chip, selected && styles.chipSelected, pressed && styles.pressed]}
+    >
+      <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+export function ChipGroup({ children }: { children: ReactNode }) {
+  return <View style={styles.chipGroup}>{children}</View>;
+}
+
+// ナビゲーションバーの右の文字のボタン（保存、追加、編集）
+export function NavTextButton({
+  label,
+  onPress,
+  disabled,
+  loading,
+  accessibilityLabel,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+  accessibilityLabel?: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled || loading}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
+      style={({ pressed }) => [styles.navButton, (pressed || disabled) && styles.pressed]}
+    >
+      {loading ? <ActivityIndicator color={colors.navy} /> : <Text style={styles.navButtonLabel}>{label}</Text>}
+    </Pressable>
+  );
+}
+
+// 左に項目名、右に値を並べる表（予約の詳細、確認カード）
+export function DefinitionList({ rows }: { rows: { label: string; value: ReactNode; strong?: boolean }[] }) {
+  return (
+    <View style={styles.definitions}>
+      {rows.map((row) => (
+        <View key={row.label} style={styles.definitionRow}>
+          <Text style={styles.definitionLabel}>{row.label}</Text>
+          {typeof row.value === 'string' ? (
+            <Text style={[styles.definitionValue, row.strong && styles.definitionStrong]}>{row.value}</Text>
+          ) : (
+            <View style={styles.definitionSlot}>{row.value}</View>
+          )}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// 薄い紺の地に紺の文字のボタン。2つ並べるときに使う
+export function SoftButton({ label, onPress, disabled, style }: ButtonProps) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      style={({ pressed }) => [
+        styles.button,
+        { backgroundColor: colors.navyTint },
+        pressed && styles.pressed,
+        disabled && styles.disabled,
+        style,
+      ]}
+    >
+      <Text style={[styles.buttonLabel, { color: colors.navy }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 // 意図の札。緊急だけ紺で塗る
 export function IntentBadge({ label, emphasis }: { label: string; emphasis?: boolean }) {
   return (
@@ -291,6 +488,73 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.navy,
   },
+  radioRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    minHeight: 46,
+  },
+  radioLabel: { flex: 1, fontSize: 17, color: colors.text },
+  radioSelected: { fontWeight: '600' },
+  radioValue: { fontSize: 15, color: colors.textSecondary },
+  radioCheck: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+  infoRow: { minHeight: 46, flexDirection: 'row', gap: 16, paddingVertical: 12, paddingHorizontal: 16 },
+  infoLabel: { fontSize: 15, lineHeight: 22, color: colors.textSecondary },
+  infoValue: { flex: 1, fontSize: 15, lineHeight: 22, color: colors.text, textAlign: 'right' },
+  segmented: {
+    flexDirection: 'row',
+    gap: 2,
+    marginHorizontal: 16,
+    padding: 2,
+    borderRadius: 10,
+    backgroundColor: colors.segmentTrack,
+  },
+  segment: { flex: 1, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  segmentSelected: { backgroundColor: colors.card },
+  segmentLabel: { fontSize: 15, color: colors.textTertiary },
+  segmentLabelSelected: { fontWeight: '600', color: colors.text },
+  stepperRow: { minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 16, paddingRight: 12 },
+  stepperCompact: { minHeight: 52, paddingLeft: 0, paddingRight: 0 },
+  stepperLabel: { flex: 1, fontSize: 17, color: colors.text },
+  stepperButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.navyTint,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperSign: { fontSize: 22, fontWeight: '600', color: colors.navy },
+  stepperValue: {
+    width: 64,
+    textAlign: 'center',
+    fontSize: 17,
+    fontWeight: '600',
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
+  },
+  chipGroup: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 12 },
+  chip: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    backgroundColor: colors.navyTint,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipSelected: { backgroundColor: colors.navy },
+  chipLabel: { fontSize: 15, fontWeight: '600', color: colors.navy },
+  chipLabelSelected: { color: '#FFFFFF' },
+  navButton: { minWidth: 44, height: 44, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
+  navButtonLabel: { fontSize: 17, fontWeight: '600', color: colors.navy },
+  definitions: { gap: 10 },
+  definitionRow: { flexDirection: 'row', gap: 12 },
+  definitionLabel: { width: 88, fontSize: 15, lineHeight: 22, color: colors.textSecondary },
+  definitionValue: { flex: 1, fontSize: 15, lineHeight: 22, color: colors.text, fontVariant: ['tabular-nums'] },
+  definitionStrong: { fontWeight: '600' },
+  definitionSlot: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   centerText: { fontSize: 15, lineHeight: 22, color: colors.textSecondary, textAlign: 'center' },
 });

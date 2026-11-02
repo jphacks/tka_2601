@@ -6,6 +6,7 @@ import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider, useAuth } from '../lib/auth';
+import { BadgeProvider } from '../lib/badges';
 import { usePendingInvite } from '../lib/pendingInvite';
 import { usePushNotifications } from '../lib/push';
 import { colors } from '../theme';
@@ -18,8 +19,10 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <StatusBar style="dark" />
-        <RootNavigator />
+        <BadgeProvider>
+          <StatusBar style="dark" />
+          <RootNavigator />
+        </BadgeProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );
@@ -53,9 +56,18 @@ function RootNavigator() {
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
       <Stack.Protected guard={member} redirectTo={home}>
-        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
         <Stack.Screen name="visits/[id]" />
-        <Stack.Screen name="settings/index" />
+        <Stack.Screen name="reservations/[id]" />
+        <Stack.Screen name="reservations/edit" />
+        <Stack.Screen name="reservations/approvals" />
+        <Stack.Screen name="assistant/index" />
+        <Stack.Screen name="settings/shop" />
+        <Stack.Screen name="settings/services" />
+        <Stack.Screen name="settings/service" />
+        <Stack.Screen name="settings/responses" />
+        <Stack.Screen name="settings/provider" />
+        <Stack.Screen name="settings/notifications" />
         <Stack.Screen name="settings/instructions" />
         <Stack.Screen name="settings/group" />
         <Stack.Screen name="settings/invite" />
