@@ -14,14 +14,16 @@
     bird: { name: '小鳥', shape: 'bird', swatch: '#FA843A' },
     matte: { name: 'カプセル マット黒', shape: 'capsule', swatch: '#2A2A28', color: 0x2a2a28, rough: 0.9, cable: 0x262624 },
   };
-  // ---- intercom table, from universal_mount_concepts/fusion_scripts/specs.py and coverage.md
+  // ---- intercom table, from universal_mount_concepts/fusion_scripts/specs.py and coverage.md.
+  // rough: coverage.md gives the outline and says where the keys are, but no dimensions, so
+  // the screen and keys are placed from that sentence alone.
   const key = (label, role, cx, cy, w, h, extra) => ({ label, role, cx, cy, w, h: h ?? w, shape: h ? 'rect' : 'round', ...extra });
   const INTERCOMS = {
-    vlme30: { group: '戸建て', name: 'Panasonic VL-ME30 / ME25 / ME31', W: 129, H: 169, D: 29, rc: 7, edge: 3,
+    vlme30: { group: '戸建て', name: 'Panasonic VL-ME30 / ME25 / ME31 / MGZ30', W: 129, H: 169, D: 29, rc: 7, edge: 3,
       screen: [0, 40, 74, 56], grille: [-44, -12, 22, 12, 4], leds: [[-14, -12]], press: ['talk'],
       buttons: [key('再生', 'other', 4, -12, 7), key('モニター', 'other', 18, -12, 7), key('室内通話', 'other', 32, -12, 7), key('メニュー', 'other', 46, -12, 7),
         key('通話／終了', 'talk', 0, -62, 119, 40, { r: 6, h_up: 0.8, px: 0, py: -52 })] },
-    vlmwd302: { group: '戸建て', name: 'Panasonic VL-MWD302 / MWE210 / MWZ200 / ME35', W: 143, H: 186, D: 23.5, rc: 8, edge: 3,
+    vlmwd302: { group: '戸建て', name: 'Panasonic VL-MWD302 / MWE210 / MWZ200 / ME35 / MV38 / MN35A', W: 143, H: 186, D: 23.5, rc: 8, edge: 3,
       screen: [0, 45, 76, 57], grille: [-50, -22, 20, 10, 3], press: ['talk', 'end'],
       buttons: [key('4 方向キー', 'other', 0, -18, 22), key('F1', 'other', -30, -12, 12, 7, { r: 3 }), key('F2', 'other', -30, -26, 12, 7, { r: 3 }),
         key('室内通話', 'other', 30, -12, 12, 7, { r: 3 }), key('メニュー', 'other', 30, -26, 12, 7, { r: 3 }), key('モニター', 'other', 52, -19, 12, 7, { r: 3 }),
@@ -29,12 +31,30 @@
     vlmwd505: { group: '戸建て', name: 'Panasonic VL-MWD505 / X50AHF', W: 165, H: 192, D: 27, rc: 8, edge: 3,
       screen: [0, 30, 112, 64], grille: [-56, -36, 22, 10, 3], camera: [0, -78, 5], press: ['talk', 'end'],
       buttons: [key('通話', 'talk', -44, -78, 62, 26, { r: 5, h_up: 0.9 }), key('終了', 'end', 44, -78, 62, 26, { r: 5, h_up: 0.9 })] },
-    vlx70: { group: '戸建て', name: 'Panasonic VL-X70AHF（画面キーのみ）', W: 192, H: 135, D: 29, rc: 8, edge: 3, touch: true,
+    vlx70: { group: '戸建て', name: 'Panasonic VL-X70AHF / MX70A（画面キーのみ）', W: 192, H: 135, D: 29, rc: 8, edge: 3, touch: true,
       screen: [0, 6, 160, 104], press: ['talk', 'end'],
       buttons: [key('画面の通話', 'talk', -14, -27.5, 30, 12, { r: 3, h_up: 0.5 }), key('画面のロック', 'other', 17, -27.5, 30, 12, { r: 3, h_up: 0.5 }), key('画面の終了', 'end', 49, -27.5, 30, 12, { r: 3, h_up: 0.5 })] },
+    vlme50: { group: '戸建て', name: 'Panasonic VL-ME50', W: 161, H: 186, D: 23, rc: 8, edge: 3, rough: true,
+      screen: [0, 35, 110, 70], press: ['talk', 'end'],
+      buttons: [key('通話', 'talk', -40, -72, 70, 28, { r: 5, h_up: 0.9 }), key('終了', 'end', 40, -72, 70, 28, { r: 5, h_up: 0.9 })] },
+    vlmwh705: { group: '戸建て', name: 'Panasonic VL-MWH705 / SWZ700 / SWE710', W: 210, H: 183.5, D: 29, rc: 8, edge: 3, rough: true,
+      screen: [0, 22, 160, 100], press: ['talk', 'end'],
+      buttons: [key('通話', 'talk', -65, -62, 70, 24, { r: 5, h_up: 0.9 }), key('終了', 'end', 65, -62, 70, 24, { r: 5, h_up: 0.9 })] },
     js1me: { group: '戸建て', name: 'Aiphone JS-1ME-T', W: 129, H: 169, D: 28, rc: 9, edge: 3,
       panel: [0, 23, 110, 114, 6], screen: [0, 45, 71, 53], leds: [[0, -42]], press: ['talk'],
       buttons: [key('モニター', 'other', 40, -22, 9), key('通話／終了', 'talk', 0, -68, 112, 26, { r: 6, h_up: 0.8, px: 0, py: -62 })] },
+    jl1m: { group: '戸建て', name: 'Aiphone JL-1M-T', W: 130, H: 170, D: 26, rc: 8, edge: 3, rough: true,
+      screen: [0, 28, 90, 68], press: ['talk'],
+      buttons: [key('通話／終了', 'talk', 38, -62, 40, 26, { r: 5, h_up: 0.9 })] },
+    jq1me: { group: '戸建て', name: 'Aiphone JQ-1ME-T', W: 130, H: 170, D: 26, rc: 8, edge: 3, rough: true,
+      screen: [0, 28, 90, 68], press: ['talk'],
+      buttons: [key('通話／終了', 'talk', 0, -62, 100, 26, { r: 5, h_up: 0.9 })] },
+    ws2med: { group: '戸建て', name: 'Aiphone WS-2MED-T / WS-1ME-T / JT-2ME-T / JU-1MEK', W: 135, H: 180, D: 22, rc: 8, edge: 3, rough: true,
+      screen: [0, 30, 95, 72], press: ['talk'],
+      buttons: [key('通話／終了', 'talk', 0, -73, 100, 16, { r: 5, h_up: 0.9 })] },
+    wk2me: { group: '戸建て', name: 'Aiphone WK-2ME-T（静電キー）', W: 150, H: 186, D: 27.5, rc: 8, edge: 3, rough: true, touch: true,
+      screen: [0, 30, 110, 80], press: ['talk', 'end'],
+      buttons: [key('静電の通話', 'talk', -40, -68, 50, 20, { r: 4, h_up: 0.5 }), key('静電の終了', 'end', 40, -68, 50, 20, { r: 4, h_up: 0.5 })] },
     vsmge20: { group: '子機', name: 'Panasonic VS-MGE20 / VL-MGE20（充電台）', W: 80, H: 123, D: 24.5, rc: 14, edge: 4,
       screen: [0, 25, 60, 45], mic: [30, 56], press: ['talk', 'end'], stand: { W: 95, H: 66.2, D: 64.2, lift: 15 },
       buttons: [key('通話', 'talk', -25, -20, 14, 8, { r: 4 }), key('終了', 'end', 26, -42, 9), key('モニター', 'other', 25, -20, 14, 8, { r: 4 }),
@@ -42,11 +62,28 @@
     vlwd623: { group: '子機', name: 'Panasonic VL-WD623 / WD616', W: 52, H: 173, D: 30, rc: 12, edge: 4,
       screen: [0, 50, 44, 34], press: ['talk', 'end'],
       buttons: [key('通話', 'talk', -12, -23.5, 14, 8, { r: 3 }), key('終了', 'end', 12, -23.5, 14, 8, { r: 3 }), key('ダイヤルカバー', 'other', 0, -55, 42, 40, { r: 4, h_up: 0.6 })] },
+    ws2wd: { group: '子機', name: 'Aiphone WS-2WD', W: 55, H: 160, D: 27.5, rc: 12, edge: 4, rough: true,
+      screen: [0, 45, 46, 36], press: ['talk', 'end'],
+      buttons: [key('通話', 'talk', 0, -15, 30, 10, { r: 3 }), key('終了', 'end', 0, -35, 30, 10, { r: 3 })] },
+    wl1me: { group: '子機', name: 'Aiphone WL-1ME', W: 57, H: 149, D: 27, rc: 12, edge: 4, rough: true,
+      screen: [0, 40, 48, 36], press: ['talk', 'end'],
+      buttons: [key('通話', 'talk', 0, -18, 38, 10, { r: 3 }), key('終了', 'end', 0, -42, 20, 10, { r: 3 })] },
     dearis: { group: '集合', name: 'Aiphone dearis VM-RMVU', W: 180, H: 240, D: 14.8, rc: 6, edge: 2.5,
       screen: [0, 28, 155, 87], grille: [0, -52, 46, 10, 4], leds: [[-70, -24], [-62, -24], [-54, -24]], press: ['talk', 'end'],
       buttons: [key('非常', 'other', 68, 100, 18, 10, { r: 3 }), key('ホーム', 'other', 0, -28, 12), key('警報停止', 'other', 60, -28, 22, 9, { r: 3 }),
         key('解錠', 'unlock', -52, -92, 40, 17, { r: 4 }), key('通話', 'talk', 0, -92, 40, 17, { r: 4 }), key('終了', 'end', 52, -92, 40, 17, { r: 4 })] },
   };
+  Object.assign(INTERCOMS, {
+    gbm2mka: { group: '集合', name: 'Aiphone PATMOα GBM-2MKA', W: 122, H: 217, D: 23.5, rc: 6, edge: 2.5, rough: true,
+      screen: [0, 40, 100, 75], press: ['talk', 'end'],
+      buttons: [key('解錠', 'unlock', -40, -85, 30, 16, { r: 4 }), key('通話', 'talk', 0, -85, 30, 16, { r: 4 }), key('終了', 'end', 40, -85, 30, 16, { r: 4 })] },
+    gbm2ms: { group: '集合', name: 'Aiphone GBM-2MS（埋込）', W: 135, H: 120, D: 18.5, rc: 6, edge: 2.5, rough: true,
+      screen: [0, 18, 100, 62], press: ['talk', 'end'],
+      buttons: [key('解錠', 'unlock', -45, -38, 34, 14, { r: 4 }), key('通話', 'talk', 0, -38, 34, 14, { r: 4 }), key('終了', 'end', 45, -38, 34, 14, { r: 4 })] },
+    gbm2m7: { group: '集合', name: 'Aiphone GBM-2M7（画面キーのみ）', W: 210, H: 155, D: 26.8, rc: 6, edge: 3, rough: true, touch: true,
+      screen: [0, 0, 185, 130], press: ['talk'],
+      buttons: [key('画面の解錠', 'unlock', -72, 50, 34, 14, { r: 3, h_up: 0.5 }), key('画面の話す', 'talk', 72, 50, 34, 14, { r: 3, h_up: 0.5 })] },
+  });
   // ---- the numbers the CAD scripts share
   const Y_RC = -13.60625, RP = 4.5, YS = 6.09375, ZS = 7.0375, KEY_TRAVEL = 1.0, MAIN_W = 30, RAIL_Y = 42, GT = 3, HR = 2.34375;
   const SHAPES = {

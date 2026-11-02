@@ -209,6 +209,14 @@ const sceneContext = vm.createContext({window: {THREE: {}}});
 vm.runInContext(readFileSync(new URL('../calibration_ui/scene/monban_scene.js', import.meta.url), 'utf8'), sceneContext);
 const Scene = sceneContext.window.MonbanScene;
 assert.deepEqual(Object.keys(Scene.DESIGNS), ['bird', 'matte']);
+assert.ok(Object.keys(Scene.INTERCOMS).length >= 19);
+for (const [id, item] of Object.entries(Scene.INTERCOMS)) {
+  // Everything drawn on the face stays on the outline.
+  const inside = (x, y, w, h) => Math.abs(x) + w / 2 <= item.W / 2 && Math.abs(y) + h / 2 <= item.H / 2;
+  assert.ok(inside(...item.screen.slice(0, 4)), id + ': screen');
+  for (const b of item.buttons) assert.ok(inside(b.cx, b.cy, b.w, b.h), id + ': ' + b.label);
+  assert.ok(item.press.every(role => item.buttons.some(b => b.role === role)), id + ': pressed key missing');
+}
 for (const id of Object.keys(Scene.INTERCOMS)) {
   const spec = Scene.customize(id);
   for (const shape of ['bird', 'capsule']) {

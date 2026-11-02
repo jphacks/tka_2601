@@ -204,7 +204,7 @@
         caption ? h('div', {className: 'caption ' + speaker}, caption.text) : null),
       h('div', {className: 'under'},
         h(Alert, {type: notes.length ? 'warning' : 'success', role: 'status', title: notes.length ? h(Fragment, null, notes.map(note => h('div', {key: note}, note))) : '当たる所はありません'}),
-        h('div', {className: 'sub', style: {marginTop: 8}}, pref.measured ? '実測値で表示しています' : '外形は公開値、キー位置は推定です'),
+        h('div', {className: 'sub', style: {marginTop: 8}}, pref.measured ? '実測値で表示しています' : spec.rough ? '外形は公開値、キー配置は説明文からの仮置きです' : '外形は公開値、キー位置は推定です'),
         h(Button, {type: 'link', style: {padding: 0}, 'aria-expanded': measuring, onClick: () => setMeasuring(!measuring)}, '寸法とキー位置を変える'),
         measuring ? h(Fragment, null,
           h('div', {className: 'fields'}, fields),
