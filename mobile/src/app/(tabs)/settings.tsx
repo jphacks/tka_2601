@@ -1,4 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { Fragment, useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +9,7 @@ import { Screen } from '../../components/Screen';
 import { Card, GroupHeader, LargeTitle, LinkRow, RadioRow, RowSwitch, Separator, SettingIcon } from '../../components/ui';
 import type { Device, DevicePatch } from '../../domain/device';
 import type { ShopProfile } from '../../domain/shop';
+import { PRIVACY_POLICY_URL } from '../../lib/app';
 import { useHousehold } from '../../lib/auth';
 import { deleteAccount } from '../../lib/authActions';
 import { confirmAction } from '../../lib/confirm';
@@ -157,6 +159,15 @@ export default function SettingsScreen() {
             icon={SYMBOLS.people}
             value={memberCount !== null ? `${memberCount}人` : undefined}
             onPress={() => router.push('/settings/group')}
+          />
+        </Card>
+
+        <GroupHeader title="このアプリについて" />
+        <Card>
+          <LinkRow
+            label="プライバシーポリシー"
+            icon={SYMBOLS.privacy}
+            onPress={() => WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL)}
           />
         </Card>
 

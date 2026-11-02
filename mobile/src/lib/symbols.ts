@@ -32,6 +32,7 @@ export const SYMBOLS = {
   pause: { ios: 'pause.circle', android: 'pause_circle' },
   shop: { ios: 'storefront', android: 'storefront' },
   list: { ios: 'list.bullet', android: 'list' },
+  privacy: { ios: 'hand.raised', android: 'privacy_tip' },
   logout: { ios: 'rectangle.portrait.and.arrow.right', android: 'logout' },
   trash: { ios: 'trash', android: 'delete' },
 } satisfies Record<string, SymbolName>;

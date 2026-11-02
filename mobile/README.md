@@ -95,14 +95,23 @@ npx eas-cli@latest build --platform ios --profile production
 npx eas-cli@latest submit --platform ios --profile production --latest
 ```
 
-`eas.json` の `submit.production` に `ascAppId` がないので、提出のときに聞かれる。CI で動かすなら App Store Connect のアプリの ID を入れる。
+App Store Connect のアプリの ID は `eas.json` の `submit.production.ios.ascAppId` に入っている。
+
+クラウドに設定がない機能は、次の環境変数が `1` のときだけ画面に出す。EAS の `production` には入れていないので、今のビルドでは隠れる。
+
+| 環境変数 | 機能 | 有効にする前に要ること |
+|---|---|---|
+| `EXPO_PUBLIC_FEATURE_ASSISTANT` | 自然言語の入力 | Edge Function「assistant」から Ollama に届く経路 |
+| `EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS` | 予約先の Google カレンダーと Square | OAuth のクライアントとシークレット |
+| `EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN` | Apple と Google のログイン | Supabase の Auth の設定と、削除時の Apple のトークンの失効 |
 
 審査で見られる点は次のとおり実装している。
 
 | 項目 | 実装 |
 |---|---|
 | アカウントの削除（5.1.1(v)） | 設定タブの「アカウントを削除」 |
-| Sign in with Apple（4.8） | ログイン画面 |
+| ログイン（4.8） | 今はメールだけ。Apple と Google は `EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN` で隠している |
+| プライバシーポリシー（5.1.1(i)） | ログイン画面と設定タブのリンク。外部テストの手順は [docs/testflight.md](../docs/testflight.md) |
 | 権限の文言 | カメラは招待の QR コードの読み取りだけに使う。マイクの権限は持たない |
 | 暗号の申告 | `ITSAppUsesNonExemptEncryption` は false |
 

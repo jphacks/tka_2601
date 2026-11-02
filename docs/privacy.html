@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MONBAN プライバシーポリシー</title>
+<style>
+  :root { color-scheme: light dark; --text: #1c1c1e; --muted: #5a5a60; --bg: #f2f2f7; --heading: #1f3a5f; --line: #d1d1d6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --text: #f2f2f7; --muted: #aeaeb2; --bg: #1c1c1e; --heading: #a9c1e0; --line: #3a3a3c; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; line-height: 1.7; }
+  main { max-width: 680px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { margin: 0 0 8px; font-size: 26px; color: var(--heading); }
+  h2 { margin: 32px 0 8px; font-size: 18px; color: var(--heading); }
+  p, ul { margin: 8px 0; }
+  ul { padding-left: 20px; }
+  .date { color: var(--muted); font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 15px; }
+  th, td { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { font-weight: 600; }
+  a { color: var(--heading); }
+</style>
+</head>
+<body>
+<main>
+<h1>MONBAN プライバシーポリシー</h1>
+<p class="date">2026 年 11 月 2 日 制定</p>
+
+<p>{{OPERATOR}}（以下「運営者」）は、店舗向けアプリ MONBAN と、インターホンに取り付ける本体（以下あわせて「本サービス」）で扱う情報を、次のとおり取り扱います。</p>
+
+<h2>1. 集める情報</h2>
+<table>
+  <tr><th>種類</th><th>内容</th><th>集め方</th></tr>
+  <tr><td>アカウント</td><td>名前、メールアドレス、パスワード（ハッシュ化して保存）</td><td>登録時の入力</td></tr>
+  <tr><td>お店の情報</td><td>店名、業種、営業時間、メニュー、受け答えの設定、メンバー</td><td>アプリでの入力</td></tr>
+  <tr><td>予約</td><td>お客様の名前、電話番号、メモ、日時、メニュー</td><td>アプリでの入力、または本体での応対</td></tr>
+  <tr><td>来客の記録</td><td>来客の日時、用件、応対の結果、会話の文字起こし</td><td>本体での応対</td></tr>
+  <tr><td>本体</td><td>本体の識別子、動作モード、接続の状態</td><td>本体からの送信</td></tr>
+  <tr><td>通知</td><td>端末の通知トークン、通知の内容と設定</td><td>通知を許可したとき</td></tr>
+</table>
+<p>来客の声は、通話中だけ運営者が管理する会話サーバーへ送り、応対と文字起こしに使います。通話中以外の音は、本体の中で処理するだけで、保存も送信もしません。</p>
+<p>カメラは、メンバーの招待の QR コードを読み取るためだけに使います。映像は保存も送信もしません。</p>
+<p>予約と来客の記録にはお客様や来客の情報が含まれます。お店は、これらの方への案内など、必要な対応を自らの責任で行ってください。</p>
+
+<h2>2. 使う目的</h2>
+<ul>
+  <li>来客への応対、予約の管理、通知の送信</li>
+  <li>アカウントの認証とお店のメンバーの管理</li>
+  <li>不具合の調査と本サービスの改善</li>
+</ul>
+<p>広告には使いません。第三者の広告や行動分析のツールも組み込んでいません。</p>
+
+<h2>3. 外部のサービス</h2>
+<p>本サービスは次のサービスを使います。各社には、機能の提供に必要な情報だけを渡します。情報を販売することはありません。</p>
+<table>
+  <tr><th>提供元</th><th>用途</th><th>渡す情報</th></tr>
+  <tr><td>Supabase</td><td>データベース、認証、サーバー処理（東京リージョン）</td><td>第 1 節の情報</td></tr>
+  <tr><td>Expo</td><td>プッシュ通知の中継</td><td>通知トークン、通知の内容</td></tr>
+  <tr><td>Apple</td><td>プッシュ通知の配信</td><td>通知トークン、通知の内容</td></tr>
+</table>
+<p>法令に基づく場合を除き、本人の同意なく、これ以外の第三者に情報を渡しません。</p>
+
+<h2>4. 保存期間と削除</h2>
+<ul>
+  <li>情報は、削除されるまで保存します。来客の記録を自動で消すことはありません。</li>
+  <li>来客の記録は、アプリから 1 件ずつ削除できます。予約はキャンセルできますが、キャンセルした予約の記録は、お店の削除まで残ります。</li>
+  <li>アプリの「設定」の「アカウントを削除」から、アカウントを削除できます。お店の最後のメンバーが削除すると、そのお店の予約、来客の記録などもあわせて削除します。ほかのメンバーが残るときは、お店の情報は残ります。</li>
+  <li>通知は、端末の設定からいつでも止められます。</li>
+</ul>
+
+<h2>5. 安全管理</h2>
+<p>通信は TLS で暗号化します。お店の情報は、そのお店のメンバーだけが読めるようにデータベースのアクセス制御で分けています。</p>
+
+<h2>6. お問い合わせ</h2>
+<p>このポリシーや情報の取り扱いについてのお問い合わせ、削除の依頼は、次の窓口で受け付けます。</p>
+<p>{{OPERATOR}}<br>メール: <a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a></p>
+
+<h2>7. 変更</h2>
+<p>このポリシーを変更するときは、このページで知らせます。</p>
+</main>
+</body>
+</html>

@@ -2,6 +2,8 @@ import * as Linking from 'expo-linking';
 
 export const APP_NAME = 'MONBAN';
 
+export const PRIVACY_POLICY_URL = 'https://jphacks.github.io/tka_2601/privacy.html';
+
 // 招待リンク。開くと参加の確認画面（/join）に進む。スキームは app.json の scheme
 export function inviteLink(token: string): string {
   return Linking.createURL('join', { queryParams: { token } });

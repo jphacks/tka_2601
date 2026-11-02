@@ -11,6 +11,7 @@ import type { GoogleCalendar, ProviderState, ReservationProvider } from '../../d
 import { confirmAction } from '../../lib/confirm';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
+import { features } from '../../lib/features';
 import { PROVIDER_LABELS, PROVIDER_ORDER } from '../../lib/labels';
 import { colors } from '../../theme';
 
@@ -186,6 +187,10 @@ export default function ProviderScreen() {
   const connection = kind ? connectionOf(kind) : null;
   const failed = connection?.status === 'error';
   const google = state?.google;
+  // 接続先が未設定でも、すでに選んでいる予約先は外せるように残す
+  const providers = PROVIDER_ORDER.filter(
+    (provider) => features.externalProviders || !isConnectable(provider) || provider === state?.provider,
+  );
 
   return (
     <Screen>
@@ -196,7 +201,7 @@ export default function ProviderScreen() {
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
           <GroupHeader title="予約先" first />
           <Card>
-            {PROVIDER_ORDER.map((provider, index) => (
+            {providers.map((provider, index) => (
               <Fragment key={provider}>
                 {index > 0 ? <Separator /> : null}
                 <RadioRow

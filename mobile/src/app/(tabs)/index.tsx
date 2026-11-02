@@ -36,6 +36,7 @@ import { confirmAction } from '../../lib/confirm';
 import { useLiveRefresh } from '../../lib/liveRefresh';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
+import { features } from '../../lib/features';
 import { dateTimeRange, hourMinute, monthDay, sectionTitle } from '../../lib/format';
 import { approveDialogTitle } from '../../lib/labels';
 import { SYMBOLS } from '../../lib/symbols';
@@ -485,7 +486,7 @@ export default function ReservationsScreen() {
         </>
       ) : null}
 
-      <AssistantBar onPress={() => router.push('/assistant')} />
+      {features.assistant ? <AssistantBar onPress={() => router.push('/assistant')} /> : null}
     </Screen>
     </SafeAreaView>
   );
