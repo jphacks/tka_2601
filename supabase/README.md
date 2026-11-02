@@ -268,8 +268,9 @@ deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_
 | 組織 | AttackOnRasshiine（Free プラン） |
 | プロジェクト | `tka_2601`（ref `bqdvxzvezecunnkbcyoy`、リージョン `ap-northeast-1`） |
 | URL | https://bqdvxzvezecunnkbcyoy.supabase.co |
-| 入っているもの | マイグレーション7つ（`20261102000000_shop_reservations.sql` は未適用）、pg_cron の `push-retry`、Edge Function「device」と「push」（「reservations」と「calendar-sync」は未配備）、Edge のシークレット `PUSH_WEBHOOK_SECRET`、Vault の `push_function_url` と `push_webhook_secret` |
-| 入っていないもの | シード（グループ、住人、本体、デバイス鍵）。`EXPO_ACCESS_TOKEN` は設定しない（下を参照） |
+| 入っているもの | マイグレーション9つ、pg_cron の `push-retry`、`device-offline`、`calendar-sync`、Edge Function「push」「device」「reservations」「calendar-sync」「assistant」「account」、Edge のシークレット `PUSH_WEBHOOK_SECRET`、Vault の `push_function_url` と `push_webhook_secret` |
+| 入っていないもの | シード（グループ、住人、本体、デバイス鍵）、Google と Square のシークレット。`EXPO_ACCESS_TOKEN` は設定しない（下を参照） |
+| ログインの手段 | メールだけ。Apple と Google は無効 |
 | 通知を送る Expo のプロジェクト | `@atsushihosaka/jphacks2026`（アプリの `extra.eas.projectId`） |
 
 アプリは publishable key（`sb_publishable_...`）を使う。secret key はダッシュボードの API Keys にあり、リポジトリにも本体にも入れない。Free プランのプロジェクトは、1週間使われないと一時停止する。
@@ -281,7 +282,7 @@ supabase db push
 ```
 
 ```bash
-supabase functions deploy push device reservations calendar-sync
+supabase functions deploy push device reservations calendar-sync assistant account
 ```
 
 Google カレンダーに接続するには、次の4つを `supabase secrets set` で1つずつ設定する。値の意味は `functions/.env.example` にある。`RESERVATIONS_PUBLIC_URL` は `https://bqdvxzvezecunnkbcyoy.supabase.co/functions/v1/reservations` で、Google Cloud の OAuth クライアントの承認済みのリダイレクト URI に、この URL の末尾に `/google/callback` を付けたものを登録する。
