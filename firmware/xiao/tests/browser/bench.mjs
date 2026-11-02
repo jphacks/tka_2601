@@ -9,6 +9,11 @@ const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--ena
 const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 const page = await context.newPage();
 page.setDefaultTimeout(SLOW);
+// XIAO_BROWSER_THROTTLE=8 slows the page's CPU, to see on a fast machine what a slow CI runner does.
+if (process.env.XIAO_BROWSER_THROTTLE) {
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.XIAO_BROWSER_THROTTLE) });
+}
 const problems = [];
 page.on('pageerror', error => problems.push('page error: ' + error.message));
 page.on('console', message => { if (message.type() === 'error') problems.push('console: ' + message.text()); });

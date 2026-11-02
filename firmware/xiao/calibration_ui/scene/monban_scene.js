@@ -424,7 +424,7 @@
 
     let intercomId = options.intercom || 'vsmge20', change = options.change || null, designId = options.design || 'bird';
     let spec, intercom, product, intercomGroup = null;
-    const press = { talk: 0, end: 0 }, pressTarget = { talk: 0, end: 0 }, reach = { talk: null, end: null }, pace = { talk: 0.2, end: 0.2 };
+    const press = { talk: 0, end: 0 }, pressTarget = { talk: 0, end: 0 }, reach = { talk: null, end: null }, pace = { talk: 0.2, end: 0.2 }, unshown = { talk: false, end: false };
     let xray = false, xrayAmount = 0, screenState = 'off', callStart = 0, lastScreen = -1;
     // ---- camera
     const view = { az: -0.42, el: 0.22, dist: 420, target: new T.Vector3() };
@@ -435,7 +435,7 @@
       if (intercomGroup) { scene.remove(intercomGroup); disposeTree(intercomGroup); }
       if (product) { scene.remove(product.group); disposeTree(product.group); }
       spec = customize(intercomId, change || {});
-      for (const role of Object.keys(press)) { press[role] = pressTarget[role] = 0; reach[role] = null; }
+      for (const role of Object.keys(press)) { press[role] = pressTarget[role] = 0; reach[role] = null; unshown[role] = false; }
       const design = DESIGNS[designId];
       if (design.shape === 'capsule') {
         Object.assign(mats.shell.color, new T.Color(design.color));
@@ -530,13 +530,16 @@
       if (!running) return;
       requestAnimationFrame(frame);
       if (document.hidden) { last = now; return; }
-      const dt = Math.min((now - last) / 1000, 0.1);
+      const elapsed = (now - last) / 1000; // presses follow real time, however few frames there are
+      const dt = Math.min(elapsed, 0.1);
       last = now;
       let moving = false;
       for (const role of Object.keys(press)) {
         // The real servo: about 0.2 s over the stroke at 60 deg per 0.1 s; the key follows after contact.
-        const delta = pressTarget[role] - press[role];
-        press[role] += Math.sign(delta) * Math.min(Math.abs(delta), dt / pace[role]);
+        // A press is drawn all the way in before it returns, even if its release came first.
+        const delta = (unshown[role] ? 1 : pressTarget[role]) - press[role];
+        press[role] += Math.sign(delta) * Math.min(Math.abs(delta), elapsed / pace[role]);
+        if (press[role] >= 1) unshown[role] = false;
         const m = product.mechs[role];
         if (!m) continue;
         const full = m.p.gap + KEY_TRAVEL; // the key's bottom stops the rack
@@ -593,7 +596,7 @@
       setPress(name, on, how = {}) {
         const role = roleOf(name);
         if (!role) return false;
-        if (on) { reach[role] = how.mm ?? null; }
+        if (on) { reach[role] = how.mm ?? null; unshown[role] = true; }
         pace[role] = how.seconds ?? 0.2;
         pressTarget[role] = on ? 1 : 0;
         if (how.focus !== false) focus(on ? role : null);
