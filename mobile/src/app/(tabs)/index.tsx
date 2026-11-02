@@ -1,6 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-screens/experimental';
 
 import { AssistantBar } from '../../components/AssistantBar';
 import { ChevronLeft, ChevronRight } from '../../components/icons';
@@ -256,6 +257,7 @@ export default function ReservationsScreen() {
     );
 
   return (
+    <SafeAreaView edges={{ bottom: true }} style={styles.safeArea}>
     <Screen waves={false}>
       <View style={styles.topBar}>
         {canCreate ? <NavTextButton label="追加" accessibilityLabel="予約を追加" onPress={() => addReservation(view === 'day' || view === 'week' ? date : undefined)} /> : null}
@@ -356,10 +358,12 @@ export default function ReservationsScreen() {
 
       <AssistantBar onPress={() => router.push('/assistant')} />
     </Screen>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   topBar: { height: 44, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 8 },
   largeTitle: { paddingHorizontal: 20, paddingBottom: 12, fontSize: 34, fontWeight: '700', color: colors.text },

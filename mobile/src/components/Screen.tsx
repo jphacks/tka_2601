@@ -47,7 +47,7 @@ export function Screen({
 }) {
   const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.screen, safeTop && { paddingTop: insets.top }]}>
+    <View collapsable={false} style={[styles.screen, safeTop && { paddingTop: insets.top }]}>
       <BackgroundShapes waves={waves} />
       {children}
     </View>
