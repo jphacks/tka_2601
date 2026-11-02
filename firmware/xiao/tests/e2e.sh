@@ -6,9 +6,11 @@ python_bin="${XIAO_E2E_PYTHON:-}"
 if [ -z "$python_bin" ]; then
   venv="$PWD/.host-build/e2e-venv"
   python_bin="$venv/bin/python"
-  if [ ! -x "$python_bin" ]; then
-    uv venv --python 3.12 "$venv"
-    uv pip install --python "$python_bin" ../../backend/voice-agent
+  if [ ! -f "$venv/.installed" ]; then
+    uv venv --allow-existing --python 3.12 "$venv"
+    # Only the dependencies: tests/e2e_relay.py imports the backend from its source.
+    uv pip install --python "$python_bin" -r ../../backend/voice-agent/pyproject.toml
+    touch "$venv/.installed"
   fi
 fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/xiao-e2e.XXXXXX")"
