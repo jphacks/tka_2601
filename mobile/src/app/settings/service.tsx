@@ -3,10 +3,10 @@ import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ConfirmDialog } from '../../components/overlays';
 import { NavBar, Screen } from '../../components/Screen';
 import { Card, NavTextButton, Separator, Stepper, TextButton } from '../../components/ui';
 import { useHousehold } from '../../lib/auth';
+import { confirmAction } from '../../lib/confirm';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { minutesLabel } from '../../lib/format';
@@ -27,7 +27,6 @@ export default function ServiceEditScreen() {
   const [duration, setDuration] = useState(60);
   const [price, setPrice] = useState('');
   const [saving, setSaving] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -69,7 +68,6 @@ export default function ServiceEditScreen() {
 
   async function remove() {
     if (!id) return;
-    setConfirmOpen(false);
     try {
       await repositories.shop.removeService(id);
       router.back();
@@ -128,19 +126,13 @@ export default function ServiceEditScreen() {
         {id ? (
           <TextButton
             label="このメニューを削除"
-            onPress={() => setConfirmOpen(true)}
+            onPress={() =>
+              confirmAction({ title: 'このメニューを削除しますか', confirmLabel: '削除', cancelLabel: '戻る', onConfirm: remove })
+            }
             style={[styles.remove, { marginBottom: insets.bottom }]}
           />
         ) : null}
       </KeyboardAvoidingView>
-      <ConfirmDialog
-        visible={confirmOpen}
-        title="このメニューを削除しますか"
-        confirmLabel="削除"
-        cancelLabel="戻る"
-        onConfirm={remove}
-        onCancel={() => setConfirmOpen(false)}
-      />
     </Screen>
   );
 }

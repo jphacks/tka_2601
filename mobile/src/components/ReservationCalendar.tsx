@@ -28,6 +28,7 @@ const DAY_HOUR_HEIGHT = 64;
 const WEEK_HOUR_HEIGHT = 44;
 const WEEK_HEADER_HEIGHT = 52;
 const MONTH_CELL_HEIGHT = 92;
+const MONTH_EVENT_HEIGHT = 20;
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
 const THEME = {
@@ -96,10 +97,11 @@ function WeekHeader({ dateRange, onPressDateHeader }: { dateRange: Dayjs[]; onPr
   );
 }
 
-function eventColors(reservation: Reservation): { background: string; foreground: string; dashed: boolean } {
-  if (reservation.arrived_at) return { background: colors.navy, foreground: '#FFFFFF', dashed: false };
-  if (reservation.status === 'pending') return { background: colors.card, foreground: colors.navy, dashed: true };
-  return { background: colors.navyTint, foreground: colors.navy, dashed: false };
+// 仮予約は白地に紺の枠で出す
+function eventColors(reservation: Reservation): { background: string; foreground: string; outlined: boolean } {
+  if (reservation.arrived_at) return { background: colors.navy, foreground: '#FFFFFF', outlined: false };
+  if (reservation.status === 'pending') return { background: colors.card, foreground: colors.navy, outlined: true };
+  return { background: colors.navyTint, foreground: colors.navy, outlined: false };
 }
 
 function eventLabel(reservation: Reservation): string {
@@ -164,15 +166,16 @@ export function ReservationCalendar({
 
   const eventCellStyle = useCallback(
     (event: CalendarEvent): ViewStyle => {
-      const { background, dashed } = eventColors(event.reservation);
+      const { background, outlined } = eventColors(event.reservation);
       return {
         backgroundColor: background,
-        borderWidth: dashed ? 1 : 0,
-        borderStyle: 'dashed',
+        borderWidth: outlined ? 2 : 0,
         borderColor: colors.navy,
         borderRadius: mode === 'day' ? 8 : 4,
         padding: mode === 'day' ? 6 : mode === 'week' ? 2 : 0,
         paddingHorizontal: mode === 'day' ? 10 : mode === 'week' ? 2 : 3,
+        // 月は枠の有無で高さが変わらないようにする
+        ...(mode === 'month' ? { minHeight: MONTH_EVENT_HEIGHT, justifyContent: 'center' as const } : {}),
         shadowOpacity: 0,
         elevation: 0,
         minWidth: 0,
@@ -279,7 +282,7 @@ export function ReservationCalendar({
         showAdjacentMonths={false}
         maxVisibleEventCount={2}
         moreLabel="+{moreCount}"
-        eventMinHeightForMonthView={18}
+        eventMinHeightForMonthView={MONTH_EVENT_HEIGHT}
         disableMonthEventCellPress
         eventCellStyle={eventCellStyle}
         renderEvent={renderEvent}

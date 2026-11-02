@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '../../components/Screen';
-import { CenterMessage, Separator } from '../../components/ui';
+import { CenterMessage, LargeTitle, Separator } from '../../components/ui';
 import { VisitRow } from '../../components/VisitRow';
 import { appendUnique } from '../../domain/collections';
 import { VISITS_PAGE_SIZE, type VisitSummary } from '../../domain/visit';
@@ -84,21 +84,12 @@ export default function VisitListScreen() {
 
   const sections = useMemo(() => groupByDay(visits ?? []), [visits]);
 
-  const header = (
-    <View>
-      <View style={styles.topBar} />
-      <Text style={styles.largeTitle} accessibilityRole="header">
-        来客
-      </Text>
-    </View>
-  );
-
   return (
     <Screen waves={false}>
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
-        ListHeaderComponent={header}
+        ListHeaderComponent={<LargeTitle title="来客" />}
         stickySectionHeadersEnabled={false}
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionTitle} accessibilityRole="header">
@@ -110,7 +101,7 @@ export default function VisitListScreen() {
           const last = index === section.data.length - 1;
           return (
             <View style={[styles.cell, first && styles.cellFirst, last && styles.cellLast]}>
-              {first ? null : <Separator />}
+              {first ? null : <Separator inset={60} />}
               <VisitRow visit={item} onPress={() => router.push({ pathname: '/visits/[id]', params: { id: item.id } })} />
             </View>
           );
@@ -137,10 +128,8 @@ export default function VisitListScreen() {
 
 const styles = StyleSheet.create({
   content: { paddingBottom: 32 },
-  topBar: { height: 44 },
-  largeTitle: { paddingHorizontal: 20, paddingBottom: 4, fontSize: 34, fontWeight: '700', color: colors.text },
   sectionTitle: {
-    paddingTop: 18,
+    paddingTop: 14,
     paddingHorizontal: 20,
     paddingBottom: 8,
     fontSize: 15,

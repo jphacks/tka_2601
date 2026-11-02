@@ -374,7 +374,7 @@ export class GoogleProvider implements ReservationProvider {
     }
   }
 
-  // カレンダーには同時の書き込みを止める手段がないので、読んでから書くまでの重なりは承認リストで防ぐ
+  // カレンダーには同時の書き込みを止める手段がないので、読んでから書くまでの重なりは店の確定で防ぐ
   async createIfFree(input: NewReservation): Promise<ReservationWrite> {
     if ((await findOverlaps(this, input.starts_at, input.ends_at)).length > 0) throw overlapError();
     return await this.create(input);

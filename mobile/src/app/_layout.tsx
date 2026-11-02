@@ -89,7 +89,6 @@ function RootNavigator() {
         <Stack.Screen name="visits/[id]" />
         <Stack.Screen name="reservations/[id]" />
         <Stack.Screen name="reservations/edit" />
-        <Stack.Screen name="reservations/approvals" />
         <Stack.Screen name="assistant/index" />
         <Stack.Screen name="settings/shop" />
         <Stack.Screen name="settings/services" />

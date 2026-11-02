@@ -414,7 +414,7 @@ export class SquareProvider implements ReservationProvider {
     return await this.createIfFree(input);
   }
 
-  // Square の予約と表の仮予約の両方を見る。Square には同時の書き込みを止める手段がないので、そちらとの競合は承認リストで防ぐ
+  // Square の予約と表の仮予約の両方を見る。Square には同時の書き込みを止める手段がないので、そちらとの競合は店の確定で防ぐ
   async createIfFree(input: NewReservation): Promise<ReservationWrite> {
     if (input.source !== "ai") throw readOnlyError();
     if ((await findOverlaps(this, input.starts_at, input.ends_at)).length > 0) throw overlapError();

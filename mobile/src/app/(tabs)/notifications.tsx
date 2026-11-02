@@ -4,7 +4,7 @@ import { ActivityIndicator, Pressable, RefreshControl, SectionList, StyleSheet, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Screen } from '../../components/Screen';
-import { CenterMessage, Separator } from '../../components/ui';
+import { CenterMessage, LargeTitle, RoundIcon, Separator } from '../../components/ui';
 import { appendUnique } from '../../domain/collections';
 import {
   type AppNotification,
@@ -19,6 +19,7 @@ import { useLiveRefresh } from '../../lib/liveRefresh';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { dayKey, hourMinute, sectionTitle } from '../../lib/format';
+import { notificationSymbol } from '../../lib/symbols';
 import { colors, radius } from '../../theme';
 
 type Section = { key: string; title: string; data: AppNotification[] };
@@ -125,14 +126,7 @@ export default function NotificationsScreen() {
         sections={sections}
         keyExtractor={(item) => item.id}
         stickySectionHeadersEnabled={false}
-        ListHeaderComponent={
-          <View>
-            <View style={styles.topBar} />
-            <Text style={styles.largeTitle} accessibilityRole="header">
-              通知
-            </Text>
-          </View>
-        }
+        ListHeaderComponent={<LargeTitle title="通知" />}
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionTitle} accessibilityRole="header">
             {section.title}
@@ -144,7 +138,7 @@ export default function NotificationsScreen() {
           const last = index === section.data.length - 1;
           return (
             <View style={[styles.cell, index === 0 && styles.cellFirst, last && styles.cellLast]}>
-              {index > 0 ? <Separator inset={32} /> : null}
+              {index > 0 ? <Separator inset={60} /> : null}
               <Pressable
                 onPress={() => open(item)}
                 disabled={!notificationTarget(item.data, item.kind)}
@@ -152,7 +146,7 @@ export default function NotificationsScreen() {
                 accessibilityLabel={`${unread ? '未読、' : ''}${item.title}、${item.body}`}
                 style={({ pressed }) => [styles.row, pressed && styles.pressed]}
               >
-                <View style={styles.dotBox}>{unread ? <View style={styles.dot} /> : null}</View>
+                <RoundIcon name={notificationSymbol(item.kind)} filled={unread} />
                 <View style={styles.body}>
                   <View style={styles.titleLine}>
                     <Text style={[styles.title, unread && styles.titleUnread]}>{item.title}</Text>
@@ -185,10 +179,8 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  topBar: { height: 44 },
-  largeTitle: { paddingHorizontal: 20, paddingBottom: 4, fontSize: 34, fontWeight: '700', color: colors.text },
   sectionTitle: {
-    paddingTop: 18,
+    paddingTop: 14,
     paddingHorizontal: 20,
     paddingBottom: 8,
     fontSize: 15,
@@ -198,10 +190,8 @@ const styles = StyleSheet.create({
   cell: { marginHorizontal: 16, backgroundColor: colors.card, overflow: 'hidden' },
   cellFirst: { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card },
   cellLast: { borderBottomLeftRadius: radius.card, borderBottomRightRadius: radius.card },
-  row: { flexDirection: 'row', gap: 8, padding: 12 },
+  row: { flexDirection: 'row', gap: 12, paddingVertical: 12, paddingHorizontal: 14 },
   pressed: { backgroundColor: colors.separator },
-  dotBox: { width: 12, alignItems: 'center', paddingTop: 7 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.navy },
   body: { flex: 1, minWidth: 0, gap: 2 },
   titleLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   title: { flex: 1, minWidth: 0, fontSize: 16, lineHeight: 22, color: colors.text },

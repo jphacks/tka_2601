@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 're
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NavBar, Screen } from '../../components/Screen';
-import { Card, CenterMessage, GroupHeader, Separator, Toggle } from '../../components/ui';
+import { Card, CenterMessage, GroupHeader, RowSwitch, Separator, SettingIcon } from '../../components/ui';
 import {
   groupNotificationKinds,
   type NotificationKind,
@@ -14,6 +14,7 @@ import { useAuth } from '../../lib/auth';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { notificationCategoryLabel } from '../../lib/labels';
+import { notificationSymbol } from '../../lib/symbols';
 import { colors } from '../../theme';
 
 // 種類は notification_kinds の表から作る。種類を足してもアプリの更新は要らない
@@ -66,10 +67,15 @@ export default function NotificationSettingsScreen() {
               <Card>
                 {section.kinds.map((kind, index) => (
                   <Fragment key={kind.kind}>
-                    {index > 0 ? <Separator /> : null}
+                    {index > 0 ? <Separator inset={56} /> : null}
                     <View style={styles.row}>
+                      <SettingIcon name={notificationSymbol(kind.kind)} />
                       <Text style={styles.label}>{kind.label}</Text>
-                      <Toggle label={kind.label} value={kind.enabled} onChange={(next) => change(kind.kind, next)} />
+                      <RowSwitch
+                        accessibilityLabel={kind.label}
+                        value={kind.enabled}
+                        onValueChange={(next) => change(kind.kind, next)}
+                      />
                     </View>
                   </Fragment>
                 ))}
@@ -83,6 +89,6 @@ export default function NotificationSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 },
+  row: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 12, paddingLeft: 14, paddingRight: 16 },
   label: { flex: 1, fontSize: 17, color: colors.text },
 });

@@ -8,15 +8,15 @@
 |---|---|
 | `src/app/` | 画面（Expo Router）。`_layout.tsx` でログイン前・グループ未所属・所属済みの画面を分ける |
 | `src/app/(tabs)/` | 下のタブ。予約（最初の画面）、来客、通知、設定 |
-| `src/app/reservations/` | 予約の詳細、追加と編集、承認リスト |
+| `src/app/reservations/` | 予約の詳細、追加と編集 |
 | `src/app/assistant/` | 自然言語の入力と確認カード |
 | `src/app/settings/` | 店舗情報、メニュー、受け答え、予約先、通知の種類、追加の指示、グループ、招待 |
-| `src/components/` | ナビバー、背景のシェイプ、ボタン、確認ダイアログなどの部品 |
+| `src/components/` | ナビバー、背景のシェイプ、ボタン、OS のシンボルを出す `Icon` などの部品 |
 | `src/domain/` | 画面が使う型と、日付や営業時間などの純粋な規則 |
 | `src/repositories/` | データの操作のインターフェース |
 | `src/infrastructure/supabase/` | リポジトリの実装と、通信の形からドメインへの変換（`mappers.ts`） |
 | `src/lib/container.ts` | どの実装を使うかを決める唯一の場所 |
-| `src/lib/` | ログイン（`auth.tsx`、`authActions.ts`）、通知（`push.ts`）、タブの数字（`badges.tsx`）、表示の文言（`labels.ts`）、書式（`format.ts`） |
+| `src/lib/` | ログイン（`auth.tsx`、`authActions.ts`）、通知（`push.ts`）、タブの数字（`badges.tsx`）、表示の文言（`labels.ts`）、書式（`format.ts`）、アイコンの名前（`symbols.ts`）、確認ダイアログ（`confirm.ts`） |
 | `src/theme.ts` | 色。テーマ色は紺（#1F3A5F）だけ |
 
 ## 予約の読み書き

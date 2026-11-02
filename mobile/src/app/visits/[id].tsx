@@ -4,10 +4,11 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MoreCircle } from '../../components/icons';
-import { ConfirmDialog, MenuPopover } from '../../components/overlays';
+import { MenuPopover } from '../../components/overlays';
 import { NavBar, Screen } from '../../components/Screen';
 import { CenterMessage, IntentBadge } from '../../components/ui';
 import type { Visit, VisitMessage } from '../../domain/visit';
+import { confirmAction } from '../../lib/confirm';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { callSeconds, durationLabel, hourMinute, hourMinuteSecond, monthDay } from '../../lib/format';
@@ -29,7 +30,6 @@ export default function VisitDetailScreen() {
   const [data, setData] = useState<{ visit: Visit; messages: VisitMessage[] } | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     repositories.visits.get(id)
@@ -38,7 +38,6 @@ export default function VisitDetailScreen() {
   }, [id]);
 
   async function remove() {
-    setConfirmOpen(false);
     try {
       await repositories.visits.remove(id);
       router.back();
@@ -113,17 +112,10 @@ export default function VisitDetailScreen() {
             label: 'この記録を削除',
             onPress: () => {
               setMenuOpen(false);
-              setConfirmOpen(true);
+              confirmAction({ title: 'この記録を削除しますか', confirmLabel: '削除', onConfirm: remove });
             },
           },
         ]}
-      />
-      <ConfirmDialog
-        visible={confirmOpen}
-        title="この記録を削除しますか"
-        confirmLabel="削除"
-        onConfirm={remove}
-        onCancel={() => setConfirmOpen(false)}
       />
     </Screen>
   );

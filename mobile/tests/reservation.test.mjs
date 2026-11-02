@@ -12,11 +12,13 @@ import {
   monthRange,
   monthWeekCount,
   nextReservation,
+  pendingByStart,
   reservationsByDay,
   reservationSections,
   weekRange,
   dailySegments,
   newIdempotencyKey,
+  withoutPending,
 } from '../src/domain/reservation.ts';
 import { keysetFilter } from '../src/domain/collections.ts';
 import { appendUnique } from '../src/domain/collections.ts';
@@ -240,4 +242,16 @@ test('the keyset filter selects rows after the cursor, breaking ties by id', () 
     keysetFilter('created_at', { at: '2026-11-02T09:00:00.123+00:00', id: 'abc' }),
     'created_at.lt."2026-11-02T09:00:00.123+00:00",and(created_at.eq."2026-11-02T09:00:00.123+00:00",id.lt.abc)',
   );
+});
+
+test('仮予約はカードに開始の早い順で出し、日付の見出しの下には出さない', () => {
+  const rows = [
+    reservation('later', '2026-11-05T15:00:00+09:00', 'pending'),
+    reservation('confirmed', '2026-11-04T10:00:00+09:00'),
+    reservation('sooner', '2026-11-03T15:00:00+09:00', 'pending'),
+    reservation('cancelled', '2026-11-03T16:00:00+09:00', 'cancelled'),
+  ];
+  assert.deepEqual(pendingByStart(rows).map((row) => row.id), ['sooner', 'later']);
+  const listed = reservationSections(withoutPending(rows)).flatMap((section) => section.data.map((row) => row.id));
+  assert.deepEqual(listed, ['confirmed']);
 });

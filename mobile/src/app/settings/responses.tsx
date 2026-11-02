@@ -8,6 +8,7 @@ import { Card, GroupHeader, LinkRow, NavTextButton, RadioRow, Separator } from '
 import type { Tone, WalkInPolicy } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
 import { repositories } from '../../lib/container';
+import { SYMBOLS } from '../../lib/symbols';
 import { errorMessage } from '../../lib/errors';
 import { TONE_LABELS, TONE_ORDER, WALK_IN_LABELS, WALK_IN_ORDER } from '../../lib/labels';
 import { colors, radius } from '../../theme';
@@ -114,6 +115,7 @@ export default function ResponsesScreen() {
           <Card>
             <LinkRow
               label="追加の指示"
+              icon={SYMBOLS.instructions}
               value={hasInstructions === null ? undefined : hasInstructions ? '設定済み' : '未設定'}
               onPress={() => router.push('/settings/instructions')}
             />

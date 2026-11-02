@@ -4,7 +4,7 @@ import { Alert, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, T
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NavBar, Screen } from '../../components/Screen';
-import { Card, Chip, ChipGroup, GroupHeader, NavTextButton, Separator, Stepper, Toggle } from '../../components/ui';
+import { Card, Chip, ChipGroup, GroupHeader, NavTextButton, RowSwitch, Separator, Stepper } from '../../components/ui';
 import { type BusinessHour, type BusinessType, normalizeBusinessHours } from '../../domain/shop';
 import { useAuth, useHousehold } from '../../lib/auth';
 import { repositories } from '../../lib/container';
@@ -139,10 +139,10 @@ export default function ShopScreen() {
                     <View style={styles.dayDetail}>
                       <View style={styles.closedRow}>
                         <Text style={styles.closedLabel}>定休日</Text>
-                        <Toggle
-                          label={`${label}曜日を定休日にする`}
+                        <RowSwitch
+                          accessibilityLabel={`${label}曜日を定休日にする`}
                           value={row.closed}
-                          onChange={(closed) => changeHour(day, { closed })}
+                          onValueChange={(closed) => changeHour(day, { closed })}
                         />
                       </View>
                       {row.closed ? null : (

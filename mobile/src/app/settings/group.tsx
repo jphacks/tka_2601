@@ -9,6 +9,7 @@ import type { Member } from '../../domain/group';
 import { useAuth, useHousehold } from '../../lib/auth';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
+import { SYMBOLS } from '../../lib/symbols';
 import { colors } from '../../theme';
 
 function initial(member: Member): string {
@@ -77,7 +78,12 @@ export default function GroupScreen() {
         </Card>
 
         <Card style={styles.inviteCard}>
-          <LinkRow label="メンバーを招待する" labelColor={colors.navy} onPress={() => router.push('/settings/invite')} />
+          <LinkRow
+            label="メンバーを招待する"
+            icon={SYMBOLS.personAdd}
+            labelColor={colors.navy}
+            onPress={() => router.push('/settings/invite')}
+          />
         </Card>
       </ScrollView>
     </Screen>

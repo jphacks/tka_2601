@@ -56,7 +56,8 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-font"
     ],
     "scheme": "tka2601",
     "experiments": {

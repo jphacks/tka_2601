@@ -1,14 +1,16 @@
+import SegmentedControlClass, { type SegmentedControlProps } from '@react-native-segmented-control/segmented-control';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { type ComponentType, useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-screens/experimental';
 
 import { AssistantBar } from '../../components/AssistantBar';
+import { Icon } from '../../components/Icon';
 import { ChevronLeft, ChevronRight } from '../../components/icons';
 import { type CalendarMode, monthCalendarHeight, ReservationCalendar } from '../../components/ReservationCalendar';
 import { ReservationRow } from '../../components/ReservationRow';
 import { Screen } from '../../components/Screen';
-import { Card, CenterMessage, NavTextButton, PrimaryButton, Segmented, Separator } from '../../components/ui';
+import { Card, CenterMessage, IntentBadge, LargeTitle, PrimaryButton, Separator, SoftButton } from '../../components/ui';
 import {
   addDays,
   canRecordArrival,
@@ -18,28 +20,34 @@ import {
   LIST_RANGE_DAYS,
   monthRange,
   nextReservation,
+  PENDING_RANGE_DAYS,
+  pendingByStart,
   type Reservation,
+  type ReservationProvider,
   reservationSections,
   startOfDayDate,
   weekRange,
+  withoutPending,
 } from '../../domain/reservation';
 import { type BusinessHour, isClosedOn } from '../../domain/shop';
 import { useHousehold } from '../../lib/auth';
 import { useBadges } from '../../lib/badges';
+import { confirmAction } from '../../lib/confirm';
 import { useLiveRefresh } from '../../lib/liveRefresh';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
-import { hourMinute, monthDay, sectionTitle } from '../../lib/format';
+import { dateTimeRange, hourMinute, monthDay, sectionTitle } from '../../lib/format';
+import { approveDialogTitle } from '../../lib/labels';
+import { SYMBOLS } from '../../lib/symbols';
 import { colors, radius } from '../../theme';
+
+// ライブラリの型は今の React Native の型と合わず、JSX に使えない
+const SegmentedControl = SegmentedControlClass as unknown as ComponentType<SegmentedControlProps>;
 
 type ViewMode = 'list' | CalendarMode;
 
-const VIEW_OPTIONS = [
-  { value: 'list', label: '一覧' },
-  { value: 'day', label: '日' },
-  { value: 'week', label: '週' },
-  { value: 'month', label: '月' },
-] as const;
+const VIEW_ORDER: readonly ViewMode[] = ['list', 'day', 'week', 'month'];
+const VIEW_LABELS = ['一覧', '日', '週', '月'];
 
 function openReservation(reservation: Reservation) {
   router.push({
@@ -70,21 +78,6 @@ function titleFor(view: ViewMode, date: Date): string {
 function shiftDate(view: ViewMode, date: Date, delta: number): Date {
   if (view === 'month') return new Date(date.getFullYear(), date.getMonth() + delta, 1);
   return addDays(date, view === 'week' ? delta * 7 : delta);
-}
-
-function ApprovalBand({ count, compact }: { count: number; compact?: boolean }) {
-  return (
-    <Pressable
-      onPress={() => router.push('/reservations/approvals')}
-      accessibilityRole="button"
-      accessibilityLabel={`承認待ち ${count}件`}
-      style={({ pressed }) => [styles.band, compact && styles.bandCompact, pressed && styles.pressedBand]}
-    >
-      <Text style={[styles.bandLabel, compact && styles.bandLabelCompact]}>承認待ち</Text>
-      <Text style={[styles.bandCount, compact && styles.bandLabelCompact]}>{`${count}件`}</Text>
-      <ChevronRight color="#FFFFFF" />
-    </Pressable>
-  );
 }
 
 function DateNav({ title, onPrevious, onNext, unit }: { title: string; onPrevious: () => void; onNext: () => void; unit: string }) {
@@ -140,35 +133,111 @@ function NextReservationCard({
         <Text style={styles.nextName}>{customerLabel(reservation)}</Text>
         {reservation.service_name ? <Text style={styles.nextService}>{reservation.service_name}</Text> : null}
       </Pressable>
-      {canRecordArrival(reservation, new Date()) ? <PrimaryButton label="到着を記録" loading={busy} onPress={onArrive} /> : null}
+      {canRecordArrival(reservation, new Date()) ? (
+        <PrimaryButton
+          label="到着を記録"
+          icon={<Icon name={SYMBOLS.arrived} size={20} color="#FFFFFF" />}
+          loading={busy}
+          onPress={onArrive}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+// 店の確認を待つ仮予約。読み取りだけの予約は、押して詳細を見るだけにする
+function PendingCard({
+  reservation,
+  busy,
+  onApprove,
+  onDecline,
+}: {
+  reservation: Reservation;
+  busy: boolean;
+  onApprove: () => void;
+  onDecline: () => void;
+}) {
+  return (
+    <View style={styles.pendingCard}>
+      <Pressable
+        onPress={() => openReservation(reservation)}
+        accessibilityRole="button"
+        style={({ pressed }) => [styles.pendingHead, pressed && styles.pressed]}
+      >
+        <View style={styles.pendingBody}>
+          <Text style={styles.pendingWhen}>{dateTimeRange(reservation.starts_at, reservation.ends_at)}</Text>
+          <View style={styles.pendingTitle}>
+            <Text style={[styles.nextName, styles.pendingName]} numberOfLines={1}>
+              {customerLabel(reservation)}
+            </Text>
+            <IntentBadge label="仮予約" />
+          </View>
+          {reservation.service_name ? <Text style={styles.nextService}>{reservation.service_name}</Text> : null}
+        </View>
+        <ChevronRight />
+      </Pressable>
+      {reservation.read_only ? null : (
+        <View style={styles.pendingActions}>
+          <SoftButton
+            compact
+            label="お断り"
+            icon={<Icon name={SYMBOLS.decline} size={18} weight="semibold" />}
+            disabled={busy}
+            onPress={onDecline}
+            style={styles.flex}
+          />
+          <PrimaryButton
+            compact
+            label="承認"
+            icon={<Icon name={SYMBOLS.approve} size={18} color="#FFFFFF" weight="semibold" />}
+            loading={busy}
+            onPress={onApprove}
+            style={styles.flex}
+          />
+        </View>
+      )}
     </View>
   );
 }
 
 export default function ReservationsScreen() {
   const household = useHousehold();
-  const { pending, refresh: refreshBadges } = useBadges();
-  const [view, setView] = useState<ViewMode>('day');
+  const { refresh: refreshBadges } = useBadges();
+  const [view, setView] = useState<ViewMode>('list');
   const [date, setDate] = useState(() => startOfDayDate(new Date()));
   const [rows, setRows] = useState<Reservation[] | null>(null);
+  const [pendingRows, setPendingRows] = useState<Reservation[]>([]);
+  const [provider, setProvider] = useState<ReservationProvider | null>(null);
   const [hours, setHours] = useState<BusinessHour[]>([]);
   // Square はアプリから予約を足せない
   const [canCreate, setCanCreate] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [arriving, setArriving] = useState(false);
+  // 処理中の仮予約。同じ予約を二重に操作させない
+  const [processing, setProcessing] = useState<readonly string[]>([]);
   const [areaHeight, setAreaHeight] = useState(0);
-  // 日や月を速く移動したとき、遅れて届いた前の結果で上書きしない
+  // 日や月を速く移動したとき、続けて操作したとき、遅れて届いた前の結果で上書きしない
   const request = useRef(0);
 
   const load = useCallback(async () => {
     const current = ++request.current;
     try {
-      const { reservations } = await repositories.reservations.list(rangeFor(view, date));
-      if (current === request.current) {
-        setRows(reservations);
-        setError(null);
+      const today = startOfDayDate(new Date());
+      const [{ reservations }, pending] = await Promise.all([
+        repositories.reservations.list(rangeFor(view, date)),
+        // 仮予約のカードは一覧にだけ出す。一覧より先の日まで見る
+        view === 'list'
+          ? repositories.reservations.list({ from: today, to: addDays(today, PENDING_RANGE_DAYS) }, 'pending')
+          : null,
+      ]);
+      if (current !== request.current) return;
+      setRows(reservations);
+      if (pending) {
+        setPendingRows(pendingByStart(pending.reservations));
+        setProvider(pending.provider);
       }
+      setError(null);
     } catch (e) {
       if (current === request.current) setError(errorMessage(e) ?? '読み込めませんでした');
     }
@@ -235,7 +304,39 @@ export default function ReservationsScreen() {
     }
   }
 
-  const sections = useMemo(() => reservationSections(rows ?? []), [rows]);
+  async function decide(action: (id: string) => Promise<void>, reservation: Reservation, failure: string) {
+    setProcessing((current) => [...current, reservation.id]);
+    try {
+      await action(reservation.id);
+      await load();
+      refreshBadges();
+    } catch (e) {
+      Alert.alert(failure, errorMessage(e) ?? '');
+    } finally {
+      setProcessing((current) => current.filter((id) => id !== reservation.id));
+    }
+  }
+
+  function approve(reservation: Reservation) {
+    confirmAction({
+      title: approveDialogTitle(provider),
+      confirmLabel: '承認',
+      cancelLabel: '戻る',
+      onConfirm: () => decide(repositories.reservations.approve, reservation, '承認できませんでした'),
+    });
+  }
+
+  function decline(reservation: Reservation) {
+    confirmAction({
+      title: 'この予約をお断りしますか',
+      confirmLabel: 'お断り',
+      cancelLabel: '戻る',
+      onConfirm: () => decide(repositories.reservations.cancel, reservation, 'お断りできませんでした'),
+    });
+  }
+
+  // 仮予約はカードで出すので、日付の見出しの下には並べない
+  const sections = useMemo(() => reservationSections(withoutPending(rows ?? [])), [rows]);
   const next = useMemo(() => nextReservation(rows ?? [], new Date()), [rows]);
   const isCalendar = view !== 'list';
   const closedDay = view === 'day' && isClosedOn(hours, date) && (rows ?? []).length === 0;
@@ -259,13 +360,27 @@ export default function ReservationsScreen() {
   return (
     <SafeAreaView edges={{ bottom: true }} style={styles.safeArea}>
     <Screen waves={false}>
-      <View style={styles.topBar}>
-        {canCreate ? <NavTextButton label="追加" accessibilityLabel="予約を追加" onPress={() => addReservation(view === 'day' || view === 'week' ? date : undefined)} /> : null}
-      </View>
-      <Text style={styles.largeTitle} accessibilityRole="header">
-        予約
-      </Text>
-      <Segmented options={VIEW_OPTIONS} value={view} onChange={changeView} />
+      <LargeTitle
+        title="予約"
+        right={
+          canCreate ? (
+            <Pressable
+              onPress={() => addReservation(view === 'day' || view === 'week' ? date : undefined)}
+              accessibilityRole="button"
+              accessibilityLabel="予約を追加"
+              style={({ pressed }) => [styles.addButton, pressed && styles.addPressed]}
+            >
+              <Icon name={SYMBOLS.plus} size={24} color="#FFFFFF" weight="semibold" />
+            </Pressable>
+          ) : null
+        }
+      />
+      <SegmentedControl
+        values={VIEW_LABELS}
+        selectedIndex={VIEW_ORDER.indexOf(view)}
+        onChange={(event) => changeView(VIEW_ORDER[event.nativeEvent.selectedSegmentIndex])}
+        style={styles.segmented}
+      />
 
       {view === 'list' ? (
         <ScrollView
@@ -273,7 +388,6 @@ export default function ReservationsScreen() {
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.navy} />}
         >
-          {pending > 0 ? <ApprovalBand count={pending} /> : null}
           {error ? (
             <View style={styles.message}>
               <CenterMessage>{error}</CenterMessage>
@@ -282,7 +396,7 @@ export default function ReservationsScreen() {
             <View style={styles.message}>
               <ActivityIndicator color={colors.navy} />
             </View>
-          ) : sections.length === 0 ? (
+          ) : sections.length === 0 && pendingRows.length === 0 ? (
             <View style={styles.message}>
               <CenterMessage>予約はありません</CenterMessage>
             </View>
@@ -290,11 +404,27 @@ export default function ReservationsScreen() {
             <>
               {next ? (
                 <>
-                  <Text style={styles.sectionTitle} accessibilityRole="header">
-                    次の予約
-                  </Text>
+                  <View style={styles.nextHead}>
+                    <Icon name={SYMBOLS.clock} size={17} color={colors.textTertiary} />
+                    <Text style={styles.nextLabel} accessibilityRole="header">
+                      次の予約
+                    </Text>
+                  </View>
                   <NextReservationCard reservation={next} busy={arriving} onArrive={() => arrive(next)} />
                 </>
+              ) : null}
+              {pendingRows.length > 0 ? (
+                <View style={[styles.pendingList, !next && styles.pendingListFirst]}>
+                  {pendingRows.map((reservation) => (
+                    <PendingCard
+                      key={reservation.id}
+                      reservation={reservation}
+                      busy={processing.includes(reservation.id)}
+                      onApprove={() => approve(reservation)}
+                      onDecline={() => decline(reservation)}
+                    />
+                  ))}
+                </View>
               ) : null}
               {sections.map((section) => (
                 <View key={section.date.toISOString()}>
@@ -318,7 +448,6 @@ export default function ReservationsScreen() {
 
       {isCalendar ? (
         <>
-          {view === 'day' && pending > 0 ? <ApprovalBand count={pending} compact /> : null}
           <DateNav
             title={titleFor(view, date)}
             unit={unit}
@@ -365,27 +494,18 @@ export default function ReservationsScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  topBar: { height: 44, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 8 },
-  largeTitle: { paddingHorizontal: 20, paddingBottom: 12, fontSize: 34, fontWeight: '700', color: colors.text },
-  listContent: { paddingBottom: 16 },
-  pressed: { opacity: 0.5 },
-  band: {
-    marginTop: 16,
-    marginHorizontal: 16,
-    minHeight: 52,
-    flexDirection: 'row',
+  addButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
-    gap: 8,
-    paddingLeft: 16,
-    paddingRight: 12,
-    borderRadius: radius.card,
+    justifyContent: 'center',
     backgroundColor: colors.navy,
   },
-  bandCompact: { marginTop: 12, minHeight: 44 },
-  pressedBand: { backgroundColor: colors.navyPressed },
-  bandLabel: { flex: 1, fontSize: 17, fontWeight: '600', color: '#FFFFFF' },
-  bandCount: { fontSize: 17, fontWeight: '600', color: '#FFFFFF', fontVariant: ['tabular-nums'] },
-  bandLabelCompact: { fontSize: 15 },
+  addPressed: { backgroundColor: colors.navyPressed },
+  segmented: { marginTop: 8, marginHorizontal: 16 },
+  listContent: { paddingBottom: 16 },
+  pressed: { opacity: 0.5 },
   sectionTitle: {
     paddingTop: 18,
     paddingHorizontal: 20,
@@ -394,6 +514,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textTertiary,
   },
+  nextHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingTop: 18,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  nextLabel: { fontSize: 15, fontWeight: '600', color: colors.textTertiary },
   nextCard: { marginHorizontal: 16, padding: 16, gap: 14, borderRadius: radius.section, backgroundColor: colors.card },
   nextBody: { gap: 4 },
   nextDate: { fontSize: 15, fontWeight: '600', color: colors.navy, fontVariant: ['tabular-nums'] },
@@ -402,8 +531,26 @@ const styles = StyleSheet.create({
   nextEnd: { fontSize: 17, color: colors.textSecondary, fontVariant: ['tabular-nums'] },
   nextName: { fontSize: 20, lineHeight: 28, fontWeight: '600', color: colors.text },
   nextService: { fontSize: 15, lineHeight: 22, color: colors.textTertiary },
+  pendingList: { marginTop: 12, marginHorizontal: 16, gap: 12 },
+  pendingListFirst: { marginTop: 18 },
+  pendingCard: {
+    paddingTop: 14,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    gap: 12,
+    borderWidth: 2,
+    borderColor: colors.navy,
+    borderRadius: radius.section,
+    backgroundColor: colors.card,
+  },
+  pendingHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pendingBody: { flex: 1, minWidth: 0, gap: 3 },
+  pendingWhen: { fontSize: 15, fontWeight: '600', color: colors.navy, fontVariant: ['tabular-nums'] },
+  pendingTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pendingName: { flexShrink: 1 },
+  pendingActions: { flexDirection: 'row', gap: 8 },
   message: { minHeight: 240 },
-  dateNav: { height: 44, flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 4, marginHorizontal: 8 },
+  dateNav: { height: 44, flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 2, marginHorizontal: 8 },
   dateButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   dateTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600', color: colors.text },
   calendarArea: { paddingBottom: 12 },

@@ -3,6 +3,8 @@ import {
   ActivityIndicator,
   Pressable,
   StyleSheet,
+  Switch,
+  type SwitchProps,
   Text,
   TextInput,
   type TextInputProps,
@@ -11,7 +13,9 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import type { SymbolName } from '../lib/symbols';
 import { colors, radius } from '../theme';
+import { Icon } from './Icon';
 import { Check, ChevronRight } from './icons';
 
 type ButtonProps = {
@@ -20,11 +24,13 @@ type ButtonProps = {
   disabled?: boolean;
   loading?: boolean;
   icon?: ReactNode;
+  // 2つ並べてカードに置くときの小さい形
+  compact?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
 // 紺の塗りのボタン（ログイン、グループを作る、参加する など）
-export function PrimaryButton({ label, onPress, disabled, loading, style }: ButtonProps) {
+export function PrimaryButton({ label, onPress, disabled, loading, icon, compact, style }: ButtonProps) {
   return (
     <Pressable
       onPress={onPress}
@@ -33,6 +39,8 @@ export function PrimaryButton({ label, onPress, disabled, loading, style }: Butt
       accessibilityState={{ disabled: disabled || loading, busy: loading }}
       style={({ pressed }) => [
         styles.button,
+        styles.row,
+        compact && styles.compact,
         { backgroundColor: pressed ? colors.navyPressed : colors.navy },
         (disabled || loading) && styles.disabled,
         style,
@@ -41,7 +49,10 @@ export function PrimaryButton({ label, onPress, disabled, loading, style }: Butt
       {loading ? (
         <ActivityIndicator color="#FFFFFF" />
       ) : (
-        <Text style={[styles.buttonLabel, { color: '#FFFFFF' }]}>{label}</Text>
+        <>
+          {icon}
+          <Text style={[styles.buttonLabel, compact && styles.compactLabel, { color: '#FFFFFF' }]}>{label}</Text>
+        </>
       )}
     </Pressable>
   );
@@ -120,15 +131,52 @@ export function GroupHeader({ title, first }: { title: string; first?: boolean }
   );
 }
 
+// タブの大見出し。右のボタンの有無によらず、どのタブでも同じ高さにする
+export function LargeTitle({ title, right }: { title: string; right?: ReactNode }) {
+  return (
+    <View style={styles.titleRow}>
+      <Text style={styles.largeTitle} accessibilityRole="header">
+        {title}
+      </Text>
+      {right}
+    </View>
+  );
+}
+
+// 設定の行の左に置く紺の角丸
+export function SettingIcon({ name }: { name: SymbolName }) {
+  return (
+    <View style={styles.settingIcon}>
+      <Icon name={name} size={19} color="#FFFFFF" />
+    </View>
+  );
+}
+
+// iOS の Switch は既定で alignSelf: flex-start なので、行の中央に戻す
+export function RowSwitch(props: SwitchProps) {
+  return <Switch {...props} style={styles.rowSwitch} trackColor={{ true: colors.navy }} />;
+}
+
+// 一覧の行の左に置く丸。filled で紺に塗る
+export function RoundIcon({ name, filled }: { name: SymbolName; filled?: boolean }) {
+  return (
+    <View style={[styles.roundIcon, filled && { backgroundColor: colors.navy }]}>
+      <Icon name={name} size={19} color={filled ? '#FFFFFF' : colors.navy} />
+    </View>
+  );
+}
+
 // 右に値と > を出す行（設定の「追加の指示」「グループ」）
 export function LinkRow({
   label,
   value,
+  icon,
   onPress,
   labelColor = colors.text,
 }: {
   label: string;
   value?: string;
+  icon?: SymbolName;
   onPress: () => void;
   labelColor?: string;
 }) {
@@ -136,44 +184,12 @@ export function LinkRow({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      style={({ pressed }) => [styles.linkRow, pressed && styles.rowPressed]}
+      style={({ pressed }) => [styles.linkRow, icon && styles.iconRow, pressed && styles.rowPressed]}
     >
+      {icon ? <SettingIcon name={icon} /> : null}
       <Text style={[styles.rowLabel, { color: labelColor }]}>{label}</Text>
       {value ? <Text style={styles.rowValue}>{value}</Text> : null}
       <ChevronRight />
-    </Pressable>
-  );
-}
-
-// iOS の形に合わせて描いたスイッチ（51×31）
-export function Toggle({
-  value,
-  onChange,
-  label,
-  disabled,
-}: {
-  value: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      onPress={() => onChange(!value)}
-      disabled={disabled}
-      accessibilityRole="switch"
-      accessibilityLabel={label}
-      accessibilityState={{ checked: value, disabled }}
-      style={[
-        styles.toggle,
-        {
-          backgroundColor: value ? colors.navy : colors.switchOff,
-          justifyContent: value ? 'flex-end' : 'flex-start',
-        },
-        disabled && styles.disabled,
-      ]}
-    >
-      <View style={styles.knob} />
     </Pressable>
   );
 }
@@ -182,11 +198,13 @@ export function Toggle({
 export function RadioRow({
   label,
   value,
+  icon,
   selected,
   onPress,
 }: {
   label: string;
   value?: string;
+  icon?: SymbolName;
   selected: boolean;
   onPress: () => void;
 }) {
@@ -196,8 +214,9 @@ export function RadioRow({
       accessibilityRole="radio"
       accessibilityLabel={value ? `${label}、${value}` : label}
       accessibilityState={{ checked: selected }}
-      style={({ pressed }) => [styles.radioRow, pressed && styles.rowPressed]}
+      style={({ pressed }) => [styles.radioRow, icon && styles.iconRow, pressed && styles.rowPressed]}
     >
+      {icon ? <SettingIcon name={icon} /> : null}
       <Text style={[styles.radioLabel, selected && styles.radioSelected]}>{label}</Text>
       {value ? <Text style={styles.radioValue}>{value}</Text> : null}
       <View style={styles.radioCheck}>{selected ? <Check /> : null}</View>
@@ -211,37 +230,6 @@ export function InfoRow({ label, value }: { label: string; value: string }) {
     <View style={styles.infoRow} accessible accessibilityLabel={`${label} ${value}`}>
       <Text style={styles.infoLabel}>{label}</Text>
       <Text style={styles.infoValue}>{value}</Text>
-    </View>
-  );
-}
-
-// 2つ以上から1つを選ぶ切り替え（一覧、日、週、月）
-export function Segmented<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: readonly { value: T; label: string }[];
-  value: T;
-  onChange: (next: T) => void;
-}) {
-  return (
-    <View style={styles.segmented} accessibilityRole="tablist">
-      {options.map((option) => {
-        const selected = option.value === value;
-        return (
-          <Pressable
-            key={option.value}
-            onPress={() => onChange(option.value)}
-            accessibilityRole="tab"
-            accessibilityLabel={option.label}
-            accessibilityState={{ selected }}
-            style={[styles.segment, selected && styles.segmentSelected]}
-          >
-            <Text style={[styles.segmentLabel, selected && styles.segmentLabelSelected]}>{option.label}</Text>
-          </Pressable>
-        );
-      })}
     </View>
   );
 }
@@ -356,7 +344,7 @@ export function DefinitionList({ rows }: { rows: { label: string; value: ReactNo
 }
 
 // 薄い紺の地に紺の文字のボタン。2つ並べるときに使う
-export function SoftButton({ label, onPress, disabled, style }: ButtonProps) {
+export function SoftButton({ label, onPress, disabled, icon, compact, style }: ButtonProps) {
   return (
     <Pressable
       onPress={onPress}
@@ -364,13 +352,16 @@ export function SoftButton({ label, onPress, disabled, style }: ButtonProps) {
       accessibilityRole="button"
       style={({ pressed }) => [
         styles.button,
+        styles.row,
+        compact && styles.compact,
         { backgroundColor: colors.navyTint },
         pressed && styles.pressed,
         disabled && styles.disabled,
         style,
       ]}
     >
-      <Text style={[styles.buttonLabel, { color: colors.navy }]}>{label}</Text>
+      {icon}
+      <Text style={[styles.buttonLabel, compact && styles.compactLabel, { color: colors.navy }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -404,6 +395,7 @@ export const shared = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  rowSwitch: { alignSelf: 'center' },
   button: {
     height: 50,
     borderRadius: radius.button,
@@ -411,7 +403,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   row: { flexDirection: 'row', gap: 8 },
+  compact: { height: 46, gap: 6 },
   buttonLabel: { fontSize: 17, fontWeight: '600' },
+  compactLabel: { fontSize: 16 },
   pressed: { opacity: 0.6 },
   disabled: { opacity: 0.5 },
   field: { gap: 6 },
@@ -438,8 +432,37 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   separator: { height: 1, backgroundColor: colors.separator },
+  titleRow: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 8,
+    paddingBottom: 4,
+    paddingLeft: 20,
+    paddingRight: 16,
+  },
+  largeTitle: { flex: 1, fontSize: 34, fontWeight: '700', color: colors.text },
+  settingIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.navy,
+  },
+  roundIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignSelf: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.navyTint,
+  },
+  // 左に札を置く行。区切り線の字下げは 56
+  iconRow: { gap: 12, paddingLeft: 14, paddingRight: 12 },
   groupHeader: {
-    paddingTop: 24,
+    paddingTop: 18,
     paddingHorizontal: 32,
     paddingBottom: 7,
     fontSize: 13,
@@ -457,24 +480,6 @@ const styles = StyleSheet.create({
   rowPressed: { backgroundColor: colors.separator },
   rowLabel: { flex: 1, fontSize: 17 },
   rowValue: { fontSize: 17, color: colors.textSecondary },
-  toggle: {
-    width: 51,
-    height: 31,
-    borderRadius: 16,
-    padding: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  knob: {
-    width: 27,
-    height: 27,
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000000',
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    shadowOffset: { width: 0, height: 2 },
-  },
   badge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
@@ -492,9 +497,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 12,
+    paddingVertical: 8,
     paddingHorizontal: 16,
-    minHeight: 46,
+    minHeight: 52,
   },
   radioLabel: { flex: 1, fontSize: 17, color: colors.text },
   radioSelected: { fontWeight: '600' },
@@ -503,18 +508,6 @@ const styles = StyleSheet.create({
   infoRow: { minHeight: 46, flexDirection: 'row', gap: 16, paddingVertical: 12, paddingHorizontal: 16 },
   infoLabel: { fontSize: 15, lineHeight: 22, color: colors.textSecondary },
   infoValue: { flex: 1, fontSize: 15, lineHeight: 22, color: colors.text, textAlign: 'right' },
-  segmented: {
-    flexDirection: 'row',
-    gap: 2,
-    marginHorizontal: 16,
-    padding: 2,
-    borderRadius: 10,
-    backgroundColor: colors.segmentTrack,
-  },
-  segment: { flex: 1, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  segmentSelected: { backgroundColor: colors.card },
-  segmentLabel: { fontSize: 15, color: colors.textTertiary },
-  segmentLabelSelected: { fontWeight: '600', color: colors.text },
   stepperRow: { minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 16, paddingRight: 12 },
   stepperCompact: { minHeight: 52, paddingLeft: 0, paddingRight: 0 },
   stepperLabel: { flex: 1, fontSize: 17, color: colors.text },

@@ -48,7 +48,7 @@ export type ProviderState = {
 
 export type GoogleCalendar = { id: string; name: string; primary: boolean };
 
-// 承認リストの期間
+// 仮予約のカードを出す期間
 export const PENDING_RANGE_DAYS = 90;
 // 一覧で先まで見る日数
 export const LIST_RANGE_DAYS = 60;
@@ -133,6 +133,15 @@ export function reservationSections(reservations: readonly Reservation[]): { dat
     date: startOfDayDate(new Date(data[0].starts_at)),
     data,
   }));
+}
+
+// 仮予約のカードの並び。開始の早い順
+export function pendingByStart(reservations: readonly Reservation[]): Reservation[] {
+  return reservations.filter((reservation) => reservation.status === 'pending').sort(byStart);
+}
+
+export function withoutPending(reservations: readonly Reservation[]): Reservation[] {
+  return reservations.filter((reservation) => reservation.status !== 'pending');
 }
 
 // 次に来る予約。確定していて、まだ到着しておらず、終わっていないもののうち最も早いもの

@@ -5,10 +5,10 @@ import { Fragment, useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ConfirmDialog } from '../../components/overlays';
 import { NavBar, Screen } from '../../components/Screen';
 import { Card, CenterMessage, GroupHeader, InfoRow, PrimaryButton, RadioRow, Separator, TextButton } from '../../components/ui';
 import type { GoogleCalendar, ProviderState, ReservationProvider } from '../../domain/reservation';
+import { confirmAction } from '../../lib/confirm';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { PROVIDER_LABELS, PROVIDER_ORDER } from '../../lib/labels';
@@ -60,7 +60,6 @@ export default function ProviderScreen() {
   const [calendars, setCalendars] = useState<GoogleCalendar[] | null>(null);
   const [calendarsError, setCalendarsError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState<Connectable | null>(null);
 
   const load = useCallback(async () => {
     let next: ProviderState;
@@ -152,7 +151,6 @@ export default function ProviderScreen() {
   }
 
   async function logout(kind: Connectable) {
-    setConfirming(null);
     setBusy(true);
     try {
       await CONNECTIONS[kind].logout();
@@ -249,7 +247,18 @@ export default function ProviderScreen() {
                   {failed || (kind === 'google_calendar' && calendarsError) ? (
                     <PrimaryButton label={CONNECTIONS[kind].loginLabel} loading={busy} onPress={() => login(kind)} />
                   ) : null}
-                  <TextButton label="ログアウト" disabled={busy} onPress={() => setConfirming(kind)} />
+                  <TextButton
+                    label="ログアウト"
+                    disabled={busy}
+                    onPress={() =>
+                      confirmAction({
+                        title: CONNECTIONS[kind].logoutTitle,
+                        confirmLabel: 'ログアウト',
+                        cancelLabel: '戻る',
+                        onConfirm: () => logout(kind),
+                      })
+                    }
+                  />
                 </View>
               </>
             ) : (
@@ -260,14 +269,6 @@ export default function ProviderScreen() {
           ) : null}
         </ScrollView>
       )}
-      <ConfirmDialog
-        visible={confirming !== null}
-        title={confirming ? CONNECTIONS[confirming].logoutTitle : ''}
-        confirmLabel="ログアウト"
-        cancelLabel="戻る"
-        onConfirm={() => confirming && logout(confirming)}
-        onCancel={() => setConfirming(null)}
-      />
     </Screen>
   );
 }

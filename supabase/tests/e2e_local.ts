@@ -509,7 +509,7 @@ try {
   check("本体は 31 日を超えて読めない（400）", longRange.status === 400, longRange);
 
   const approvals = await reservations("GET", `${range}&status=pending`);
-  check("承認リストに仮予約だけが出る", (approvals.json.reservations as Row[]).length === 1 && (approvals.json.reservations as Row[])[0].id === pendingRow.id, approvals);
+  check("仮予約の絞り込みに仮予約だけが出る", (approvals.json.reservations as Row[]).length === 1 && (approvals.json.reservations as Row[])[0].id === pendingRow.id, approvals);
   const approved = await reservations("POST", `/${pendingRow.id}/approve`);
   check("承認すると確定になる", approved.status === 200 && approved.json.reservation.status === "confirmed", approved);
   check("確定した予約は承認できない（409）", (await reservations("POST", `/${pendingRow.id}/approve`)).status === 409);

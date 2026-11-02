@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ConfirmDialog } from '../../components/overlays';
+import { Icon } from '../../components/Icon';
 import { NavBar, Screen } from '../../components/Screen';
 import {
   Card,
@@ -19,13 +19,13 @@ import {
 } from '../../components/ui';
 import { canRecordArrival, customerLabel, type Reservation, type ReservationProvider } from '../../domain/reservation';
 import { useBadges } from '../../lib/badges';
+import { confirmAction } from '../../lib/confirm';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { dateTimeRange, hourMinute } from '../../lib/format';
 import { approveDialogTitle, reservationBadge, sourceLabel } from '../../lib/labels';
+import { SYMBOLS } from '../../lib/symbols';
 import { colors, radius } from '../../theme';
-
-type Dialog = 'approve' | 'cancel' | null;
 
 export default function ReservationDetailScreen() {
   const { id, back } = useLocalSearchParams<{ id: string; back?: string }>();
@@ -35,7 +35,6 @@ export default function ReservationDetailScreen() {
   const [provider, setProvider] = useState<ReservationProvider | null>(null);
   const [visitTime, setVisitTime] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -69,7 +68,6 @@ export default function ReservationDetailScreen() {
   );
 
   async function run(action: (id: string) => Promise<void>, failure: string) {
-    setDialog(null);
     setBusy(true);
     try {
       await action(id);
@@ -85,6 +83,24 @@ export default function ReservationDetailScreen() {
   const active = reservation && reservation.status !== 'cancelled';
   const badge = reservation ? reservationBadge(reservation) : null;
   const pending = reservation?.status === 'pending';
+
+  function approve() {
+    confirmAction({
+      title: approveDialogTitle(provider),
+      confirmLabel: '承認',
+      cancelLabel: '戻る',
+      onConfirm: () => run(repositories.reservations.approve, '承認できませんでした'),
+    });
+  }
+
+  function cancel() {
+    confirmAction({
+      title: pending ? 'この予約をお断りしますか' : 'この予約をキャンセルしますか',
+      confirmLabel: pending ? 'お断り' : 'キャンセルする',
+      cancelLabel: '戻る',
+      onConfirm: () => run(repositories.reservations.cancel, 'キャンセルできませんでした'),
+    });
+  }
 
   return (
     <Screen>
@@ -163,40 +179,37 @@ export default function ReservationDetailScreen() {
             <View style={styles.actions}>
               {pending && !reservation.read_only ? (
                 <View style={styles.pair}>
-                  <SoftButton label="お断り" disabled={busy} onPress={() => setDialog('cancel')} style={styles.flex} />
-                  <PrimaryButton label="承認" loading={busy} onPress={() => setDialog('approve')} style={styles.flex} />
+                  <SoftButton
+                    label="お断り"
+                    icon={<Icon name={SYMBOLS.decline} size={20} weight="semibold" />}
+                    disabled={busy}
+                    onPress={cancel}
+                    style={styles.flex}
+                  />
+                  <PrimaryButton
+                    label="承認"
+                    icon={<Icon name={SYMBOLS.approve} size={20} color="#FFFFFF" weight="semibold" />}
+                    loading={busy}
+                    onPress={approve}
+                    style={styles.flex}
+                  />
                 </View>
               ) : null}
               {canRecordArrival(reservation, new Date()) ? (
                 <PrimaryButton
                   label="到着を記録"
+                  icon={<Icon name={SYMBOLS.arrived} size={20} color="#FFFFFF" />}
                   loading={busy}
                   onPress={() => run(repositories.reservations.arrive, '到着を記録できませんでした')}
                 />
               ) : null}
               {!pending && !reservation.read_only ? (
-                <TextButton label="予約をキャンセル" disabled={busy} onPress={() => setDialog('cancel')} />
+                <TextButton label="予約をキャンセル" disabled={busy} onPress={cancel} />
               ) : null}
             </View>
           ) : null}
         </View>
       )}
-      <ConfirmDialog
-        visible={dialog === 'approve'}
-        title={approveDialogTitle(provider)}
-        confirmLabel="承認"
-        cancelLabel="戻る"
-        onConfirm={() => run(repositories.reservations.approve, '承認できませんでした')}
-        onCancel={() => setDialog(null)}
-      />
-      <ConfirmDialog
-        visible={dialog === 'cancel'}
-        title={pending ? 'この予約をお断りしますか' : 'この予約をキャンセルしますか'}
-        confirmLabel={pending ? 'お断り' : 'キャンセルする'}
-        cancelLabel="戻る"
-        onConfirm={() => run(repositories.reservations.cancel, 'キャンセルできませんでした')}
-        onCancel={() => setDialog(null)}
-      />
     </Screen>
   );
 }
