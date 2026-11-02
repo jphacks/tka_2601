@@ -1,0 +1,43 @@
+#!/bin/bash
+# Host tests. Everything compiles from an isolated copy so that private headers
+# (api_config.h, wifi_config.h, upload_config.h, servo_config.h) are never used.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+work="$(mktemp -d "${TMPDIR:-/tmp}/xiao-host.XXXXXX")"
+trap 'rm -rf "${work:?}"' EXIT
+src="$work/src"; mkdir "$src"
+for file in ./*.c ./*.h ./*.cpp; do
+  case "$(basename "$file")" in
+    api_config.h|wifi_config.h|upload_config.h|servo_config.h) ;;
+    *) cp "$file" "$src/" ;;
+  esac
+done
+cp tests/*.c tests/*.cpp tests/*.h "$src/"
+cp tests/stubs/*.h "$src/"; mkdir "$src/mbedtls"; cp tests/stubs/mbedtls/*.h "$src/mbedtls/"
+C=(clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -I"$src")
+CXX=(clang++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined -I"$src" -Itests/fakes)
+run() { echo "--- $1"; "$work/$1" > "$work/$1.log" 2>&1 || { cat "$work/$1.log"; exit 1; }; tail -n 1 "$work/$1.log"; }
+s() { for f in "$@"; do printf '%s/%s ' "$src" "$f"; done; }
+
+"${C[@]}" $(s audio_core.c audio_store.c test_audio.c) -lm -o "$work/audio"; run audio
+"${C[@]}" $(s voice_capture.c voice_capture_harness.c) -lm -o "$work/capture"; run capture
+"${C[@]}" $(s relay_protocol.c voice_protocol.c relay_protocol_harness.c xlog_host.c) -o "$work/relay"; run relay
+"${C[@]}" $(s relay_protocol.c voice_protocol.c relay_legacy_harness.c xlog_host.c) -o "$work/relay_legacy"; run relay_legacy
+"${C[@]}" $(s voice_transport.c relay_protocol.c voice_protocol.c voice_transport_harness.c xlog_host.c) -o "$work/transport"; run transport
+"${C[@]}" -DTEST_UNPAIRED $(s voice_transport.c relay_protocol.c voice_protocol.c voice_transport_harness.c xlog_host.c) -o "$work/transport_unpaired"; run transport_unpaired
+"${C[@]}" $(s voice_session_harness.c relay_protocol.c voice_protocol.c xlog_host.c) -lm -o "$work/session"; run session
+"${C[@]}" $(s playback.c playback_test.c xlog_host.c) -o "$work/playback"; run playback
+"${C[@]}" $(s audio_core.c audio_store.c voice_capture.c audio_link.c audio_app.c storage_worker.c audio_app_test.c xlog_host.c) -lm -o "$work/audio_app"; run audio_app
+"${C[@]}" $(s audio_core.c audio_store.c door_server.c voice_protocol.c door_server_test.c xlog_host.c) -lm -o "$work/door_server"; run door_server
+for t in calibration_test exact_servo_test end_direction_test servo_call_test; do
+  "${CXX[@]}" "$src/servo_control.cpp" "$src/servo_pwm.cpp" "$src/$t.cpp" -o "$work/$t"; run "$t"
+done
+"${CXX[@]}" "$src/tune.cpp" "$src/tune_test.cpp" -o "$work/tune"; run tune
+
+echo "--- Python and page tests"
+python3 -m unittest tests/test_receiver.py 2>&1 | tail -n 1
+python3 -m unittest discover -s calibration_ui -p 'test_*.py' 2>&1 | tail -n 1
+python3 -m unittest tests/test_configure.py 2>&1 | tail -n 1
+node tests/ui_test.mjs
+node tests/diagnostics_ui_test.mjs
+echo "PASS: all host tests"
