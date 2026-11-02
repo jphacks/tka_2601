@@ -249,6 +249,8 @@ deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/seed_
 
 メールアドレスを省くと `supabase/.env` の `SEED_RESIDENT_EMAIL` を使う。既定ではローカルに入れる。クラウドに入れるときだけ `DEMO_SUPABASE_URL` と `DEMO_SUPABASE_SECRET_KEY` を渡す。来客を初めて入れると Webhook が動き、そのアカウントの端末に通知が届く。
 
+App Store の審査用のアカウントは `supabase/scripts/create_review_account.ts` で作る（[docs/testflight.md](../docs/testflight.md)）。
+
 ## 試験
 
 | 試験 | 実行 | 内容 |

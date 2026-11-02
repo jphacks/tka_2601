@@ -32,9 +32,6 @@ async function check<T>(promise: PromiseLike<{ error: unknown; data: T }>): Prom
   return data;
 }
 
-// 決まった id。予約、メニュー、来客で範囲を分ける
-const demoId = (n: number) => `d0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-
 const { data: users, error: usersError } = await admin.auth.admin.listUsers({ perPage: 1000 });
 if (usersError) throw usersError;
 const user = users.users.find((u) => u.email === email);
@@ -45,6 +42,9 @@ const membership = await check(
 );
 if (!membership) throw new Error(`${email} はグループに入っていません`);
 const householdId = membership.household_id as string;
+
+// 決まった id。お店ごとに分け、予約、メニュー、来客で範囲を分ける
+const demoId = (n: number) => `${householdId.slice(0, 8)}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 const device = await check(
   admin.from("devices").select("id").eq("household_id", householdId).order("created_at").limit(1).maybeSingle(),

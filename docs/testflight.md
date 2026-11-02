@@ -16,7 +16,7 @@
 
 1. 原稿の運営者名と連絡先を埋め、GitHub Pages の `gh-pages` ブランチで公開する。
 2. Supabase のダッシュボードの Authentication > Providers > Email で、Confirm email をオフにする。無料プランの標準のメールではテスターに確認メールを届けられないためである。
-3. クラウドに審査用のアカウントを作り、`supabase/scripts/seed_demo.ts` でデモデータを入れる。
+3. リポジトリの根で `deno run --allow-read --allow-run --allow-net --allow-env supabase/scripts/create_review_account.ts --cloud` を実行する。審査用のアカウント、お店、本体の行、デモデータができる。パスワードは初回に1回だけ表示される。
 4. EAS で production のビルドを作り、App Store Connect に上げる。
 5. TestFlight の Test Information に下の文面を入れる。
 6. 外部グループを作ってビルドを追加し、審査に出す。
@@ -61,11 +61,11 @@ To test account deletion, please create a new account from the login screen
 instead of deleting the demo account, which holds the sample data.
 
 Demo account:
-  Email:    (enter in App Store Connect)
-  Password: (enter in App Store Connect)
+  Email:    appreview@example.com
+  Password: (shown once by create_review_account.ts)
 ```
 
-審査用のアカウントのパスワードは、App Store Connect にだけ入れる。このリポジトリには書かない。
+審査用のアカウントのパスワードは、App Store Connect の Review Notes とログイン情報の欄にだけ入れる。このリポジトリには書かない。審査が長引いて日付が古くなったら、同じコマンドをもう一度実行する。パスワードは変わらず、デモデータの日付だけが今日を基準に更新される。
 
 ## 外部テストのあとで残すこと
 
