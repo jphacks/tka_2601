@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import termios
+import threading
 
 BINARY = sys.argv.pop(1)
 sys.path.insert(0, str(Path(__file__).parent))
@@ -28,8 +29,9 @@ def raw(fd):
     termios.tcsetattr(fd, termios.TCSANOW, attributes)
 
 
-# Blocked so that sigwait receives them and the children below are always stopped.
-signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+stopping = threading.Event()
+for number in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(number, lambda *_: stopping.set())
 with Backend() as backend:
     # The firmware owns the pty's master; the page's server opens its device path,
     # exactly as it opens the XIAO's /dev/cu.usbmodem port.
@@ -44,7 +46,8 @@ with Backend() as backend:
                                "--history-file", str(Path(__file__).parents[1] / ".host-build/bench-history.json")])
     print(f"http://127.0.0.1:{HTTP_PORT}  (chime: kill -USR1 {firmware.pid})", flush=True)
     try:
-        signal.sigwait({signal.SIGINT, signal.SIGTERM})
+        while not stopping.wait(0.5):
+            pass
     finally:
         server.terminate()
         firmware.terminate()
