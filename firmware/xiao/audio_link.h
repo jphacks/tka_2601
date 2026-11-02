@@ -25,7 +25,7 @@ typedef struct {
     uint32_t heartbeat;
     int32_t pcm_min, pcm_max;
     uint32_t event_seq; /* chime detections; one writer, read once per poll */
-    uint32_t loopback_samples, loopback_failed; /* audio task -> call task */
+    uint32_t loopback_samples, loopback_failed; /* audio task -> call task; failed: 1 busy, 2 microphone */
 
     uint32_t voice_call_active, voice_listen_seq, voice_listen_turn, voice_record_enabled;
     uint32_t voice_rms_gate, voice_read_seq;

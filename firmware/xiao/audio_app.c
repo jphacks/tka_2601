@@ -170,13 +170,14 @@ void audio_app_no_frame(void)
 {
     volatile audio_link_t *link = audio_link();
     candidate.length = 0; post = manual = 0; ring_buffer->used = 0u;
-    if (loopback) { loopback = 0; link->loopback_failed = 1u; }
+    if (loopback) { loopback = 0; link->loopback_failed = 2u; }
     if (voice_call_active) {
         voice_capture_abort(&voice_capture, VOICE_CAPTURE_END_GAP);
         publish_voice_end();
     }
+    if (link->audio_status != 2u) /* once per failure: the read retries every second */
+        xlog("[AUDIO] No microphone frames received; detection is unavailable.\n");
     link->audio_status = 2u;
-    xlog("[AUDIO] No microphone frames received; detection is unavailable. Reset to retry.\n");
 }
 void audio_app_frame(const int16_t pcm[AUDIO_FRAME], bool gap)
 {
@@ -196,7 +197,7 @@ void audio_app_frame(const int16_t pcm[AUDIO_FRAME], bool gap)
     if (gap) {
         ++link->capture_errors;
         candidate.length = 0; post = manual = 0; ring_buffer->used = 0u; reject_until_quiet = 50;
-        if (loopback) { loopback = 0; link->loopback_failed = 1u; }
+        if (loopback) { loopback = 0; link->loopback_failed = 2u; }
         if (mode != NORMAL) { mode = NORMAL; xlog("[SETUP] Capture gap; registration cancelled.\n"); }
         if (voice_call_active) {
             voice_capture_abort(&voice_capture, VOICE_CAPTURE_END_GAP);

@@ -459,6 +459,7 @@ static void run_loopback(void)
     for (;;) {
         audio_link_acquire();
         if (s->loopback_samples) break;
+        if (s->loopback_failed==2u) { xlog("[DIAG] loopback ok=0 microphone_failed\n"); return; }
         if (s->loopback_failed) { xlog("[DIAG] loopback busy\n"); return; }
         if (net_now_ms()-start>5000u) { xlog("[DIAG] loopback ok=0 microphone_timeout\n"); return; }
         net_sleep_ms(10);

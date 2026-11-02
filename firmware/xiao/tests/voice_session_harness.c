@@ -37,7 +37,8 @@ bool net_voice_ready(void) { return network_ready; }
 uint32_t tune_voice_gate(void) { return 600u; }
 static bool post_ok;
 static char posted;
-bool audio_app_post_command(char c) { posted=c; return post_ok; }
+static uint32_t audio_refusal; /* what the audio task answers to the command */
+bool audio_app_post_command(char c) { posted=c; mailbox.loopback_failed=audio_refusal; return post_ok; }
 void audio_app_loopback_release(void) { mailbox.loopback_samples=0; }
 bool servo_call_open(void) { ++opens; return servo_open_ok; }
 bool servo_call_press(void) { ++call_presses; if (call_completes) servo_state=SERVO_CALL_STARTED; return true; }
@@ -398,6 +399,11 @@ static void test_local_sound_checks(void)
     assert(posted=='l' && pushed_frames==3u && mailbox.loopback_samples==0u);
     assert(mailbox.voice_call_active==0u);
     /* Refused by the audio task, or the audio task is gone. */
+    for (uint32_t refusal=1u;refusal<=2u;++refusal) {
+        fresh_call(); audio_refusal=refusal;
+        run_loopback(); assert(playback_opens==0u && tick-1000u<5000u);
+    }
+    audio_refusal=0u;
     fresh_call(); mailbox.loopback_failed=0u; post_ok=false;
     run_loopback(); assert(playback_opens==0u);
     fresh_call();

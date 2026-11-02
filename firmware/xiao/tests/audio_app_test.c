@@ -308,7 +308,12 @@ static void test_loopback_and_meter(void)
     /* A capture gap fails the recording instead of playing holes. */
     audio_app_command('l');
     silence(10); step(true);
-    assert(link->loopback_failed==1u && link->loopback_samples==0u);
+    assert(link->loopback_failed==2u && link->loopback_samples==0u);
+    link->loopback_failed=0u;
+    /* A silent microphone is a microphone failure, not a busy board. */
+    audio_app_command('l');
+    audio_app_no_frame();
+    assert(link->loopback_failed==2u);
     link->loopback_failed=0u;
     /* A lost microphone is reported, and recovers with the next frame. */
     audio_app_no_frame();

@@ -26,5 +26,6 @@ case "${1:-build}" in
   test) bash tests/run.sh ;;
   e2e) bash tests/e2e.sh ;;
   bench) bash tests/e2e.sh bench ;;
-  *) echo "Usage: bash run.sh build | test | e2e | bench | upload PORT" >&2; exit 1 ;;
+  qemu) bash tests/qemu.sh ;;
+  *) echo "Usage: bash run.sh build | test | e2e | bench | qemu | upload PORT" >&2; exit 1 ;;
 esac
