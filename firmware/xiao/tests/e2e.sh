@@ -8,6 +8,7 @@ if [ -z "$python_bin" ]; then
   venv="$PWD/.host-build/e2e-venv"
   python_bin="$venv/bin/python"
   if [ ! -f "$venv/.installed" ]; then
+    command -v uv >/dev/null || { echo "uv が必要です: https://docs.astral.sh/uv/getting-started/installation/" >&2; exit 1; }
     uv venv --allow-existing --python 3.12 "$venv"
     # Only the dependencies: tests/e2e_relay.py imports the backend from its source.
     uv pip install --python "$python_bin" -r ../../backend/voice-agent/pyproject.toml

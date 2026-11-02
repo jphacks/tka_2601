@@ -1,8 +1,28 @@
 # MONBAN ファームウェア（XIAO ESP32S3）
 
-E84 と M5Stack に分かれていた機能を、Seeed XIAO ESP32S3（無印）1 枚で動かすファームウェアです。追加基板は `hardware/xiao_bff`（MAX98357A アンプ、LMD3526 PDM マイク）を前提にしています。
+[![XIAO firmware](https://github.com/jphacks/tka_2601/actions/workflows/xiao-firmware.yml/badge.svg)](https://github.com/jphacks/tka_2601/actions/workflows/xiao-firmware.yml)
 
-**実機ではまだ一度も動かしていません。** 追加基板が未発注のためです。確かめたことと確かめていないことは「[確認の状況](#確認の状況)」に書きました。
+E84 と M5Stack に分かれていた機能を、Seeed XIAO ESP32S3（無印）1 枚で動かすファームウェアです。追加基板（MAX98357A アンプ、LMD3526 PDM マイク）を前提にしています。基板の設計データはまだこのブランチにないので、ピン配置は下の表を見てください。
+
+**実機ではまだ一度も動かしていません。** 確かめたことと確かめていないことは「[確認の状況](#確認の状況)」に書きました。
+
+## 実機なしで試す
+
+XIAO がなくても、次のコマンドで試せます。リポジトリのどこからでも `bash firmware/xiao/run.sh ...` で実行できます。
+
+| コマンド | 確かめること | 必要なもの | 時間の目安 |
+|---|---|---|---|
+| `bash run.sh test` | 各部のホストテストと Web UI のテスト | clang、Python 3、Node.js | 1 分 |
+| `bash run.sh e2e` | 本物の `/api/relay` のコードと、ファームウェアの通話処理をつないだ会話 | 上に加えて uv | 初回は依存の取得が要る |
+| `bash run.sh qemu` | ESP32-S3 用のバイナリを QEMU で起動し、シリアルで操作 | arduino-cli、Python 3 | 初回は ESP32 コアの取得（数 GB）が要る |
+| `bash run.sh bench` | ブラウザで Web UI を操作する。通話まで動く | e2e と同じ | 起動まで数十秒 |
+| `bash run.sh qemu ui` | ブラウザで Web UI を操作する。相手は QEMU 上の ESP32-S3 用バイナリ | qemu と同じ | 起動まで 1 分ほど |
+
+Web UI を試す 2 つの違いは次のとおりです。`bench` は Mac 向けにコンパイルしたファームウェアで、音声は模擬なので通話まで進みます。`qemu ui` は実機用のバイナリそのものですが、QEMU に Wi-Fi と音声がないので、サーボの調整や保存までしか動きません。QEMU 自体に Web UI はなく、どちらも `http://127.0.0.1` の同じ画面を使います（`bench` は 8767 番、`qemu ui` は 8768 番）。
+
+QEMU の本体は初回に公式リリースから `.host-build/` へ取得し、SHA-256 を照合します。対応するのは macOS と Linux です。Windows は WSL で動かしてください。
+
+GitHub では、`firmware/xiao` に触れる PR ごとに `test`、`e2e`、ビルド、`qemu` が自動で動きます。手で動かすときは Actions の「XIAO firmware」から Run workflow を押します。
 
 ## 機能
 
@@ -38,7 +58,7 @@ E84 と M5 の間の UDP 通知と TCP 中継（DVS1）は削除しました。�
 
 ## ビルドと書き込み
 
-Arduino IDE に入っている `arduino-cli` と、esp32 コア 3.3.8 を使います。パーティションは `partitions.csv` のとおりで、PSRAM は OPI にしています。
+`arduino-cli` と esp32 コア 3.3.8 を使います。`arduino-cli` は PATH にあるものか Arduino IDE に入っているものを使い、コアがなければ初回に入れます。パーティションは `partitions.csv` のとおりで、PSRAM は OPI にしています。
 
 ```bash
 bash run.sh build
@@ -132,7 +152,7 @@ bash run.sh e2e
 bash run.sh qemu
 ```
 
-ESP32-S3 用にビルドしたバイナリを、Espressif の QEMU で起動してシリアルで操作するテストです。起動時に QEMU を `.host-build` へ取得します。実機向けのビルドとの違いは、QEMU に合わせた次の 3 点だけです。
+ESP32-S3 用にビルドしたバイナリを、Espressif の QEMU で起動してシリアルで操作するテストです。実機向けのビルドとの違いは、QEMU に合わせた次の 3 点だけです。
 
 - 出力先が USB CDC ではなく UART
 - フラッシュが QIO ではなく DIO

@@ -20,6 +20,7 @@ extern "C" {
 #include <Arduino.h>
 #include <arpa/inet.h>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>

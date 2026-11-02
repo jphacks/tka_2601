@@ -156,6 +156,8 @@ Web UIでは、両ボードのUSB・Wi-Fi接続、E84とM5間のUDP / TCP、E84�
 
 実装とセットアップの詳細： [E84ファームウェア](PSOC_Edge_E84/README.md) ／ [M5ファームウェア・調整UI](M5Stack_Basic_E84_Link/README.md) ／ [音声通信プロトコル](PSOC_Edge_E84/docs/voice-stream-protocol.md)
 
+製品版として 1 枚にまとめる移植： [XIAO ESP32S3 ファームウェア](firmware/xiao/README.md)（実機では未確認。実機なしでのテスト手順あり）
+
 # AIエージェント
 
 ![AIエージェントの音声処理パイプライン](docs/images/voice-agent-pipeline.drawio.png)
