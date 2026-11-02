@@ -96,7 +96,7 @@ PSoC用の中継です。接続時に`Authorization: Bearer <DOOR_API_KEY>`を�
 | PSoC 6 → 中継 | テキスト | 最初の1通。5秒以内に`{"type":"start","visit_id":"<uuid>","mode":"normal\|omakase\|away","device_key":"<デバイス鍵>"}`を送ります |
 | PSoC 6 → 中継 | バイナリ | マイクのPCM。16 kHz・16bit LE・モノラルで、20 ms（640 B）ずつ送ります。1通は100 ms以下です |
 | PSoC 6 → 中継 | テキスト | `{"type":"end"}`。中継はルームを抜け、1000で閉じます |
-| 中継 → PSoC 6 | テキスト | `{"type":"ready"}`。家の設定を読み、ルームに入り、エージェントを呼んだ後に送ります |
+| 中継 → PSoC 6 | テキスト | `{"type":"ready"}`。家の設定を読み、ルームに入り、エージェントを呼び、エージェントがルームに入った（最大10秒待つ）後に送ります。通話中にエージェントが抜けると`agent_unavailable`で終了します |
 | 中継 → PSoC 6 | バイナリ | エージェントの声。PSoC 6が送る音と同じ形式のPCMを20 ms（640 B）ずつ送ります |
 | 中継 → PSoC 6 | テキスト | `{"type":"transcript","speaker":"visitor\|ai","text":"..."}`。確定した文字起こしだけを送ります。`speaker`はSupabaseの`visit_messages.speaker`と同じ値です |
 | 中継 → PSoC 6 | テキスト | `{"type":"agent_state","state":"speaking\|listening\|thinking"}`。エージェントの状態が変わるたびに送ります |
@@ -107,7 +107,7 @@ PSoC用の中継です。接続時に`Authorization: Bearer <DOOR_API_KEY>`を�
 | `start_timeout`、`invalid_start` | 1008 | 開始のJSONが5秒以内に届かない、または形が違う（`mode`が無い・不正など） |
 | `invalid_audio`、`invalid_message` | 1008 | 音のバイト数が0か奇数、または100 ms（3200 B）を超える。テキストがJSONのオブジェクトでない |
 | `time_limit` | 1008 | 1回の会話が`DOOR_RELAY_MAX_SESSION_SECONDS`（既定120秒）を過ぎた |
-| `agent_unavailable` | 1011 | LiveKitに入れない、またはエージェントを呼べない |
+| `agent_unavailable` | 1011 | LiveKitに入れない、エージェントを呼べない、エージェントがルームに入らない、または通話中にエージェントが抜けた |
 | `livekit_disconnected` | 1011 | 会話中にLiveKitから切れた |
 | `busy` | 1013 | 同時に中継できる会話（`DOOR_MAX_RELAY_SESSIONS`、既定4）またはAPIの要求数の上限に達した |
 

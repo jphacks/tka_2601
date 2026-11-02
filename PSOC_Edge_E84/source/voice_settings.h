@@ -19,3 +19,10 @@
 #define VOICE_RESPONSE_TIMEOUT_MS 90000u
 #define VOICE_IDLE_TIMEOUT_MS 60000u
 #define VOICE_CALL_TIMEOUT_MS 600000u
+/* Automatic M5 recovery after an unproven stop: retry delay doubles up to the cap. */
+#define VOICE_RECOVERY_RETRY_MIN_MS 10000u
+#define VOICE_RECOVERY_RETRY_MAX_MS 30000u
+/* A fresh-session CANCEL is answered immediately; this only bounds a stalled M5. */
+#define VOICE_RECOVERY_CONFIRM_MS 15000u
+/* Failed attempts are logged at most this often (the first one always is). */
+#define VOICE_RECOVERY_LOG_MS 60000u

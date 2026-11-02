@@ -40,6 +40,8 @@ ATTRIBUTE_TRANSCRIPTION_FINAL = "lk.transcription_final"
 ATTRIBUTE_TRANSCRIPTION_TRACK_ID = "lk.transcribed_track_id"
 ATTRIBUTE_AGENT_STATE = "lk.agent.state"
 FORWARDED_AGENT_STATES = {"speaking", "listening", "thinking"}
+# How long to wait for the dispatched agent worker to join before telling the device it is down.
+AGENT_JOIN_TIMEOUT_SECONDS = 10.0
 
 CLOSE_NORMAL = 1000
 CLOSE_POLICY = 1008
@@ -88,6 +90,8 @@ class StartMessage(BaseModel):
 class AgentLink(Protocol):
     async def send_audio(self, pcm: bytes) -> None: ...
 
+    async def wait_for_agent(self, timeout: float) -> None: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -102,12 +106,16 @@ class LiveKitLink:
         self._track_sid: str | None = None
         self._agent_speaking = False
         self._tasks: set[asyncio.Task] = set()
+        self._agent_identities: set[str] = set()
+        self._agent_joined = asyncio.Event()
 
     async def connect(self, url: str, token: str) -> None:
         room = self._room
         room.on("track_subscribed", self._on_track_subscribed)
         room.on("participant_attributes_changed", self._on_attributes_changed)
         room.on("disconnected", self._on_disconnected)
+        room.on("participant_connected", self._on_participant_connected)
+        room.on("participant_disconnected", self._on_participant_disconnected)
         room.register_text_stream_handler(TRANSCRIPTION_TOPIC, self._on_transcription)
         # Session events for LiveKit's own tools; drained so they are not logged one by one.
         room.register_byte_stream_handler(AGENT_SESSION_TOPIC, self._discard_stream)
@@ -122,7 +130,16 @@ class LiveKitLink:
         frame = rtc.AudioFrame(pcm, SAMPLE_RATE, 1, len(pcm) // 2)
         await self._source.capture_frame(frame)
 
+    async def wait_for_agent(self, timeout: float) -> None:
+        """Return once an agent participant is in the room; raise TimeoutError if none joins."""
+        for participant in self._room.remote_participants.values():
+            self._note_agent(participant)
+        await asyncio.wait_for(self._agent_joined.wait(), timeout)
+
     async def aclose(self) -> None:
+        # Our own teardown must not be reported as the agent leaving.
+        self._room.off("participant_connected", self._on_participant_connected)
+        self._room.off("participant_disconnected", self._on_participant_disconnected)
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -145,6 +162,20 @@ class LiveKitLink:
     @staticmethod
     def _is_agent(participant: rtc.Participant) -> bool:
         return participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+
+    def _note_agent(self, participant: rtc.Participant) -> None:
+        if self._is_agent(participant):
+            self._agent_identities.add(participant.identity)
+            self._agent_joined.set()
+
+    def _on_participant_connected(self, participant) -> None:
+        self._note_agent(participant)
+
+    def _on_participant_disconnected(self, participant) -> None:
+        # The call cannot continue once the last agent is gone; do not wait for the time limit.
+        self._agent_identities.discard(participant.identity)
+        if self._is_agent(participant) and not self._agent_identities:
+            self._outbox.put_nowait(("closed", RelayErrorCode.AGENT_UNAVAILABLE))
 
     def _on_track_subscribed(self, track, _publication, participant) -> None:
         if track.kind == rtc.TrackKind.KIND_AUDIO and self._is_agent(participant):
@@ -322,6 +353,8 @@ async def _pump_outbound(websocket: WebSocket, outbox: asyncio.Queue[Outbound]) 
             await websocket.send_bytes(value)
         elif kind == "json":
             await websocket.send_json(value)
+        elif value == RelayErrorCode.AGENT_UNAVAILABLE:
+            raise RelayError(value, "音声エージェントが切断されました。", CLOSE_SERVER_ERROR)
         else:
             raise RelayError(value, "会話サーバーとの接続が切れました。", CLOSE_SERVER_ERROR)
 
@@ -388,6 +421,7 @@ async def serve(websocket: WebSocket, dispatch: Dispatch) -> None:
             link = await connect_agent_room(room, f"visitor-{secrets.token_hex(4)}", outbox)
             house = await house_task
             await dispatch(room, build_house_rules(start.mode, house, settings.max_house_rules_chars))
+            await link.wait_for_agent(AGENT_JOIN_TIMEOUT_SECONDS)
         except Exception as exc:
             logger.warning("relay could not start the agent: %s", type(exc).__name__)
             raise RelayError(

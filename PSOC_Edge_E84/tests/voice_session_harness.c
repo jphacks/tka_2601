@@ -5,7 +5,8 @@
 
 static e84_shared_t mailbox;
 static TickType_t tick;
-static bool network_ready, server_connects, m5_connects, auto_ack, stop_on_start, server_opened;
+static bool network_ready, server_connects, m5_connects, auto_ack, stop_on_start, stop_on_cancel, server_opened;
+static unsigned m5_open_count;
 static uint8_t failed_send_type;
 static voice_packet_t server_in[8], m5_in[8];
 static unsigned server_used, server_read, m5_used, m5_read;
@@ -26,10 +27,12 @@ bool e84_network_voice_ready(void) { return network_ready; }
 bool m5_link_configured(void) { return true; }
 void voice_transport_init(voice_transport_t *link) { memset(link, 0, sizeof(*link)); }
 bool voice_transport_server(voice_transport_t *link) {
-    assert(link == &call.server && (call.state == CONNECT_AGENT || link->diagnostic));
+    /* Real calls open the API only before the intercom is answered (v2) or after
+     * the button was released (legacy v1); probes never answer anything. */
+    assert(link == &call.server && (link->diagnostic || (VOICE_SERVER_FIRST ? !call.may_have_answered : call.state == CONNECT_AGENT)));
     server_opened=true; link->websocket=true; return server_connects;
 }
-bool voice_transport_m5(voice_transport_t *link) { assert(link == &call.m5); return m5_connects; }
+bool voice_transport_m5(voice_transport_t *link) { assert(link == &call.m5); ++m5_open_count; return m5_connects; }
 void voice_transport_close(voice_transport_t *link) { (void)link; }
 bool voice_transport_send(voice_transport_t *link, const voice_header_t *header, const void *payload)
 {
@@ -41,6 +44,7 @@ bool voice_transport_send(voice_transport_t *link, const voice_header_t *header,
     out->header = *header;
     if (header->length) { assert(payload); memcpy(out->payload, payload, header->length); }
     if (stop_on_start && header->type == VOICE_CALL_START) stop_requested = true;
+    if (stop_on_cancel && header->type == VOICE_CANCEL) stop_requested = true;
     return header->type != failed_send_type;
 }
 int voice_transport_poll(voice_transport_t *link, voice_packet_t *packet)
@@ -63,8 +67,9 @@ static void reset(void)
     memset(sent, 0, sizeof(sent));
     tick = 1000u;
     network_ready = server_connects = m5_connects = auto_ack = true;
-    stop_on_start = busy = start_requested = stop_requested = recovery_required = false;
-    server_opened=false;
+    stop_on_start = stop_on_cancel = busy = start_requested = stop_requested = recovery_required = false;
+    server_opened=false; m5_open_count = 0u;
+    recovery_began = recovery_logged = 0u; recovery_delay_ms = recovery_attempts = 0u; recovery_log_seen = false;
     failed_send_type = 0u;
     server_used = server_read = m5_used = m5_read = sent_count = 0u;
     call.session = 123u;
@@ -88,6 +93,19 @@ static unsigned count_sent(uint8_t type)
     unsigned count = 0;
     for (unsigned i = 0; i < sent_count; ++i) if (sent[i].header.type == type) ++count;
     return count;
+}
+static unsigned count_sent_to(bool to_server, uint8_t type)
+{
+    unsigned count = 0;
+    for (unsigned i = 0; i < sent_count; ++i)
+        if (sent[i].to_server == to_server && sent[i].header.type == type) ++count;
+    return count;
+}
+static int first_sent(bool to_server, uint8_t type)
+{
+    for (unsigned i = 0; i < sent_count; ++i)
+        if (sent[i].to_server == to_server && sent[i].header.type == type) return (int)i;
+    return -1;
 }
 static void output_to_end(bool final)
 {
@@ -260,6 +278,114 @@ static void test_stop_and_uncertain_shutdown(void)
     assert(count_sent(VOICE_CALL_START) == 0u);
     assert(mailbox.voice_call_ack == 0u && mailbox.voice_record_enabled == 0u);
 }
+static void arm_recovery_after_unproven_stop(void)
+{
+    reset();
+    mailbox.voice_call_active = mailbox.voice_call_ack = 0u;
+    queue_ready();
+    stop_on_start = true;
+    failed_send_type = VOICE_CANCEL;
+    busy = true;
+    assert(!run_call(123u));
+    assert(recovery_required && !busy && mailbox.voice_call_ack == 1u);
+    stop_on_start = false; stop_requested = false; failed_send_type = 0u;
+    server_used = server_read = m5_used = m5_read = sent_count = 0u;
+    m5_open_count = 0u; server_opened = false;
+    mailbox.seed_ready = 1u;
+}
+static bool attempt_recovery(uint32_t *counter, bool m5_ends)
+{
+    /* The fake M5 answers with the session id recovery_step will pick. */
+    mailbox.seed[0] = 123u ^ (*counter + 1u);
+    m5_used = m5_read = 0u;
+    if (m5_ends) {
+        m5_in[m5_used++] = packet(VOICE_READY, 0u, 0u);
+        m5_in[m5_used++] = packet(VOICE_CALL_ENDED, 0u, 0u);
+    }
+    unsigned before = m5_open_count;
+    recovery_step(&mailbox, counter);
+    return m5_open_count != before;
+}
+static void test_recovery_rearms_without_pressing(void)
+{
+    arm_recovery_after_unproven_stop();
+    uint32_t counter = 0u;
+    TickType_t armed = recovery_began;
+    assert(recovery_delay_ms == VOICE_RECOVERY_RETRY_MIN_MS);
+    /* Not due yet, and never while a call/diagnostic owns the sockets. */
+    tick = armed + VOICE_RECOVERY_RETRY_MIN_MS - 1u;
+    assert(!attempt_recovery(&counter, true));
+    tick = armed + VOICE_RECOVERY_RETRY_MIN_MS;
+    busy = true; assert(!attempt_recovery(&counter, true)); busy = false;
+    network_ready = false; assert(!attempt_recovery(&counter, true)); network_ready = true;
+    assert(recovery_required && mailbox.voice_call_ack == 1u);
+    /* M5 unreachable (Wi-Fi blip): stays muted, delay doubles up to the cap. */
+    m5_connects = false;
+    unsigned expected[] = { 20000u, 30000u, 30000u, 30000u };
+    for (unsigned i = 0; i < 4; ++i) {
+        assert(attempt_recovery(&counter, false));
+        assert(recovery_required && recovery_delay_ms == expected[i] && !busy);
+        assert(mailbox.voice_call_ack == 1u && mailbox.voice_record_enabled == 0u);
+        tick = recovery_began + recovery_delay_ms - 1u; assert(!attempt_recovery(&counter, false));
+        tick = recovery_began + recovery_delay_ms;
+    }
+    assert(recovery_attempts == 4u);
+    /* M5 ERROR is not an idle confirmation. */
+    m5_connects = true;
+    mailbox.seed[0] = 123u ^ (counter + 1u);
+    m5_used = m5_read = 0u;
+    m5_in[m5_used++] = packet(VOICE_READY, 0u, 0u);
+    m5_in[m5_used++] = packet(VOICE_ERROR, 0u, 0u);
+    recovery_step(&mailbox, &counter);
+    assert(recovery_required && mailbox.voice_call_ack == 1u);
+    /* CALL_ENDED for the wrong session is ignored, so there is no confirmation. */
+    tick = recovery_began + recovery_delay_ms;
+    mailbox.seed[0] = 123u ^ (counter + 1u);
+    m5_used = m5_read = 0u;
+    m5_in[m5_used++] = packet(VOICE_READY, 0u, 0u);
+    m5_in[m5_used++] = packet(VOICE_CALL_ENDED, 0u, 0u);
+    m5_in[1].header.session++;
+    recovery_step(&mailbox, &counter);
+    assert(recovery_required && mailbox.voice_call_ack == 1u);
+    /* A capture re-arm failure keeps the lock even though the M5 answered. */
+    tick = recovery_began + recovery_delay_ms;
+    auto_ack = false;
+    assert(attempt_recovery(&counter, true));
+    assert(recovery_required && mailbox.voice_call_ack == 1u);
+    auto_ack = true;
+    /* Finally the M5 confirms idle: capture and chime detection are re-armed. */
+    tick = recovery_began + recovery_delay_ms;
+    assert(attempt_recovery(&counter, true));
+    assert(!recovery_required && !busy);
+    assert(mailbox.voice_call_active == 0u && mailbox.voice_call_ack == 0u && mailbox.voice_record_enabled == 0u);
+    /* Across every attempt: only HELLO/CANCEL to the M5, nothing to the API, no press. */
+    assert(count_sent_to(false, VOICE_CALL_START) == 0u && count_sent_to(false, VOICE_CALL_END) == 0u);
+    assert(count_sent_to(false, VOICE_HELLO) == count_sent_to(false, VOICE_CANCEL));
+    assert(count_sent_to(false, VOICE_HELLO) == 4u);
+    assert(sent_count == count_sent_to(false, VOICE_HELLO) + count_sent_to(false, VOICE_CANCEL));
+    assert(!server_opened);
+    /* A new call is accepted again. */
+    voice_stream_request_call(); assert(start_requested);
+}
+static void test_recovery_is_stoppable_and_rate_limits_log(void)
+{
+    arm_recovery_after_unproven_stop();
+    uint32_t counter = 0u;
+    tick = recovery_began + recovery_delay_ms;
+    stop_on_cancel = true; /* operator presses q right after CANCEL went out */
+    assert(attempt_recovery(&counter, true) == true);
+    assert(recovery_required && mailbox.voice_call_ack == 1u && !busy);
+    stop_on_cancel = false;
+    /* Failure log: first attempt prints, later ones within 60 s stay quiet. */
+    TickType_t first_log = recovery_logged;
+    assert(recovery_log_seen);
+    m5_connects = false;
+    tick = recovery_began + recovery_delay_ms; assert(attempt_recovery(&counter, false));
+    assert(recovery_logged == first_log);
+    tick = first_log + VOICE_RECOVERY_LOG_MS;
+    assert(attempt_recovery(&counter, false));
+    assert(recovery_logged == tick);
+}
 static void test_legacy_early_vad_and_stale_input(void)
 {
     prepare_capture();
@@ -283,21 +409,61 @@ static void test_agent_only_after_button_released(void)
     assert(from_m5(VOICE_CALL_STARTED,0,0));
     assert(call.state==CONNECT_AGENT && !server_opened && sent_count==0);
 
+    /* Order: API ready -> M5 press request -> button released -> agent start. */
     reset(); mailbox.voice_call_active=mailbox.voice_call_ack=0;
     queue_ready();
     m5_in[m5_used++]=packet(VOICE_CALL_STARTED,0,0);
+    m5_in[m5_used++]=packet(VOICE_ERROR,0,0); /* ends the conversation loop */
     m5_in[m5_used++]=packet(VOICE_CALL_ENDED,0,0);
-    server_connects=false;
     assert(run_call(123));
-    assert(server_opened && count_sent(VOICE_CALL_START)==1);
-    assert(mailbox.voice_call_ack==0); // connection failure still ends the intercom
+    int hello=first_sent(true,VOICE_HELLO), press=first_sent(false,VOICE_CALL_START);
+    int agent=first_sent(true,VOICE_CALL_START);
+    assert(hello>=0 && press>hello && agent>press);
+    assert(count_sent_to(false,VOICE_CALL_START)==1 && count_sent_to(true,VOICE_CALL_START)==1);
+    assert(mailbox.voice_call_ack==0);
 
     reset(); mailbox.voice_call_active=mailbox.voice_call_ack=0;
     queue_ready();
     m5_in[m5_used++]=packet(VOICE_ERROR,0,0);
     m5_in[m5_used++]=packet(VOICE_CALL_ENDED,0,0);
     assert(run_call(123));
-    assert(!server_opened); // failed/unfinished button action never starts agent
+    assert(count_sent_to(true,VOICE_CALL_START)==0); // failed/unfinished button action never starts agent
+}
+static void test_server_down_never_presses_button(void)
+{
+    /* API refuses the connection: no M5 traffic at all, chime detection stays armed. */
+    reset(); mailbox.voice_call_active=mailbox.voice_call_ack=0;
+    queue_ready(); server_connects=false;
+    assert(run_call(123));
+    assert(server_opened && m5_open_count==0);
+    assert(count_sent_to(false,VOICE_CALL_START)==0 && count_sent_to(false,VOICE_HELLO)==0);
+    assert(!recovery_required);
+    assert(mailbox.voice_call_active==0 && mailbox.voice_call_ack==0 && mailbox.voice_record_enabled==0);
+
+    /* TLS up but no ready (API/agent backend down): still nothing pressed. */
+    reset(); mailbox.voice_call_active=mailbox.voice_call_ack=0;
+    m5_in[m5_used++]=packet(VOICE_READY,0,0); m5_in[m5_used++]=packet(VOICE_PONG,0,1);
+    assert(run_call(123));
+    assert(m5_open_count==0 && sent_count>0);
+    /* Only the idempotent CANCEL may be aimed at the never-opened M5 link (a real send fails). */
+    for (unsigned i=0;i<sent_count;++i) assert(sent[i].to_server || sent[i].header.type==VOICE_CANCEL);
+    assert(!recovery_required && mailbox.voice_call_ack==0);
+
+    /* The server answers the handshake with an error instead of ready. */
+    reset(); mailbox.voice_call_active=mailbox.voice_call_ack=0;
+    server_in[server_used++]=packet(VOICE_ERROR,0,0);
+    assert(run_call(123));
+    assert(m5_open_count==0 && count_sent_to(false,VOICE_CALL_START)==0);
+    assert(!recovery_required && mailbox.voice_call_ack==0);
+
+    /* The server drops while the servo is busy: the already-sent press is ended. */
+    reset(); mailbox.voice_call_active=mailbox.voice_call_ack=0;
+    queue_ready();
+    server_in[server_used++]=packet(VOICE_ERROR,0,0); /* read after READY, before CALL_STARTED */
+    m5_in[m5_used++]=packet(VOICE_CALL_ENDED,0,0);
+    assert(run_call(123));
+    assert(count_sent_to(false,VOICE_CALL_START)==1 && count_sent_to(true,VOICE_CALL_START)==0);
+    assert(count_sent_to(false,VOICE_CANCEL)==1 && mailbox.voice_call_ack==0);
 }
 static void test_tcp_probe_never_starts_a_call_or_capture(void)
 {
@@ -337,6 +503,9 @@ int main(void)
     test_stop_and_uncertain_shutdown();
     test_legacy_early_vad_and_stale_input();
     test_agent_only_after_button_released();
-    puts("PASS: CM33 playback gating, packet identity, final turn, capture errors and safe stop");
+    test_server_down_never_presses_button();
+    test_recovery_rearms_without_pressing();
+    test_recovery_is_stoppable_and_rate_limits_log();
+    puts("PASS: CM33 playback gating, packet identity, final turn, capture errors, safe stop, API-first call order and automatic M5 recovery");
     return 0;
 }
