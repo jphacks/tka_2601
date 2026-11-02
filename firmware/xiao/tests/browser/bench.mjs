@@ -17,22 +17,23 @@ const button = (name, scope = page) => scope.getByRole('button', { name, exact: 
 const visible = text => page.getByText(text, { exact: true }).first().waitFor();
 const go = async name => { await page.getByRole('menuitem', { name, exact: true }).click(); };
 const logs = async () => (await (await page.request.get(url + '/api/logs?after=0')).json()).lines.map(line => line.text);
-async function logged(text) {
+const count = async text => (await logs()).filter(line => line.includes(text)).length;
+// Waits for a line that was not there yet: pass count(text) from before the action.
+async function logged(text, before) {
   const deadline = Date.now() + SLOW;
   for (;;) {
-    if ((await logs()).some(line => line.includes(text))) return;
+    if ((await count(text)) > before) return;
     assert.ok(Date.now() < deadline, 'the board never logged: ' + text);
     await page.waitForTimeout(100);
   }
 }
-const count = async text => (await logs()).filter(line => line.includes(text)).length;
 async function pick(index, option) {
   await page.locator('.ant-select').nth(index).click();
   await page.locator('.ant-select-item-option', { hasText: option }).click();
 }
-// How many colours the 3D canvas really shows: a blank or failed WebGL canvas has one.
+// What the 3D canvas really shows, from its pixels: a blank or failed WebGL canvas has one colour.
 const canvasShot = () => page.locator('.scene canvas').screenshot();
-async function colours(shot) {
+async function pixels(shot) {
   return page.evaluate(async base64 => {
     const image = new Image();
     image.src = 'data:image/png;base64,' + base64;
@@ -42,19 +43,36 @@ async function colours(shot) {
     context.drawImage(image, 0, 0);
     const data = context.getImageData(0, 0, image.width, image.height).data;
     const seen = new Set();
-    for (let i = 0; i < data.length; i += 4) seen.add(data[i] << 16 | data[i + 1] << 8 | data[i + 2]);
-    return seen.size;
+    let orange = 0, black = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+      seen.add(r << 16 | g << 8 | b);
+      if (r > 190 && g > 80 && g < 170 && b < 110) orange++;
+      if (r < 70 && g < 70 && b < 70) black++;
+    }
+    return { colours: seen.size, orange, black };
   }, shot.toString('base64'));
 }
 async function modelIsDrawn(where) {
   const deadline = Date.now() + SLOW;
   let seen = 0;
   while (Date.now() < deadline) {
-    seen = await colours(await canvasShot());
+    seen = (await pixels(await canvasShot())).colours;
     if (seen > 200) return;
     await page.waitForTimeout(300);
   }
   assert.fail(`${where}: the 3D model is not drawn (${seen} colours)`);
+}
+// Printed parts on the model: the bird is orange, and the black capsule leaves none and adds black.
+async function partsOf(where, wanted) {
+  const deadline = Date.now() + SLOW;
+  let seen;
+  while (Date.now() < deadline) {
+    seen = await pixels(await canvasShot());
+    if (wanted(seen)) return seen;
+    await page.waitForTimeout(300);
+  }
+  assert.fail(`${where}: the printed parts are not what was chosen: ${JSON.stringify(seen)}`);
 }
 const step = name => console.log('browser: ' + name);
 
@@ -63,6 +81,7 @@ try {
   await button('チャイムを鳴らす').waitFor();
   await visible('bench 接続中');
   await modelIsDrawn('first load');
+  const birdParts = await partsOf('bird', seen => seen.orange > 1500);
   step('page loads from the bench, 3D drawn');
 
   const names = ['仮想ボード', 'テスト', '動作確認', 'サーボ', '音', 'チャイム', 'テスト通話'];
@@ -78,16 +97,21 @@ try {
   // The two menus and the measured values.
   await pick(0, 'dearis');
   await visible('当たる所はありません');
+  await pick(0, 'VS-MGE20');
   await pick(1, 'マット黒');
-  await modelIsDrawn('matte capsule on dearis');
+  await modelIsDrawn('matte capsule');
+  await partsOf('matte capsule', seen => seen.orange < 100 && seen.black > birdParts.black + 1000);
   await pick(0, 'VL-WD623');
   await page.getByText('重なります', { exact: false }).waitFor();
   await pick(0, 'VS-MGE20');
-  await page.getByText('充電台に約 2.1 mm', { exact: false }).waitFor();
+  await page.getByText('充電台に約 6.9 mm', { exact: false }).waitFor();
   await button('寸法とキー位置を変える').click();
+  const onKey = page.getByText('通話キーに載るラックは', { exact: false });
+  const asTabled = await onKey.textContent();
   await page.getByLabel('通話キー 上下 mm').fill('-30');
   await visible('実測値で表示しています');
-  await page.getByText('隠れるもの', { exact: false }).waitFor();
+  await page.getByText('通話キーに載るラックは 13%').waitFor(); // the two keys now share one row, so the fit changed
+  assert.notEqual(asTabled, await onKey.textContent());
   await page.reload();
   await visible('bench 接続中');
   await page.getByText('Panasonic VS-MGE20', { exact: false }).first().waitFor();
@@ -108,16 +132,17 @@ try {
   await button('鳴らす', row('スピーカー')).click();
   await button('聞こえた', row('スピーカー')).click();
   await row('スピーカー').getByText('OK').waitFor();
-  await logged('[DIAG] speaker ok=1');
+  await logged('[DIAG] speaker ok=1', 0);
   await button('1 回押す', row('終了')).click();
-  await logged('[SERVO] END press once');
+  await logged('[SERVO] END press once', 0);
   await button('動いた', row('終了')).click();
   await row('終了').getByText('OK').waitFor();
   step('check screen: connections, speaker and servo through the board');
 
   // Servo screen: reach from the real angles, a real press, editing and undo.
   await go('サーボ');
-  await page.getByText('キーを 0.9 mm 押します', { exact: false }).waitFor();
+  await page.getByText('角度どおりに回れば、ラックは 2.4 mm 動きます。', { exact: false }).waitFor();
+  await page.getByText('実際の角度は実機で確かめてください', { exact: false }).waitFor();
   const presses = await count('[SERVO] CALL press once');
   await button('通話を 1 回押す').click();
   for (let i = 0; i < 100 && await count('[SERVO] CALL press once') === presses; ++i) await page.waitForTimeout(100);
@@ -131,7 +156,7 @@ try {
   assert.equal((await logs()).filter(line => line.startsWith('[MODE] calibration=')).at(-1) ?? '[MODE] calibration=idle', '[MODE] calibration=idle', 'undo must end calibration');
   // Calibration pauses calls, and the call screens say so.
   await button('押す位置を 1° 減らす').click();
-  await logged('[MODE] calibration=active');
+  await logged('[MODE] calibration=active', 0);
   const paused = 'サーボの調整中は通話が始まりません。サーボの画面で保存するか元に戻してください';
   await go('仮想ボード');
   await visible(paused);
@@ -174,24 +199,45 @@ try {
 
   // The chime starts the whole call, and the model follows it.
   await page.waitForTimeout(2500); // the other sound has finished
-  const idle = await canvasShot();
+  const callPresses = await count('[SERVO] CALL press once'), endPresses = await count('[SERVO] END press once');
+  const callsEnded = await count('[VOICE] Call ended;');
+  // Record what the model itself does from here on, frame by frame.
+  await page.evaluate(() => {
+    window.seen = { talk: 0, end: 0, screens: {}, sounds: {} };
+    const sample = () => {
+      const pose = MonbanModel.scene.pose();
+      seen.talk = Math.max(seen.talk, pose.talk);
+      seen.end = Math.max(seen.end, pose.end);
+      seen.screens[pose.screen] = true;
+      if (pose.sound) seen.sounds[pose.sound] = true;
+      requestAnimationFrame(sample);
+    };
+    sample();
+  });
   await button('チャイムを鳴らす').click();
-  await logged('[SERVO] CALL press once');
+  await logged('[SERVO] CALL press once', callPresses);
   await page.locator('.scene .caption.ai').waitFor();
-  assert.ok(!idle.equals(await canvasShot()), 'the model did not change during the call');
-  await page.locator('.bubble.ai').first().waitFor();
-  await logged('[SERVO] END press once');
-  await logged('[VOICE] Call ended;');
+  await logged('[SERVO] END press once', endPresses);
+  await logged('[VOICE] Call ended;', callsEnded);
   await button('チャイムを鳴らす').waitFor();
-  assert.equal(await count('[SERVO] CALL press once'), presses + 1 + 1);
+  assert.equal(await count('[SERVO] CALL press once'), callPresses + 1);
+  assert.equal(await count('[SERVO] END press once'), endPresses + 1);
   await page.locator('.scene .caption').waitFor({ state: 'detached' });
+  await page.waitForTimeout(1000); // the last release is drawn
+  const seen = await page.evaluate(() => window.seen);
+  assert.ok(seen.talk > 1.5, `the call rack never reached the key: ${JSON.stringify(seen)}`);
+  assert.ok(seen.end > 1.5, `the end rack never reached the key: ${JSON.stringify(seen)}`);
+  assert.ok(seen.screens.ringing && seen.screens.call && seen.screens.off, JSON.stringify(seen));
+  assert.ok(seen.sounds.intercom && seen.sounds.device && seen.sounds.visitor, JSON.stringify(seen));
+  const pose = await page.evaluate(() => MonbanModel.scene.pose());
+  assert.deepEqual([pose.talk, pose.end, pose.screen, pose.sound], [0, 0, 'off', null], 'the model returned to rest');
   step('chime to call to end, with the model following');
 
   // Test call, stopped part way.
   await go('テスト通話');
   await button('通話を始める').click();
   await button('通話を止める').click();
-  await logged('Call stopped;');
+  await logged('Call stopped;', 0);
   await button('通話を始める').waitFor();
   step('test call starts and stops');
 
@@ -212,9 +258,8 @@ try {
     await page.goto(url + '/#' + { 動作確認: 'check', サーボ: 'servo' }[name]);
     await page.locator('.scene canvas').waitFor();
     // antd measures its menu and tabs after the first paint, so judge the settled layout.
-    const wider = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    let over = await wider();
-    for (let i = 0; i < 50 && over > 0; ++i) { await page.waitForTimeout(100); over = await wider(); }
+    await page.waitForTimeout(1500);
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(over <= 0, `${name}: ${over} px wider than the window`);
   }
   step('narrow window');

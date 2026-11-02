@@ -35,7 +35,7 @@
       this.pending = new Map(); this.pumping = false;
       this.uncommitted = new Map(); // moved on screen, not yet sent to the board
       this.testing = false; this.motionBusy = false; this.requesting = false;
-      this.motionError = ''; this.message = '';
+      this.motionError = ''; this.message = ''; this.undoing = false;
     }
     changed() { this.onChange(); }
     apply(state) {
@@ -62,26 +62,31 @@
     setAngleLocal(target, position, angle) {
       this.values[target][position] = angle;
       this.dirty = true; this.message = '';
-      this.uncommitted.set(target + position, () => ({action: 'angles', body: {target, ...this.values[target]}}));
+      this.uncommitted.set(target + position, this.angleToSend(target));
       this.changed();
     }
+    // What save sends for an edit that has not reached the board; neither of these moves a servo.
+    angleToSend(target) { return () => ({action: 'angles', body: {target, ...this.values[target]}}); }
+    timingToSend(field) { return () => ({action: 'timing', body: {field, value: this.values[field]}}); }
     // A commit can arrive late, after save or undo took the edit away: it must not restart calibration.
     commitAngle(target, position) {
-      if (!this.uncommitted.delete(target + position)) return Promise.resolve();
-      this.pending.set(target + position, {action: 'preview', body: {target, position: position === 'press' ? 'p' : 'r', angle: this.values[target][position]}});
+      if (this.undoing || !this.uncommitted.delete(target + position)) return Promise.resolve();
+      this.pending.set(target + position, {action: 'preview', body: {target, position: position === 'press' ? 'p' : 'r', angle: this.values[target][position]}, unsent: this.angleToSend(target)});
       return this.pump();
     }
     setTimingLocal(field, value) {
       this.values[field] = value;
       this.dirty = true; this.message = '';
-      this.uncommitted.set(field, () => ({action: 'timing', body: {field, value: this.values[field]}}));
+      this.uncommitted.set(field, this.timingToSend(field));
       this.changed();
     }
     commitTiming(field) {
-      if (!this.uncommitted.delete(field)) return Promise.resolve();
-      this.pending.set(field, {action: 'timing', body: {field, value: this.values[field]}});
+      if (this.undoing || !this.uncommitted.delete(field)) return Promise.resolve();
+      this.pending.set(field, {action: 'timing', body: {field, value: this.values[field]}, unsent: this.timingToSend(field)});
       return this.pump();
     }
+    // A refused edit stays on screen, so it stays due: save must send it, not the board's old value.
+    keepUnsent(key, item) { this.uncommitted.set(key, item.unsent || (() => ({action: item.action, body: item.body}))); }
     async pump() {
       if (this.pumping) return;
       this.pumping = true;
@@ -95,10 +100,12 @@
           } catch (error) {
             if (RETRY.has(error.code)) { await this.sleep(200); continue; }
             this.pending.delete(key);
+            this.keepUnsent(key, item);
             this.message = errorText(error.code || error.message);
           }
         }
       } catch (error) {
+        for (const [key, item] of this.pending) this.keepUnsent(key, item);
         this.pending.clear();
         this.message = errorText(error.code || error.message);
       } finally {
@@ -119,7 +126,8 @@
       this.changed();
       return true;
     }
-    canTest() { return !this.testing && !this.motionBusy && !this.pumping && !this.pending.size && !this.requesting; }
+    // An edit still on its way would make the press use an angle other than the one on screen.
+    canTest() { return !this.testing && !this.motionBusy && !this.pumping && !this.pending.size && !this.uncommitted.size && !this.requesting; }
     async test(target) {
       if (!this.canTest()) return false;
       this.requesting = true; this.message = '';
@@ -165,14 +173,22 @@
       }
     }
     async undo() {
-      this.pending.clear(); this.uncommitted.clear();
+      // Nothing more goes out, but the edit is kept until the board accepts the cancel.
+      for (const [key, item] of this.pending) this.keepUnsent(key, item);
+      this.pending.clear();
+      this.undoing = true;
+      // A begin still in flight would otherwise land after the cancel and leave calls paused.
+      while (this.pumping) await this.sleep(50);
       try {
         const state = await this.api('cancel');
+        this.uncommitted.clear();
         this.dirty = false; this.active = false; this.message = '';
         this.values = pickValues(state);
       } catch (error) {
-        if (error.code === 'begin_required') { this.dirty = false; this.message = ''; }
+        if (error.code === 'begin_required') { this.uncommitted.clear(); this.dirty = false; this.message = ''; }
         else this.message = errorText(error.code || error.message);
+      } finally {
+        this.undoing = false;
       }
       this.changed();
     }
@@ -208,6 +224,7 @@
   function callProgress(lines) {
     let at = -1;
     for (const text of lines) {
+      if (text.includes('[BOOT] Network task running')) at = -1;
       if (text.includes('[VOICE] Preparing streaming call')) at = 0;
       // A servo test before or after a call is not part of it.
       if (at < 0 || at >= CALL_STEPS.length) continue;
@@ -235,13 +252,16 @@
     if (/\[VOICE\] Response \d+:/.test(text) || text.includes('[DIAG] speaker playing') || text.includes('[DIAG] loopback playing')) return {type: 'sound', source: 'device'};
     if (text.includes('[VOICE] Input streaming:')) return {type: 'sound', source: 'visitor'};
     if (text.includes('[VOICE] Playback complete:') || text.includes('[VOICE] Input complete:') || /\[DIAG\] (speaker|loopback) ok=/.test(text)) return {type: 'sound', source: null};
-    if (text.includes('Call ended;') || text.includes('Call stopped;') || text.includes('Playback/call state uncertain')) return {type: 'idle'};
+    if (text.includes('Call ended;') || text.includes('Call stopped;') || text.includes('Playback/call state uncertain') || text.includes('[BOOT] Network task running')) return {type: 'idle'};
     return null;
   }
   // How far the pinion's angle moves the rack, against what this intercom and exterior need.
-  function rackReach(degrees, radius, stroke, gap) {
+  // Assumes the servo turns the commanded angle, which no real FS0307 has confirmed yet. Tilt is
+  // what the part gives up leaning on the rail under load.
+  function rackReach(degrees, radius, stroke, gap, tilt = 0) {
     const mm = radius * degrees * Math.PI / 180;
-    return {mm, stroke, gap, over: mm > stroke, short: gap !== null && mm <= gap, depth: gap === null ? 0 : mm - gap};
+    const needed = gap === null ? 0 : gap + tilt;
+    return {mm, stroke, gap, needed, over: mm > stroke, short: gap !== null && mm <= needed, depth: gap === null ? 0 : mm - needed};
   }
 
   globalThis.MonbanLogic = {ServoEditor, pickValues, errorText, chimeProgress, callProgress, callCompleted, CALL_STEPS, sceneEvent, rackReach};

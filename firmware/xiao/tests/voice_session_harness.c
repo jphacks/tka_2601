@@ -57,6 +57,8 @@ const char *playback_error(void) { return fake_error; }
 void playback_abort(void) { ++playback_aborts; }
 bool playback_idle(void) { return fake_idle; }
 void voice_transport_init(voice_transport_t *link) { memset(link, 0, sizeof(*link)); }
+static bool api_configured = true;
+bool voice_transport_configured(void) { return api_configured; }
 bool voice_transport_server(voice_transport_t *link) {
     assert(link == &call.server && (call.state == CONNECT_AGENT || link->diagnostic));
     server_opened=true; link->websocket=true; return server_connects;
@@ -298,6 +300,13 @@ static void test_stop_and_uncertain_shutdown(void)
     assert(run_call(123u));
     assert(cancels == 1u && closes == 1u);
     assert(mailbox.voice_call_ack == 0u && mailbox.voice_record_enabled == 0u);
+    /* No usable API settings: the intercom is left alone, not answered and hung up on. */
+    fresh_call();
+    api_configured = false;
+    assert(run_call(123u));
+    api_configured = true;
+    assert(opens == 0u && call_presses == 0u && end_presses == 0u && !server_opened && !recovery_required);
+    assert(mailbox.voice_call_ack == 0u);
     /* Servos held by calibration or a test: no call, no agent, no recovery lock. */
     fresh_call();
     servo_open_ok = false;

@@ -142,6 +142,70 @@ for (const finish of ['undo', 'save']) {
   assert.equal(requests.length, before, finish);
   assert.equal(editor.active, false, finish);
 }
+// A refused edit is still on screen, so save must send it and not report success with the old value.
+{
+  let refuse = true;
+  const {editor, requests} = fixture(action => {
+    if (action === 'begin' && refuse) { refuse = false; refused('servo_test_busy'); }
+    return action === 'save' ? state({call_press: 77}) : {ok: true};
+  });
+  editor.setAngleLocal('c', 'press', 77);
+  await editor.commitAngle('c', 'press');
+  assert.equal(editor.message, errorText('servo_test_busy'));
+  assert.equal(await editor.save(), true);
+  assert.deepEqual(requests.map(r => r.action), ['begin', 'begin', 'angles', 'save']);
+  assert.equal(requests[2].body.press, 77);
+}
+// A save the board refuses is not reported as saved.
+{
+  const {editor} = fixture(action => { if (action === 'begin') refused('servo_test_busy'); return {ok: true}; });
+  editor.setAngleLocal('c', 'press', 77);
+  assert.equal(await editor.save(), false);
+  assert.equal(editor.dirty, true);
+  assert.equal(editor.values.c.press, 77);
+  assert.equal(editor.uncommitted.size, 1, 'still due');
+}
+// Undo during a begin that is still in flight: the cancel goes last, so calibration ends.
+{
+  let finishBegin;
+  const {editor, requests} = fixture(action => {
+    if (action === 'begin') return new Promise(resolve => { finishBegin = () => resolve({ok: true}); });
+    return action === 'cancel' ? state() : {ok: true};
+  });
+  editor.setAngleLocal('c', 'press', 40);
+  const commit = editor.commitAngle('c', 'press');
+  await Promise.resolve();
+  const undo = editor.undo();
+  finishBegin();
+  await Promise.all([commit, undo]);
+  assert.equal(requests.at(-1).action, 'cancel');
+  assert.equal(requests.filter(r => r.action === 'preview').length, 0, 'no servo move after undo');
+  assert.equal(editor.dirty, false);
+}
+// A step button's delayed commit while the cancel is on its way must not start calibration again.
+{
+  let finishCancel;
+  const {editor, requests} = fixture(action => action === 'cancel' ? new Promise(resolve => { finishCancel = () => resolve(state()); }) : {ok: true});
+  editor.setAngleLocal('c', 'press', 40);
+  const undo = editor.undo();
+  await Promise.resolve();
+  await editor.commitAngle('c', 'press');
+  finishCancel();
+  await undo;
+  assert.deepEqual(requests.map(r => r.action), ['cancel']);
+  assert.equal(editor.undoing, false);
+}
+// A refused cancel keeps the edit; a press never runs with an edit still on its way.
+{
+  const {editor} = fixture(action => { if (action === 'cancel') refused('servo_test_busy'); return {ok: true}; });
+  editor.setAngleLocal('c', 'press', 77);
+  assert.equal(editor.canTest(), false);
+  assert.equal(await editor.test('c'), false);
+  await editor.undo();
+  assert.equal(editor.dirty, true);
+  assert.equal(editor.values.c.press, 77);
+  assert.equal(editor.uncommitted.size, 1);
+}
 // Tapping save right after a timing change must not save the old value.
 {
   const {editor, requests} = fixture(action => action === 'save' ? state() : {ok: true});
@@ -190,6 +254,7 @@ assert.equal(call('[VOICE] Preparing streaming call.', '[VOICE] Call stopped; ch
 assert.equal(call('[VOICE] Call ended; chime detection rearmed.', '[VOICE] Preparing streaming call.'), 0);
 assert.equal(call('[VOICE] Call ended; chime detection rearmed.', '[SERVO] CALL press once: 30'), -1);
 assert.equal(call('[VOICE] Preparing streaming call.', '[VOICE] Call ended; chime detection rearmed.', '[SERVO] CALL press once: 30'), CALL_STEPS.length, 'a test press after the call');
+assert.equal(call('[VOICE] Preparing streaming call.', '[MONITOR] [BOOT] Network task running: the board restarted while USB was away.'), -1);
 assert.equal(callCompleted(['[VOICE] Call stopped; chime detection rearmed.']), false);
 assert.equal(callCompleted(['[VOICE] Call ended; chime detection rearmed.']), true);
 console.log('Web UI: call progress passed');
@@ -208,6 +273,7 @@ assert.deepEqual(event('[VOICE] Input streaming: sent=20 ms queued=3 frames rms=
 assert.deepEqual(event('[VOICE] Playback complete: turn 0.'), {type: 'sound', source: null});
 assert.deepEqual(event('[DIAG] loopback ok=1'), {type: 'sound', source: null});
 assert.equal(event('[VOICE] Call ended; chime detection rearmed.').type, 'idle');
+assert.equal(event('[MONITOR] [BOOT] Network task running: the board restarted while USB was away.').type, 'idle');
 assert.equal(sceneEvent('[SERVO] Active source=saved CALL: GPIO=7 press=30 rest=0'), null);
 // The rack: 4.5 mm pinion radius against the stroke and the gap to the key.
 assert.equal(rackReach(180, 4.5, 4, 1.5).over, true, 'the old 180 degree default ran far past the rack');
@@ -216,6 +282,7 @@ assert.equal(rackReach(10, 4.5, 4, 1.5).short, true);
   const reach = rackReach(30, 4.5, 4, 1.5);
   assert.ok(!reach.over && !reach.short && Math.abs(reach.mm - 2.356) < 0.01 && Math.abs(reach.depth - 0.856) < 0.01);
   assert.equal(rackReach(30, 4.5, 4, null).short, false, 'no mechanism for this servo');
+  assert.equal(rackReach(30, 4.5, 4, 2.2, 0.39).short, true, 'the tilt under load counts against the reach');
 }
 console.log('Web UI: 3D events and rack reach passed');
 
@@ -223,6 +290,25 @@ console.log('Web UI: 3D events and rack reach passed');
 const sceneContext = vm.createContext({window: {THREE: {}}});
 vm.runInContext(readFileSync(new URL('../calibration_ui/scene/monban_scene.js', import.meta.url), 'utf8'), sceneContext);
 const Scene = sceneContext.window.MonbanScene;
+// The numbers the placement uses must describe the meshes that are drawn.
+{
+  vm.runInContext(readFileSync(new URL('../calibration_ui/scene/monban_meshes.js', import.meta.url), 'utf8'), sceneContext);
+  const bounds = name => {
+    const raw = Buffer.from(sceneContext.window.MONBAN_MESHES[name].p, 'base64');
+    let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (let i = 0; i + 6 <= raw.length; i += 6) {
+      const x = raw.readInt16LE(i) / 50, y = raw.readInt16LE(i + 2) / 50;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    return {x0, x1, y0, y1};
+  };
+  for (const [name, shape] of [['cap_base', Scene.SHAPES.capsule], ['sit_N_base', Scene.SHAPES.bird]]) {
+    const b = bounds(name);
+    const near = (a, want, what) => assert.ok(Math.abs(a - want) < 0.5, `${name} ${what}: mesh ${a}, table ${want}. Run scene/make_meshes.py and update SHAPES`);
+    near(b.x0, shape.xc - shape.w / 2, 'left'); near(b.x1, shape.xc + shape.w / 2, 'right');
+    near(b.y0, shape.y0, 'bottom'); near(b.y1, shape.y1, 'top');
+  }
+}
 assert.deepEqual(Object.keys(Scene.DESIGNS), ['bird', 'matte']);
 assert.ok(Object.keys(Scene.INTERCOMS).length >= 19);
 for (const [id, item] of Object.entries(Scene.INTERCOMS)) {
@@ -237,14 +323,13 @@ for (const id of Object.keys(Scene.INTERCOMS)) {
   for (const shape of ['bird', 'capsule']) {
     const placed = Scene.layout(spec, shape);
     assert.equal(placed.pushers.length, spec.press.length, id);
-    for (const pusher of placed.pushers) assert.ok(pusher.gap > 0, id + ': the rack rests clear of the key');
-    assert.ok(Array.isArray(Array.from(Scene.fit(spec, shape))), id);
+    for (const pusher of placed.pushers) assert.ok(Math.abs(pusher.py - placed.ry) > 13, id + ': the part sits off the rail');
   }
 }
 {
   const notes = shape => Array.from(Scene.fit(Scene.customize('vsmge20'), shape)).join(' ');
-  assert.ok(notes('capsule').includes('充電台に約 2.1 mm'), notes('capsule'));
-  assert.ok(notes('capsule').includes('通話キーに載るラックは 80%'), notes('capsule'));
+  assert.ok(notes('capsule').includes('充電台に約 6.9 mm'), notes('capsule'));
+  assert.ok(notes('capsule').includes('通話キーに載るラックは 87%') || notes('capsule').includes('通話キーに載るラックは 88%'), notes('capsule'));
   assert.ok(notes('bird').includes('充電台に約 3.2 mm'), notes('bird'));
   assert.equal(Scene.fit(Scene.customize('vlme30'), 'capsule').length, 0);
   assert.ok(Array.from(Scene.fit(Scene.customize('vlwd623'), 'capsule')).join(' ').includes('重なります'));

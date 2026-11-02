@@ -88,7 +88,8 @@ bool playback_step(uint32_t now_ms)
     unsigned available = atomic_load(&write_seq) - read;
     bool ended = atomic_load(&finished);
     /* An underrun/EOF is never completion. Resume when data returns, or abort. */
-    if (!ended && (uint32_t)(now_ms - atomic_load(&last_output_ms)) >= OUTPUT_TIMEOUT_MS)
+    /* Signed: the call task can store a time just after the caller read the clock. */
+    if (!ended && (int32_t)(now_ms - atomic_load(&last_output_ms)) >= (int32_t)OUTPUT_TIMEOUT_MS)
         return fail("audio_progress_timeout");
     switch (value) {
     case BUFFERING:

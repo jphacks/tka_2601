@@ -43,7 +43,10 @@ void execute(const char* text) {
   if (!text[0] || text[1]) return;
   switch (text[0]) {
     case 'h': help(); break;
-    case 's': audio_app_post_command('s'); servo_log_status(); net_report_wifi(); break;
+    case 's':
+      xlog("[STATE] busy=%u recovery=%u uptime_ms=%lu\n", voice_stream_busy() ? 1u : 0u, voice_stream_recovery_required() ? 1u : 0u, (unsigned long)millis());
+      audio_app_post_command('s'); servo_log_status(); net_report_wifi();
+      break;
     case 'e': case 'r': audio_app_post_command(text[0]); break;
     case 'x': audio_app_post_command('x'); servo_test_cancel(); break;
     case 'c':

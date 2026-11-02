@@ -39,7 +39,8 @@ with Backend() as backend:
     raw(master)
     raw(slave)
     port_name = os.ttyname(slave)
-    firmware = subprocess.Popen([BINARY, str(backend.port), "bench"], stdin=master, stdout=master, stderr=subprocess.DEVNULL)
+    firmware = subprocess.Popen([BINARY, str(backend.port), "bench"], stdin=master, stdout=master,
+                                env={**os.environ, "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"})  # stderr stays visible
     os.close(master)
     server = subprocess.Popen([sys.executable, str(Path(__file__).parents[1] / "calibration_ui/server.py"),
                                "--serial-port", port_name, "--http-port", HTTP_PORT,
@@ -48,7 +49,9 @@ with Backend() as backend:
     print(f"http://127.0.0.1:{HTTP_PORT}", flush=True)
     try:
         while not stopping.wait(0.5):
-            pass
+            for name, child in (("firmware", firmware), ("page server", server)):
+                if child.poll() is not None:
+                    sys.exit(f"bench: the {name} exited with {child.returncode}")
     finally:
         server.terminate()
         firmware.terminate()

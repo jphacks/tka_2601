@@ -250,8 +250,11 @@ void pollServo() {
   }
   if (servoPhase == ServoPhase::Wait && elapsed(millis(), servoAt, angles.callDelayMs)) {
     if (!beginPhysicalServo()) {
-      if (servoTesting) { servoTestCancelled = true; neutralServo(); }
-      else startPressFailed();
+      if (servoTesting) {
+        servoTestCancelled = true;
+        neutralServo();
+        if (servoPhase == ServoPhase::Idle) servoTesting = false; // nothing moved: calls must not stay blocked
+      } else startPressFailed();
     } else setStatus("Pressing call button once");
   } else if (servoPhase == ServoPhase::Press && elapsed(millis(), servoAt, motion.holdMs)) {
     neutralServo();

@@ -12,7 +12,8 @@
 #define XIAO_SERVO_MIN_US 1000
 #define XIAO_SERVO_MAX_US 2000
 #define XIAO_SERVO_REST_DEG 0
-// The rack moves 4.5 mm x angle in radians, so 30 degrees is 2.4 mm of its 4 to 5 mm travel.
+// The rack moves 4.5 mm x the real shaft angle in radians, against 4 to 5 mm of travel. 30 is 167 us
+// of the 1000 us range; what shaft angle that gives depends on the servo and has not been measured.
 #define XIAO_SERVO_CALL_PRESS_DEG 30
 #define XIAO_SERVO_END_PRESS_DEG 30
 #define XIAO_SERVO_UNLOCK_PRESS_DEG 30

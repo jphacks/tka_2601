@@ -51,5 +51,13 @@ int main() {
   assert(!command("@set c p 77", "pwm_write_failed"));
   assert(command("@get", "\"call_press\":25"));
   assert(command("@cancel")); tick(500);
+  // A test press that cannot attach after its wait must not keep calls blocked until a reboot.
+  assert(command("@begin") && command("@time d 1000") && command("@save") && !servo_calibration_active());
+  assert(servo_test('c') && servo_test_busy());
+  fake::failNextServoAttach = true;
+  tick(1000);
+  assert(!servo_test_busy());
+  assert(servo_call_open());
+  servo_call_close();
   puts("calibration: bounds, isolation, return, persistence, cancel and timeout passed");
 }

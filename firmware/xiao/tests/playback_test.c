@@ -127,10 +127,22 @@ static void stalls_fail_with_a_reason(void)
     frames(0,PLAYBACK_PREBUFFER_FRAMES,640); run(1);
     assert(playback_error() && !strcmp(playback_error(),"speaker_start_failed"));
 }
+/* The call task can store a newer time just after the speaker task read the clock. */
+static void clock_read_before_a_newer_store(void)
+{
+    reset();
+    assert(playback_open(now));
+    frames(0,PLAYBACK_PREBUFFER_FRAMES,640);
+    uint32_t earlier=now-1u;
+    (void)playback_step(earlier);
+    assert(!playback_error());
+    playback_abort();
+}
 int main(void)
 {
     completed_playback(); backpressure_and_credit();
     short_final_frame_and_invalid(); stalls_fail_with_a_reason();
+    clock_read_before_a_newer_store();
     puts("PASS: playback prebuffer, credit, backpressure, DMA drain, underrun and stall failure");
     return 0;
 }

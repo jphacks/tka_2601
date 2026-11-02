@@ -184,6 +184,43 @@ class CalibrationUITests(unittest.TestCase):
         finally:
             link.close(); os.close(slave); os.close(master)
 
+    def test_board_state_clears_what_a_missed_reset_left_behind(self):
+        link, master, slave = open_link()
+        try:
+            link.record('[STATE] busy=0 recovery=0 uptime_ms=90000')
+            link.record('[VOICE] Preparing streaming call.')
+            link.record('[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and reset the board. Diagnostics available.')
+            self.assertTrue(link.snapshot()['recovery_required'])
+            # USB came back after the reset: no boot line was heard, only the answer to 's'.
+            link.record('[STATE] busy=0 recovery=0 uptime_ms=3000')
+            state = link.snapshot()
+            self.assertFalse(state['recovery_required'])
+            self.assertFalse(state['voice_active'])
+            self.assertTrue(any('[BOOT] Network task running' in line['text'] for line in state['lines']))
+            # The same board still in a call keeps saying so, and a USB blip adds no restart.
+            before = len(link.snapshot()['lines'])
+            link.record('[STATE] busy=1 recovery=0 uptime_ms=5000')
+            self.assertTrue(link.snapshot()['voice_active'])
+            self.assertEqual(len(link.snapshot()['lines']), before + 1)
+            link.record('[STATE] busy=1 recovery=1 uptime_ms=6000')
+            state = link.snapshot()
+            self.assertTrue(state['recovery_required'])
+            self.assertFalse(state['voice_active'])
+        finally:
+            link.close();os.close(master);os.close(slave)
+
+    def test_state_is_asked_again_until_the_board_answers(self):
+        link, master, slave = open_link()
+        try:
+            self.assertEqual(read_line(master, 4), b's\n')
+            self.assertEqual(read_line(master, 4), b's\n') # still starting: no answer yet
+            os.write(master, b'[STATE] busy=0 recovery=0 uptime_ms=100\n')
+            deadline = time.monotonic()+2
+            while link.state_due and time.monotonic() < deadline: time.sleep(.01)
+            self.assertEqual(link.state_due, 0)
+        finally:
+            link.close();os.close(master);os.close(slave)
+
     def test_voice_stages_use_the_speaker_on_this_board(self):
         link = SerialLink('/nonexistent-test-port')
         try:
@@ -496,6 +533,7 @@ class BenchPageTests(unittest.TestCase):
             if state['suites']['good']['state'] == 'ok':
                 break
             time.sleep(.02)
+        self.assertEqual(state['suites']['good']['state'], 'ok')
         self.assertEqual(state['suites']['good']['lines'], ['done'])
         self.assertTrue(self.post(url, '/api/tests', {'stop': True})['ok'])
 

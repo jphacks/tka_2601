@@ -57,6 +57,8 @@ class SerialLink:
         self.replies = dict.fromkeys(REPLY_CHANNELS)
         self.reply_sequence = dict.fromkeys(REPLY_CHANNELS, 0)
         self.last_connection_error = None
+        self.state_due = 0 # when to ask again, until the board has told its state since connecting
+        self.last_uptime = None
         self.history = ConversationHistory(history_path)
         self.worker = threading.Thread(target=self.run, daemon=True)
         self.worker.start()
@@ -75,6 +77,9 @@ class SerialLink:
         if not text:
             return
         with self.lock:
+            state = re.match(r'\[STATE\] busy=(\d) recovery=(\d) uptime_ms=(\d+)', text)
+            if state:
+                self.apply_board_state(bool(int(state[1])), bool(int(state[2])), int(state[3]))
             self.history.record(text)
             if any(marker in text for marker in ('Preparing streaming call', 'Listening:', 'Response ')):
                 self.voice_active = True
@@ -123,6 +128,16 @@ class SerialLink:
                     self.stage = stage
                     break
             self.changed.notify_all()
+
+    def apply_board_state(self, busy, recovery, uptime):
+        # USB drops during a reset, so its boot lines can be missed: what the board says now wins.
+        restarted = self.last_uptime is not None and uptime < self.last_uptime
+        self.last_uptime = uptime
+        self.state_due = 0
+        self.voice_active = busy and not recovery
+        self.recovery_required = recovery
+        if restarted:
+            self.record('[MONITOR] [BOOT] Network task running: the board restarted while USB was away.')
 
     def record_reply(self, channel, raw):
         """Deliver one JSON reply to the waiting request; it is not a log line."""
@@ -236,9 +251,14 @@ class SerialLink:
                     self.stage = 'XIAO接続済み・チャイムを待機'
                 self.record('[MONITOR] XIAO USB connected: '+self.port)
                 self.send('s')
+                self.state_due = time.monotonic()+2
                 buffer = bytearray()
                 while not self.stop.is_set():
                     if not select.select([fd], [], [], .2)[0]:
+                        # The board may still have been starting when it was first asked.
+                        if self.state_due and time.monotonic() > self.state_due:
+                            self.state_due = time.monotonic()+2
+                            os.write(fd, b's\n')
                         continue
                     data = os.read(fd, 8192)
                     if not data:

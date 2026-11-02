@@ -66,7 +66,10 @@
     const pushers = Scene.layout(currentSpec(), currentShape()).pushers;
     return (pushers.find(p => p.role === (target === 'c' ? 'talk' : 'end')) || pushers.find(p => p.role === 'talk')).gap;
   }
-  const reachFor = (target, degrees) => rackReach(degrees, Scene.RP, Scene.SHAPES[currentShape()].stroke, keyGap(target));
+  const reachFor = (target, degrees) => {
+    const shape = Scene.SHAPES[currentShape()];
+    return rackReach(degrees, Scene.RP, shape.stroke, keyGap(target), shape.tilt);
+  };
   const rackMm = degrees => Scene.RP * degrees * Math.PI / 180;
 
   // --- The 3D model follows the board.
@@ -118,6 +121,7 @@
     },
   };
 
+  globalThis.MonbanModel = model; // tests/browser/bench.mjs reads what is on screen from here
   const editor = new ServoEditor(api, sleep, changed);
   const servoNames = {c: '通話', e: '終了', u: '解錠'};
   const servoPins = {c: 'GPIO 7', e: 'GPIO 8', u: 'GPIO 9'};
@@ -360,9 +364,10 @@
   function reachText(target, degrees) {
     const reach = reachFor(target, degrees);
     if (reach.gap === null) return {type: 'info', text: 'この構成に解錠を押す部品はありません'};
-    if (reach.over) return {type: 'warning', text: `ラックは ${reach.mm.toFixed(1)} mm 動く計算です。可動は ${reach.stroke} mm までです`};
-    if (reach.short) return {type: 'warning', text: `ラックは ${reach.mm.toFixed(1)} mm です。キーまで ${reach.gap.toFixed(1)} mm あるので届きません`};
-    return {type: 'success', text: `ラックは ${reach.mm.toFixed(1)} mm 動き、キーを ${reach.depth.toFixed(1)} mm 押します`};
+    const assumed = `角度どおりに回れば、ラックは ${reach.mm.toFixed(1)} mm 動きます。`;
+    if (reach.over) return {type: 'warning', text: `${assumed}可動は ${reach.stroke} mm までです`};
+    if (reach.short) return {type: 'warning', text: `${assumed}キーを押すには ${reach.needed.toFixed(1)} mm 要ります`};
+    return {type: 'info', text: `${assumed}キーを押すのに要るのは ${reach.needed.toFixed(1)} mm です。実際の角度は実機で確かめてください`};
   }
   function ServoPage() {
     useStore();

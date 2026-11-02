@@ -65,6 +65,14 @@ static receive_result_t receive(voice_transport_t *l, uint8_t *p, size_t wanted,
     if (n) l->progress=net_now_ms();
     return *used==wanted ? RECEIVE_COMPLETE : RECEIVE_PENDING;
 }
+bool voice_transport_configured(void)
+{
+    if (!DOOR_API_HOST[0] || strlen(DOOR_API_HOST)>127 || strlen(DOOR_API_KEY)<32 || strlen(DOOR_API_KEY)>511) return false;
+    for (const char *p=DOOR_API_KEY;*p;++p) if ((unsigned char)*p<33 || (unsigned char)*p>126) return false;
+    for (const char *p=DOOR_API_HOST;*p;++p)
+        if (!((*p>='a'&&*p<='z') || (*p>='A'&&*p<='Z') || (*p>='0'&&*p<='9') || *p=='-' || *p=='.')) return false;
+    return true;
+}
 bool voice_transport_server(voice_transport_t *l)
 {
     if (!voice_relay_settings_valid(DOOR_RELAY_MODE,device_key(l))) {
@@ -73,11 +81,7 @@ bool voice_transport_server(voice_transport_t *l)
     }
     if (l->diagnostic || !DOOR_DEVICE_KEY[0])
         xlog("[VOICE] Unpaired diagnostic session; resident settings/history unavailable.\n");
-    if (!DOOR_API_HOST[0] || strlen(DOOR_API_HOST)>127 || strlen(DOOR_API_KEY)<32 || strlen(DOOR_API_KEY)>511)
-        return false;
-    for (const char *p=DOOR_API_KEY;*p;++p) if ((unsigned char)*p<33 || (unsigned char)*p>126) return false;
-    for (const char *p=DOOR_API_HOST;*p;++p)
-        if (!((*p>='a'&&*p<='z') || (*p>='A'&&*p<='Z') || (*p>='0'&&*p<='9') || *p=='-' || *p=='.')) return false;
+    if (!voice_transport_configured()) return false;
     l->socket=net_stream_open(DOOR_API_HOST,443,DOOR_ROOT_CA_PEM);
     if (!l->socket) {
         xlog("[VOICE] TLS connection failed.\n");

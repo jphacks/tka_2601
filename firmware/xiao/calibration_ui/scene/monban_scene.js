@@ -85,10 +85,11 @@
       buttons: [key('画面の解錠', 'unlock', -72, 50, 34, 14, { r: 3, h_up: 0.5 }), key('画面の話す', 'talk', 72, 50, 34, 14, { r: 3, h_up: 0.5 })] },
   });
   // ---- the numbers the CAD scripts share
-  const Y_RC = -13.60625, RP = 4.5, YS = 6.09375, ZS = 7.0375, KEY_TRAVEL = 1.0, MAIN_W = 30, RAIL_Y = 42, GT = 3, HR = 2.34375;
+  const RP = 4.5, YS = 6.09375, ZS = 7.0375, KEY_TRAVEL = 1.0, MAIN_W = 30, RAIL_Y = 42, GT = 3, HR = 2.34375;
   const SHAPES = {
-    bird: { xc: -9.65, w: 30, y0: -18.46, y1: 14.1, railEnd: 21, stroke: 5 },
-    capsule: { xc: -9.75, w: 25.8, y0: -18.0625, y1: 13, railEnd: 13.5, stroke: 4 },
+    bird: { xc: -9.65, w: 30, y0: -18.46, y1: 14.1, rc: 7.5, railEnd: 21, stroke: 5, tilt: 0, yRc: -13.60625, railZ: 1.85 },
+    // capsule/fusion/capsule.py; tilt is its loss at 0.2 mm tunnel clearance, not measured on a part
+    capsule: { xc: -9.65, w: 30, y0: -18.85625, y1: 18.2, archY: 3.2, railEnd: 13.5, stroke: 4, tilt: 0.39, yRc: -13.20625, railZ: 1.6 },
   };
 
   const pressPoint = b => [b.px ?? b.cx, b.py ?? b.cy];
@@ -108,7 +109,7 @@
     const z0 = Math.max(...spec.buttons.map(b => b.h_up ?? 1.6)) + 1.2;
     const rows = keyRows(spec);
     const mean = r => r.reduce((a, b) => a + pressPoint(b)[1], 0) / r.length;
-    const ry = rows.length === 1 ? mean(rows[0]) + Y_RC : (mean(rows[0]) + mean(rows[1])) / 2;
+    const ry = rows.length === 1 ? mean(rows[0]) + S.yRc : (mean(rows[0]) + mean(rows[1])) / 2;
     const pushers = [];
     rows.flat().forEach((b, index) => {
       const [qx, qy] = pressPoint(b);
@@ -119,7 +120,7 @@
         const cost = s => { const xc = qx + s * shift + s * S.xc; return Math.max(Math.abs(xc) + S.w / 2 - (W / 2 - 0.5), 0) * 100 + Math.abs(xc); };
         sx = cost(1) <= cost(-1) ? 1 : -1;
       }
-      pushers.push({ button: b, role: b.role, index, qx, qy, hang, sx, sy, px: qx + sx * shift, py: ry + sy * -Y_RC, gap: z0 + 0.3 - (b.h_up ?? 1.6) });
+      pushers.push({ button: b, role: b.role, index, qx, qy, hang, sx, sy, px: qx + sx * shift, py: ry + sy * -S.yRc, gap: z0 + 0.3 - (b.h_up ?? 1.6) });
     });
     const xb = W / 2 + 13 + 1.5 + MAIN_W / 2;
     return { z0, ry, rows: rows.length, pushers, xb, x0: -W / 2 - 11.4, x1: xb + S.railEnd, mainBottom: shapeName === 'bird' ? ry - 7.7 : ry - RAIL_Y };
@@ -134,7 +135,14 @@
       return { xc: p.px + p.sx * S.xc, y0: Math.min(a, b), y1: Math.max(a, b), r: S.w / 2 };
     };
     const bodies = L.pushers.map(body);
-    const inBody = (x, y, c) => Math.hypot(x - c.xc, y - Math.min(Math.max(y, c.y0 + c.r), c.y1 - c.r)) <= c.r;
+    // The outline in the part's own frame: an arch for the capsule, a rounded box for the bird.
+    const inPart = (x, y, p) => {
+      const lx = (x - p.px) / p.sx - S.xc, ly = (y - p.py) / p.sy, half = S.w / 2;
+      if (Math.abs(lx) > half || ly < S.y0 || ly > S.y1) return false;
+      if (S.archY !== undefined) return ly <= S.archY || Math.hypot(lx, ly - S.archY) <= half;
+      const dx = Math.abs(lx) - (half - S.rc), dy = Math.max(ly - (S.y1 - S.rc), S.y0 + S.rc - ly);
+      return dx <= 0 || dy <= 0 || Math.hypot(dx, dy) <= S.rc;
+    };
     const hidden = (cx, cy, w, h, round) => {
       let total = 0, hit = 0;
       for (let i = 0; i < 13; ++i) for (let j = 0; j < 13; ++j) {
@@ -142,7 +150,7 @@
         if (round && Math.hypot(u, v) > w / 2) continue;
         const x = cx + u, y = cy + v;
         total++;
-        if (bodies.some(c => inBody(x, y, c)) || (x >= L.x0 && x <= L.x1 && Math.abs(y - L.ry) <= 3)) hit++;
+        if (L.pushers.some(p => inPart(x, y, p)) || (x >= L.x0 && x <= L.x1 && Math.abs(y - L.ry) <= 3)) hit++;
       }
       return Math.round(100 * hit / total);
     };
@@ -345,7 +353,7 @@
       group.add(m.root);
       mechs[p.role] = { ...m, p };
     });
-    group.add(slab(L.x0, L.ry - 3, L.z0 + 1.85, L.x1, L.ry + 3, L.z0 + 7.85, 0.8, 0.6, mats.cream));
+    group.add(slab(L.x0, L.ry - 3, L.z0 + SHAPES.bird.railZ, L.x1, L.ry + 3, L.z0 + SHAPES.bird.railZ + 6, 0.8, 0.6, mats.cream));
     paws(group, spec, L, mats.orange);
     const parent = new T.Group(); parent.position.set(L.xb, L.ry, L.z0 - 2.8);
     [['back', mats.orange], ['front', mats.orange], ['belly', mats.cream], ['beak', mats.deep], ['cheeks', mats.cheek],
@@ -363,7 +371,7 @@
       group.add(m.root);
       mechs[p.role] = { ...m, p };
     });
-    group.add(slab(L.x0, L.ry - 3, L.z0 + 1.85, L.x1, L.ry + 3, L.z0 + 7.85, 0.5, 0.4, mats.shell));
+    group.add(slab(L.x0, L.ry - 3, L.z0 + SHAPES.capsule.railZ, L.x1, L.ry + 3, L.z0 + SHAPES.capsule.railZ + 6, 0.5, 0.4, mats.shell));
     paws(group, spec, L, mats.shell);
     const main = new T.Group(); main.position.set(L.xb, L.ry - RAIL_Y, L.z0);
     main.add(mesh(cadGeometry('main_back'), mats.shell), mesh(cadGeometry('main_front'), mats.shell));
@@ -427,6 +435,7 @@
       if (intercomGroup) { scene.remove(intercomGroup); disposeTree(intercomGroup); }
       if (product) { scene.remove(product.group); disposeTree(product.group); }
       spec = customize(intercomId, change || {});
+      for (const role of Object.keys(press)) { press[role] = pressTarget[role] = 0; reach[role] = null; }
       const design = DESIGNS[designId];
       if (design.shape === 'capsule') {
         Object.assign(mats.shell.color, new T.Color(design.color));
@@ -592,6 +601,11 @@
       },
       look(name) { const role = roleOf(name); focus(role); },
       gap(name) { const role = roleOf(name); return role ? product.mechs[role].p.gap : null; },
+      // What the model is showing now, as drawn in the last frame.
+      pose() {
+        const rack = role => product.mechs[role] ? -product.mechs[role].rack.position.z : 0;
+        return { talk: rack('talk'), end: rack('end'), screen: screenState, sound: source ? source.name : null };
+      },
       setXray(on) { xray = on; },
       setScreen(state) {
         if (state === 'call' && screenState !== 'call') callStart = performance.now();

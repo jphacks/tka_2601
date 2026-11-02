@@ -2,7 +2,8 @@
 """Exact CAD STLs -> small web meshes: weld and cluster vertices on a size-dependent grid, then base64.
 
 python3 make_meshes.py hardware/dango_proto/stl hardware/capsule monban_meshes.js
-Run again when the printed parts change; the positions in monban_scene.js come from the same CAD scripts.
+Run again when the printed parts change, then update SHAPES in monban_scene.js from the CAD scripts.
+tests/ui_test.mjs fails while the meshes and SHAPES disagree.
 """
 import base64, json, pathlib, struct, sys
 import numpy as np

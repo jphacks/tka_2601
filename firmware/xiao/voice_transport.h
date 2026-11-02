@@ -16,6 +16,7 @@ typedef struct {
 } voice_transport_t;
 typedef struct { voice_header_t header; uint8_t payload[VOICE_PAYLOAD]; } voice_packet_t;
 void voice_transport_init(voice_transport_t *link);
+bool voice_transport_configured(void);
 bool voice_transport_server(voice_transport_t *link);
 void voice_transport_close(voice_transport_t *link);
 bool voice_transport_legacy(const voice_transport_t *link);

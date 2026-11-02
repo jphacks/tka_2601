@@ -29,6 +29,7 @@ static volatile uint8_t probe_requested;
 enum { PROBE_API=1, PROBE_SPEAKER, PROBE_LOOPBACK };
 
 bool voice_stream_busy(void) { return busy; }
+bool voice_stream_recovery_required(void) { return recovery_required; }
 void voice_stream_request_call(void) {
     if (!recovery_required) start_requested=true;
     else xlog("[VOICE] Recovery required; check intercom and reset the board before a new call.\n");
@@ -321,6 +322,12 @@ static bool run_call(uint32_t session)
     const char *reason="capture_pause_failed";
     xlog("[VOICE] Preparing streaming call.\n");
     if (!pause_capture(true)) goto cleanup;
+    /* Without valid settings no call can follow: leave the intercom alone instead of answering and hanging up. */
+    reason="api_settings_missing";
+    if (!voice_transport_configured()) {
+        xlog("[VOICE] API settings missing/invalid: call button not pressed.\n");
+        goto cleanup;
+    }
     /* Complete the physical button operation before starting an agent. */
     reason="servo_busy";
     if (!servo_call_open()) goto cleanup;
