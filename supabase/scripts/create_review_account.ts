@@ -23,7 +23,7 @@ async function connection(): Promise<{ url: string; secret: string; publishable:
       publishable: required(status, "PUBLISHABLE_KEY", "supabase status"),
     };
   }
-  const output = await supabaseCli(["projects", "api-keys", "--project-ref", CLOUD_REF, "-o", "json"]);
+  const output = await supabaseCli(["projects", "api-keys", "--reveal", "--project-ref", CLOUD_REF, "-o", "json"]);
   const keys = JSON.parse(output) as { type: string; api_key: string }[];
   const keyOf = (type: string) => {
     const key = keys.find((k) => k.type === type)?.api_key;
