@@ -43,9 +43,9 @@ MONBAN is an app for small shops (nail salons, massage shops, cram schools).
 A hardware unit attached to the shop's intercom answers visitors with AI and
 records the visits and reservations. This app shows them to the shop owner.
 
-The review team does not need the hardware. The demo account below already has
-sample reservations, visit records and notifications, so every screen has data.
-The app is available in Japanese only.
+The review team does not need the hardware. The demo account in the sign-in
+information already has sample reservations, visit records and notifications,
+so every screen has data. The app is available in Japanese only.
 
 How to review:
 1. Log in with the demo account.
@@ -58,13 +58,13 @@ How to review:
 Visitor handling requires the hardware, so it cannot be tested without it.
 Account deletion is in the Settings tab. It removes the demo account and its
 sample data, so please test it last.
-
-Demo account:
-  Email:    appreview@example.com
-  Password: (shown once by create_review_account.ts)
 ```
 
-審査用のアカウントのパスワードは、App Store Connect の Review Notes とログイン情報の欄にだけ入れる。このリポジトリには書かない。審査が長引いて日付が古くなったら、同じコマンドをもう一度実行する。パスワードは変わらず、デモデータの日付だけが今日を基準に更新される。審査でアカウントが削除されていたら、同じコマンドで新しいパスワードのアカウントができる。
+### Sign-In Information
+
+ユーザー名は `appreview@example.com` で、パスワードは `create_review_account.ts` が初回に表示したものを使う。
+
+審査用のアカウントのパスワードは、App Store Connect の Sign-In Information の欄にだけ入れる。このリポジトリには書かない。審査が長引いて日付が古くなったら、同じコマンドをもう一度実行する。パスワードは変わらず、デモデータの日付だけが今日を基準に更新される。審査でアカウントが削除されていたら、同じコマンドで新しいパスワードのアカウントができる。
 
 ## 外部テストのあとで残すこと
 
