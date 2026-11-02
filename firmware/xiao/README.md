@@ -14,6 +14,7 @@ XIAO がなくても、次のコマンドで試せます。リポジトリのど
 |---|---|---|---|
 | `bash run.sh test` | 各部のホストテストと Web UI のテスト | clang、Python 3、Node.js | 1 分 |
 | `bash run.sh e2e` | 本物の `/api/relay` のコードと、ファームウェアの通話処理をつないだ会話 | 上に加えて uv | 初回は依存の取得が要る |
+| `bash run.sh browser` | 本物の Chromium で Web UI を開き、チャイム登録から通話まで実際にクリックして通す | e2e と同じ。初回は Chromium の取得（約 100 MB）が要る | 2 分 |
 | `bash run.sh qemu` | ESP32-S3 用のバイナリを QEMU で起動し、シリアルで操作 | arduino-cli、Python 3 | 初回は ESP32 コアの取得（数 GB）が要る |
 | `bash run.sh bench` | ブラウザで Web UI を操作する。通話まで動く | e2e と同じ | 起動まで数十秒 |
 | `bash run.sh qemu ui` | ブラウザで Web UI を操作する。相手は QEMU 上の ESP32-S3 用バイナリ | qemu と同じ | 起動まで 1 分ほど |
@@ -22,7 +23,7 @@ Web UI を試す 2 つの違いは次のとおりです。`bench` は Mac 向け
 
 QEMU の本体は初回に公式リリースから `.host-build/` へ取得し、SHA-256 を照合します。対応するのは macOS と Linux です。Windows は WSL で動かしてください。
 
-GitHub では、`firmware/xiao` に触れる PR ごとに `test`、`e2e`、ビルド、`qemu` が自動で動きます。手で動かすときは Actions の「XIAO firmware」から Run workflow を押します。
+GitHub では、`firmware/xiao` に触れる PR ごとに `test`、`e2e`、`browser`、ビルド、`qemu` が自動で動きます。手で動かすときは Actions の「XIAO firmware」から Run workflow を押します。
 
 ## 機能
 
@@ -177,6 +178,7 @@ QEMU には Wi-Fi と I2S のデータがないため、ネットワークと音
   - 3 つのサーボの動作と、シリアルのコマンド
   - NVS への保存と 2 MiB の領域の初期化、電源を入れ直した後の復元
   - ネットワークやマイクがないときに固まらず失敗を報告すること
+- `bash run.sh browser`：Chromium（Playwright）で、全画面の表示と 3D の描画、機種と外装の切り替え、実測値の入力、接続とスピーカーとサーボの確認、チャイム登録、チャイムからの通話、通話の停止、テストの実行と停止、狭い画面幅を確かめ、コンソールにエラーがないことを確認
 - `bash run.sh bench` とブラウザで、Web UI の主な操作（機種と外装の切り替え、まとめて確認、サーボのテスト、チャイム登録、チャイムからの通話とその間の 3D の動き、違う音の判定、テストの実行）
 
 ### 実機で確かめていないこと

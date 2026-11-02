@@ -129,6 +129,8 @@
   // -1 is before the first step: antd always marks one step as current, so the whole bar fades.
   const StepBar = ({names, current}) => h(Steps, {size: 'small', responsive: false, titlePlacement: 'vertical', current: Math.max(current, 0),
     style: current < 0 ? {opacity: 0.4} : undefined, items: names.map(title => ({title}))});
+  // The firmware refuses calls during servo calibration, so a chime would seem to do nothing.
+  const CalibrationNotice = () => h(Notice, {type: 'warning', text: store.device.calibrating ? 'サーボの調整中は通話が始まりません。サーボの画面で保存するか元に戻してください' : ''});
   const Talk = () => {
     const messages = store.conversation?.messages || [];
     return messages.length
@@ -156,7 +158,7 @@
     const label = {xiao: 'XIAO', bench: 'bench', qemu: 'QEMU'}[store.target] || '';
     return h('header', {className: 'bar'},
       h('div', {className: 'brand'}, 'Monban'),
-      h(Select, {'aria-label': 'インターホン', style: {flex: '0 1 340px', minWidth: 200}, value: pref.intercom, options: groups, popupMatchSelectWidth: 340,
+      h(Select, {'aria-label': 'インターホン', style: {flex: '0 1 340px', minWidth: 200}, value: pref.intercom, options: groups, popupMatchSelectWidth: 380, virtual: false, listHeight: 460,
         onChange: intercom => setPref({intercom, measured: null})}),
       h(Select, {'aria-label': '外装', style: {flex: '0 1 200px', minWidth: 170}, value: pref.design,
         options: Object.entries(Scene.DESIGNS).map(([value, design]) => ({value, label: h('span', null, h('span', {className: 'swatch', style: {background: design.swatch}}), design.name)})),
@@ -370,7 +372,7 @@
     const {rest, press} = editor.values[target];
     const angle = (key, label) => ({label, min: 0, max: 180, step: 1, value: editor.values[target][key], text: v => v + '°', less: label + 'を 1° 減らす', more: label + 'を 1° 増やす',
       write: v => editor.setAngleLocal(target, key, v),
-      commit: () => { model.preview(target, key); editor.commitAngle(target, key); }});
+      commit: () => { if (editor.uncommitted.has(target + key)) model.preview(target, key); editor.commitAngle(target, key); }});
     const time = (field, label, min, max) => ({label, min, max, step: 100, value: editor.values[field], text: v => (v / 1000).toFixed(1) + ' 秒', less: label + 'を短く', more: label + 'を長く',
       write: v => editor.setTimingLocal(field, v), commit: () => editor.commitTiming(field)});
     const controls = [angle('rest', '待機位置'), angle('press', '押す位置'), time(holdField[target], '押す時間', 100, 2000), time('return_ms', '戻す時間', 100, 3000)];
@@ -509,6 +511,7 @@
           onClick: () => { callError = ''; consoleCommand(device.voiceActive ? 'q' : 'c').catch(error => { callError = error.message; changed(); }); }},
         device.voiceActive ? '通話を止める' : '通話を始める')),
       h(Notice, {text: callError}),
+      h(CalibrationNotice),
       h(Card, {style: {marginBottom: 16}},
         h('div', {role: 'status', 'aria-live': 'polite', style: {fontSize: 22, fontWeight: 700, marginBottom: 16}},
           device.recovery ? '通話の状態が不明です。インターホンを確かめてから本体をリセットしてください' : device.voiceActive ? device.stage : '待機中'),
@@ -531,6 +534,7 @@
     return h(Fragment, null,
       h('div', {className: 'head'}, h('h1', {role: 'status', 'aria-live': 'polite'}, device.voiceActive ? device.stage : '待機中')),
       h(Notice, {text: virtualError}),
+      h(CalibrationNotice),
       target === 'qemu' ? h(Notice, {type: 'info', text: 'QEMU に音声と Wi-Fi はありません。サーボの動きを試せます'}) : null,
       simulated && mic && !mic.model ? h(Notice, {type: 'warning', text: 'チャイムが未登録です。先にチャイムの画面で登録すると、鳴らしたときに通話が始まります'}) : null,
       h(Card, {size: 'small', style: {marginBottom: 16}}, h(StepBar, {names: CALL_STEPS, current: at})),
@@ -601,7 +605,7 @@
       return () => query.removeEventListener('change', update);
     }, []);
     const Page = PAGES[store.page]?.[1];
-    return h(ConfigProvider, {theme: {token: {colorPrimary: '#5E6AD2', colorLink: '#5E6AD2', colorSuccess: '#27A644', colorError: '#FF4D4F', colorText: '#17191E', borderRadius: 8, controlHeight: 40,
+    return h(ConfigProvider, {button: {autoInsertSpace: false}, theme: {token: {colorPrimary: '#5E6AD2', colorLink: '#5E6AD2', colorSuccess: '#27A644', colorError: '#FF4D4F', colorText: '#17191E', borderRadius: 8, controlHeight: 40,
       fontFamily: "-apple-system, system-ui, 'Noto Sans JP', 'Yu Gothic UI', sans-serif"},
       components: {Menu: {itemSelectedBg: '#F0F4FF', itemSelectedColor: '#5E6AD2', itemBorderRadius: 10, itemHeight: 48}}}},
     h(AntApp, null,
@@ -636,6 +640,7 @@
     device.connected = data.connected;
     device.voiceActive = data.voice_active;
     device.recovery = data.recovery_required;
+    device.calibrating = data.calibration_active === true;
     device.stage = data.stage;
     device.logAfter = data.next;
     const texts = data.lines.map(line => line.text);

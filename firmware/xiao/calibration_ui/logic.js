@@ -65,8 +65,9 @@
       this.uncommitted.set(target + position, () => ({action: 'angles', body: {target, ...this.values[target]}}));
       this.changed();
     }
+    // A commit can arrive late, after save or undo took the edit away: it must not restart calibration.
     commitAngle(target, position) {
-      this.uncommitted.delete(target + position);
+      if (!this.uncommitted.delete(target + position)) return Promise.resolve();
       this.pending.set(target + position, {action: 'preview', body: {target, position: position === 'press' ? 'p' : 'r', angle: this.values[target][position]}});
       return this.pump();
     }
@@ -77,7 +78,7 @@
       this.changed();
     }
     commitTiming(field) {
-      this.uncommitted.delete(field);
+      if (!this.uncommitted.delete(field)) return Promise.resolve();
       this.pending.set(field, {action: 'timing', body: {field, value: this.values[field]}});
       return this.pump();
     }

@@ -62,7 +62,9 @@ console.log('Web UI: no queued/retried test press behind a preview passed');
   editor.setAngleLocal('c', 'rest', 170);
   await editor.commitAngle('c', 'rest');
   assert.equal(requests.at(-1).body.position, 'r');
+  editor.setAngleLocal('c', 'press', 41);
   await editor.commitAngle('c', 'press');
+  editor.setTimingLocal('return_ms', 900);
   await editor.commitTiming('return_ms');
   assert.deepEqual(requests.map(r => r.action), ['begin', 'preview', 'preview', 'preview', 'timing']);
 }
@@ -126,6 +128,19 @@ console.log('Web UI: no queued/retried test press behind a preview passed');
   assert.equal(editor.dirty, false);
   assert.equal(editor.values.c.press, 30);
   assert.ok(editor.message.includes('取り消しました'));
+}
+// A step button's delayed commit after undo or save must not restart calibration: it pauses calls.
+for (const finish of ['undo', 'save']) {
+  const {editor, requests} = fixture(action => action === 'cancel' || action === 'save' ? state() : {ok: true});
+  editor.setAngleLocal('c', 'press', 40);
+  editor.setTimingLocal('return_ms', 800);
+  editor.active = true;
+  await editor[finish]();
+  const before = requests.length;
+  await editor.commitAngle('c', 'press');
+  await editor.commitTiming('return_ms');
+  assert.equal(requests.length, before, finish);
+  assert.equal(editor.active, false, finish);
 }
 // Tapping save right after a timing change must not save the old value.
 {

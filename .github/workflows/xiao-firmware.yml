@@ -39,6 +39,15 @@ jobs:
       - run: python -m pip install python-dotenv
       - run: bash firmware/xiao/run.sh test
       - run: bash firmware/xiao/run.sh e2e
+      - run: bash firmware/xiao/run.sh browser
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: bench-page-failure
+          path: |
+            firmware/xiao/.host-build/browser-failure.png
+            firmware/xiao/.host-build/browser-bench.log
+          if-no-files-found: ignore
 
   esp32:
     name: ESP32-S3 build and QEMU

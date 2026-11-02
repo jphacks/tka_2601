@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-usage="Usage: bash run.sh build | test | e2e | bench | qemu [ui] | upload PORT"
+usage="Usage: bash run.sh build | test | e2e | browser | bench | qemu [ui] | upload PORT"
 fqbn="esp32:esp32:XIAO_ESP32S3:PSRAM=opi,PartitionScheme=default_8MB"
 
 build() {
@@ -26,6 +26,7 @@ case "${1:-build}" in
     ;;
   test) bash tests/run.sh ;;
   e2e) bash tests/e2e.sh ;;
+  browser) bash tests/browser.sh ;;
   bench) bash tests/e2e.sh bench ;;
   qemu) bash tests/qemu.sh "${2:-}" ;;
   *) echo "$usage" >&2; exit 1 ;;

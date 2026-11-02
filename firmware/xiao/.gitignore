@@ -13,3 +13,4 @@ build/
 .host-build/
 calibration_ui/.runtime/
 __pycache__/
+node_modules/
