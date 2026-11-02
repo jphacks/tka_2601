@@ -147,18 +147,36 @@ class CalibrationUITests(unittest.TestCase):
             link.record('[SERVER] Authenticated HTTPS status check passed.')
             self.assertEqual(link.snapshot()['stage'], '通話を準備中') # late health response cannot hide a call
             with self.assertRaises(ValueError):
-                link.send('c') # a chime test cannot be silently bypassed with a manual call
-            with self.assertRaises(ValueError):
                 link.send('q\nc')
             for command in ('1', '2', '3', 'r', 'v', 'm'): # servo presses go through @test; the mic has its own reply
                 with self.assertRaises(ValueError):
                     link.send(command)
             link.send('q')
             self.assertEqual(read_line(master), b'q\n')
-            for command in ('e', 'x', 't', 'l'):
+            for command in ('c', 'e', 'x', 't', 'l'):
                 link.send(command)
                 self.assertEqual(read_line(master), command.encode()+b'\n')
                 self.assertIn(f'[WEB] {command}:', link.snapshot()['lines'][-1]['text'])
+        finally:
+            link.close(); os.close(slave); os.close(master)
+
+    def test_storage_format_only_while_the_store_is_unusable(self):
+        link, master, slave = open_link()
+        try:
+            self.assertEqual(read_line(master), b's\n')
+            for storage, formatted in ((b'true', False), (b'false', True)):
+                def device():
+                    self.assertEqual(read_line(master), b'm\n')
+                    os.write(master, b'[DIAG] mic {"status":1,"storage":'+storage+b'}\r\n')
+                worker = threading.Thread(target=device); worker.start()
+                if formatted:
+                    self.assertTrue(link.format_storage()['ok'])
+                    worker.join()
+                    self.assertEqual(read_line(master), b'FORMAT_AUDIO_STORAGE\n')
+                else:
+                    with self.assertRaises(ValueError):
+                        link.format_storage() # a registered chime cannot be erased from the page
+                    worker.join()
         finally:
             link.close(); os.close(slave); os.close(master)
 

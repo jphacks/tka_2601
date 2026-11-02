@@ -1,5 +1,6 @@
 #!/bin/bash
 # Real backend relay code <-> real firmware call code on this Mac. See tests/e2e_relay.py.
+# "bench" instead runs the bench page against the same firmware; see tests/bench_host.py.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python_bin="${XIAO_E2E_PYTHON:-}"
@@ -18,11 +19,11 @@ trap 'rm -rf "${work:?}"' EXIT
 src="$work/src"; mkdir "$src"
 for file in ./*.c ./*.h ./*.cpp; do
   case "$(basename "$file")" in
-    api_config.h|wifi_config.h|upload_config.h|servo_config.h|net_stream.cpp|net_task.cpp|console.cpp|hw_audio.cpp|flash_store.cpp|door_server.c) ;;
+    api_config.h|wifi_config.h|upload_config.h|servo_config.h|net_stream.cpp|net_task.cpp|hw_audio.cpp|flash_store.cpp) ;;
     *) cp "$file" "$src/" ;;
   esac
 done
-cp tests/e2e/api_settings.h tests/e2e/host_firmware.cpp "$src/"
+cp tests/e2e/api_settings.h tests/e2e/host_firmware.cpp tests/stubs/upload_settings.h "$src/"
 mkdir "$src/mbedtls"; cp tests/stubs/mbedtls/*.h "$src/mbedtls/"
 flags=(-g -fsanitize=address,undefined -I"$src" -Itests/fakes)
 objects=()
@@ -30,4 +31,8 @@ for c in "$src"/*.c; do
   clang -std=c11 -Wall -Wextra -Werror "${flags[@]}" -c "$c" -o "${c%.c}.o"; objects+=("${c%.c}.o")
 done
 clang++ -std=c++17 -Wall -Wextra "${flags[@]}" "$src"/*.cpp "${objects[@]}" -o "$work/host_firmware"
-"$python_bin" tests/e2e_relay.py "$work/host_firmware"
+if [ "${1:-}" = bench ]; then
+  "$python_bin" tests/bench_host.py "$work/host_firmware"
+else
+  "$python_bin" tests/e2e_relay.py "$work/host_firmware"
+fi

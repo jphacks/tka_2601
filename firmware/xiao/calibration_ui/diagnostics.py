@@ -82,10 +82,10 @@ class Diagnostics:
             has_ip = False
         if data.get('connected') is not True or not has_ip:
             return 'failed', 'Wi-Fi未接続、またはIPアドレスを取得できていません。'
-        detail = f"AP接続・IP取得済み：{data['ip']} ／ ゲートウェイ {data.get('gateway', '不明')}"
+        detail = data['ip']
         if type(data.get('rssi')) is int and data.get('rssi_valid', True):
-            detail += f" ／ 電波強度 {data['rssi']} dBm"
-        return 'ok', detail+'。データの往復はHTTPS・WebSocketの項目で確認できます。'
+            detail += f" / {data['rssi']} dBm"
+        return 'ok', detail
 
     def _run(self, key):
         if key == 'usb':
@@ -95,7 +95,7 @@ class Diagnostics:
             reply = self.link.command('@get')
             if reply.get('ok') is not True or not isinstance(reply.get('saved'), dict):
                 raise ValueError('XIAOから設定読み戻しの正常応答がありません。')
-            return 'ok', 'XIAOのUSB診断応答・本体設定の読み戻しに成功しました。'
+            return 'ok', '設定を読み出せる'
         if key == 'wifi':
             _, line = self.link.exchange('n', lambda t: t.startswith('[DIAG] wifi '), 8)
             return self.wifi_result(json.loads(line[len('[DIAG] wifi '):]))
@@ -112,11 +112,11 @@ class Diagnostics:
                     if body.get('ready') is False:
                         return 'warning', 'HTTPS・API認証・HTTP 200は成功しましたが、音声サービスに未準備の項目があります。'
                     break
-            return 'ok', 'XIAOで証明書を検証し、API認証付き /api/status のHTTP 200応答を確認しました。'
+            return 'ok', 'HTTP 200'
         if key == 'api_wss':
             _, line = self.link.exchange('w', lambda t: t.startswith('[API WSS] ') and 'checking;' not in t, 85)
             if line.startswith('[API WSS] OK:'):
-                return 'ok', '音声用WebSocketのTLS・API認証・READY・PING/PONGに成功しました。会話は開始していません。'
+                return 'ok', 'ready / ping 成功'
             if line == '[API WSS] busy':
                 return 'blocked', '通話終了後に確認してください。'
             return 'failed', '音声用WebSocketの接続・認証・READY応答に失敗しました。実機ログを確認してください。'
@@ -125,7 +125,7 @@ class Diagnostics:
             if line == '[DIAG] speaker busy':
                 return 'blocked', '通話や別の音声処理が終了してから確認してください。'
             if line == '[DIAG] speaker ok=1':
-                return 'ok', 'トーンの出力が完了しました。音が聞こえなければ配線と音量を確認してください。'
+                return 'ok', '1 kHz を 1 秒'
             return 'failed', 'スピーカーへの出力に失敗しました：'+line.removeprefix('[DIAG] speaker ok=0 ').removeprefix('[DIAG] speaker ')
         if key == 'loopback':
             _, line = self.link.exchange('l', lambda t: t.startswith('[DIAG] loopback ') and
@@ -133,7 +133,7 @@ class Diagnostics:
             if line == '[DIAG] loopback busy':
                 return 'blocked', '通話や別の音声処理が終了してから確認してください。'
             if line == '[DIAG] loopback ok=1':
-                return 'ok', '録音と再生が完了しました。自分の声が聞こえたかを確認してください。'
+                return 'ok', '3 秒録音して再生'
             return 'failed', 'マイクの録音またはスピーカーへの再生に失敗しました：'+line.removeprefix('[DIAG] loopback ok=0 ').removeprefix('[DIAG] loopback ')
         raise ValueError('不明な診断項目です。')
 

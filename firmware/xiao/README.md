@@ -14,7 +14,7 @@ E84 と M5Stack に分かれていた機能を、Seeed XIAO ESP32S3（無印）1
 | 会話 | `/api/relay` と WSS で接続。16 kHz、16 bit、モノラルの PCM を 20 ms（640 B）ごとに送受信 | `PSOC_Edge_E84` |
 | 再生 | I2S で再生し、DMA が空になってから完了を報告 | `M5Stack_Basic_E84_Link` |
 | サーボ | 押して戻す動作、角度と時間の調整、USB からのテスト | `M5Stack_Basic_E84_Link` |
-| 調整用 Web UI | Mac の `calibration_ui/` が USB シリアルで本体とやり取りする | `M5Stack_Basic_E84_Link` |
+| 確認と調整の Web UI | Mac の `calibration_ui/` が USB シリアルで本体とやり取りする | `M5Stack_Basic_E84_Link` を作り直した |
 
 E84 と M5 の間の UDP 通知と TCP 中継（DVS1）は削除しました。通話の処理が、サーボとスピーカーを直接動かします。
 
@@ -74,14 +74,21 @@ python3 configure_upload.py --ca /path/to/receiver-root-ca.pem
 
 ## 最初に動かす手順
 
-1. `python3 calibration_ui/server.py --serial-port /dev/cu.usbmodem1101` を実行し、`http://127.0.0.1:8767` を開きます。
-2. シリアルに `FORMAT_AUDIO_STORAGE` を送り、保存領域を初期化します。登録とチャイムの録音が消えるため、画面のボタンにはしていません。
-3. サーボのホーンを外した状態で角度を合わせ、本体に保存します。
-4. `t` でスピーカー、`l` でマイクからスピーカーまでを確かめます。
-5. `e` でチャイムを登録します。
-6. `c` でテスト通話をします。
+`python3 calibration_ui/server.py --serial-port /dev/cu.usbmodem1101` を実行し、`http://127.0.0.1:8767` を開きます。あとは画面の順に進めます。
 
-調整用の Web UI は、今は移植したままの画面です。使いやすくした新しい画面はデザインの確認待ちです。
+| 画面 | できること |
+|---|---|
+| 動作確認 | 通信、マイク、スピーカー、サーボ、チャイム、通話を順に確かめる。音と動きは「聞こえた」「動いた」で答える |
+| サーボ | 通話、終了、解錠の角度と時間を合わせて本体に保存する。ホーンを外した状態で始める |
+| 音 | マイクの音量を見ながら話し始めの音量を決める。スピーカーの音量とチャイムの判定幅を変える |
+| チャイム | 案内に従って登録する。保存領域が未初期化なら、そのときだけ初期化のボタンが出る |
+| テスト通話 | 通話を始める、止める。進行状況、会話、本体のログを見る |
+
+実機がなくても、この画面を次のコマンドで動かせます。本物のファームウェアのコードと中継のコードを Mac 上で動かします。マイク、スピーカー、PWM は模擬で、音声 AI は決まった応答に置き換えています。表示された `kill -USR1` のコマンドで、チャイムを鳴らせます。
+
+```bash
+bash run.sh bench
+```
 
 ## シリアルのコマンド
 
@@ -101,7 +108,7 @@ python3 configure_upload.py --ca /path/to/receiver-root-ca.pem
 | `n` `a` `w` `u` | Wi-Fi、サーバーの HTTPS、音声の WSS、USB の確認 |
 | `@get` `@begin` `@set` `@angles` `@time` `@test` `@stop` `@mirror e` `@save` `@cancel` | サーボの調整。M5 と同じ形で、`u`（解錠）を足した |
 | `@tune get`、`@tune volume 0..100`、`@tune gate 30..32767`、`@tune margin 50..200` | 音量、話し始めの音量、チャイムの判定幅。すぐに NVS へ保存する |
-| `FORMAT_AUDIO_STORAGE` | 保存領域を消去して初期化する |
+| `FORMAT_AUDIO_STORAGE` | 保存領域を消去して初期化する。Web UI からは未初期化のときだけ送れる |
 
 ## テスト
 
@@ -128,6 +135,7 @@ bash run.sh e2e
 - `esp32:esp32:XIAO_ESP32S3` 向けのビルド（プログラム 32%、静的 RAM 60%）
 - `bash run.sh test`：すべて成功
 - `bash run.sh e2e`：5 件すべて成功
+- `bash run.sh bench` とブラウザで、5 つの画面の主な操作（まとめて確認、音の確認、サーボの保存、チャイム登録、チャイムからの通話、通話の停止）
 
 ### 実機で確かめていないこと
 

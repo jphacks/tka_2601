@@ -26,10 +26,11 @@ void help() {
 void micStatus() {
   volatile audio_link_t* s = audio_link();
   audio_link_acquire();
-  xlog("[DIAG] mic {\"status\":%lu,\"rms\":%.1f,\"pcm_min\":%ld,\"pcm_max\":%ld,\"errors\":%lu,\"detected\":%lu,\"last_score\":%.3f,\"model\":%s,\"threshold\":%.3f,\"gate\":%.1f}\n",
+  xlog("[DIAG] mic {\"status\":%lu,\"rms\":%.1f,\"pcm_min\":%ld,\"pcm_max\":%ld,\"errors\":%lu,\"detected\":%lu,\"last_score\":%.3f,\"model\":%s,\"threshold\":%.3f,\"gate\":%.1f,\"storage\":%s}\n",
     (unsigned long)s->audio_status, (double)s->last_rms, (long)s->pcm_min, (long)s->pcm_max,
     (unsigned long)s->capture_errors, (unsigned long)s->detected_count, (double)s->last_score,
-    audio_app_model_valid() ? "true" : "false", (double)audio_app_threshold(), (double)audio_app_gate());
+    audio_app_model_valid() ? "true" : "false", (double)audio_app_threshold(), (double)audio_app_gate(),
+    audio_storage_ready() ? "true" : "false");
 }
 void execute(const char* text) {
   if (text[0] == '@') {

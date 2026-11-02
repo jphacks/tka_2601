@@ -1,13 +1,17 @@
 // Runs the firmware's real call, relay, WebSocket, playback, audio and servo code
 // on the Mac against a real server process. Only the hardware is replaced: TCP
 // without TLS, a clock-driven speaker, a scripted microphone, and fake PWM/NVS.
+#include "console.h"
+#include "net_task.h"
 #include "servo_control.h"
 #include "tune.h"
 #include "voice_stream.h"
 #include "voice_transport.h"
 #include "playback.h"
 #include "net_state.h"
+#include "xlog.h"
 extern "C" {
+#include "door_server.h"
 #include "audio_app.h"
 #include "audio_link.h"
 #include "audio_upload.h"
@@ -24,27 +28,16 @@ extern "C" {
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <queue>
+#include <signal.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
 
-static std::mutex logLock;
 static auto startedAt = std::chrono::steady_clock::now();
 static uint32_t nowMs() {
   return 1000u + static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startedAt).count());
 }
-extern "C" void xlog(const char* format, ...) {
-  char text[1400];
-  va_list arguments;
-  va_start(arguments, format);
-  vsnprintf(text, sizeof(text), format, arguments);
-  va_end(arguments);
-  std::lock_guard<std::mutex> guard(logLock);
-  printf("%s", text);
-  fflush(stdout);
-}
-
 // --- Network: same contract as net_stream.cpp, without TLS.
 static uint16_t serverPort = 0;
 struct net_stream { int fd; };
@@ -77,8 +70,6 @@ void net_random(void* out, size_t length) { arc4random_buf(out, length); }
 uint32_t net_now_ms(void) { return nowMs(); }
 void net_sleep_ms(uint32_t ms) { usleep(ms * 1000u); }
 bool net_voice_ready(void) { return true; }
-bool audio_upload_configured(void) { return false; }
-bool audio_upload(audio_store_t*, unsigned) { return false; }
 // Real SHA-1 and base64: uvicorn's handshake answer is checked against these.
 int mbedtls_base64_encode(unsigned char* out, size_t capacity, size_t* written, const unsigned char* in, size_t n) {
   static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -119,6 +110,19 @@ int mbedtls_sha1(const unsigned char* in, size_t n, unsigned char out[20]) {
 }
 }
 
+// --- Same reports as net_task.cpp, for the loopback "network".
+static std::atomic<bool> apiProbe{false};
+void net_request_api_probe(void) {
+  if (voice_stream_busy()) xlog("[DIAG] api_https busy\n");
+  else apiProbe = true;
+}
+void net_report_wifi(void) {
+  xlog("[DIAG] wifi {\"connected\":true,\"ip\":\"127.0.0.1\",\"gateway\":\"127.0.0.1\",\"rssi\":-50,\"rssi_valid\":true}\n");
+}
+void net_report_calibration(void) {
+  xlog("[CAL] {\"ok\":true,\"diagnostic\":\"wifi\",\"connected\":true,\"ip\":\"127.0.0.1\",\"gateway\":\"127.0.0.1\",\"rssi\":-50,\"wss_ready\":true}\n");
+}
+
 // --- Speaker: consumes at the real 16 kHz rate and keeps the PCM for checks.
 static std::atomic<uint64_t> spokenSamples{0};
 static std::atomic<unsigned> speakerStarts{0}, speakerStops{0};
@@ -135,6 +139,7 @@ static const playback_sink_t sink = {sinkStart, sinkWrite, sinkStop, 130u};
 static std::mutex commandLock;
 static std::queue<char> commands;
 static std::atomic<bool> running{true}, ringBell{false};
+static std::atomic<int> ambient{0};
 extern "C" bool audio_app_post_command(char command) {
   std::lock_guard<std::mutex> guard(commandLock);
   commands.push(command);
@@ -145,7 +150,10 @@ static void bellFrame(unsigned f, unsigned total, float gain) {
   const float hz = f >= total / 2 ? 880.0f : 1320.0f;
   for (unsigned i = 0; i < AUDIO_FRAME; ++i) pcm[i] = static_cast<int16_t>(gain * sinf(6.2831853f * hz * (f * AUDIO_FRAME + i) / AUDIO_RATE));
 }
-static void silenceFrame() { memset(pcm, 0, sizeof(pcm)); }
+static void silenceFrame() {
+  const int level = ambient;
+  for (unsigned i = 0; i < AUDIO_FRAME; ++i) pcm[i] = level ? static_cast<int16_t>(arc4random_uniform(2 * level) - level) : 0;
+}
 static void feed() {
   audio_app_service();
   audio_app_frame(pcm, false);
@@ -201,6 +209,25 @@ static bool waitFor(bool (*condition)(), uint32_t ms) {
   return true;
 }
 
+// The whole firmware behind a serial port, for working on the bench page without
+// a board. kill -USR1 rings the chime.
+static void bench() {
+  ambient = 40;
+  signal(SIGUSR1, [](int) { ringBell = true; });
+  console_begin();
+  xlog("[BOOT] Network task running.\n");
+  xlog("[OK] Wi-Fi connected + DHCP OK. IP: 127.0.0.1\n");
+  for (;;) {
+    console_poll();
+    if (apiProbe.exchange(false)) {
+      xlog("[DIAG] api_https checking\n");
+      const bool ok = door_server_check();
+      xlog("[DIAG] api_https ok=%u\n", ok ? 1u : 0u);
+    }
+    usleep(2000);
+  }
+}
+
 int main(int argc, char** argv) {
   assert(argc == 3);
   serverPort = static_cast<uint16_t>(atoi(argv[1]));
@@ -216,13 +243,15 @@ int main(int argc, char** argv) {
   audio_app_init(ring, pending, false);
   storage_worker_begin(audio_flash_t{flashRead, flashWrite, flashErase}, true);
   playback_init(&sink);
-  enrollAtFullSpeed();
+  if (scenario != "bench") enrollAtFullSpeed();
 
   std::thread speaker([] { while (running) { fake::now = nowMs(); if (!playback_step(nowMs())) usleep(2000); } });
   std::thread servo([] { while (running) { fake::now = nowMs(); servo_poll(); usleep(2000); } });
   std::thread audio(audioTask);
+  std::thread storage([] { while (running) { storage_worker_step(); usleep(100000); } });
   std::thread call([] { voice_stream_task(nullptr); });
   usleep(300000);
+  if (scenario == "bench") bench();
 
   static auto busy = [] { return voice_stream_busy(); };
   static auto idle = [] { return !voice_stream_busy(); };

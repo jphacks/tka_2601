@@ -54,7 +54,7 @@ class DiagnosticTests(unittest.TestCase):
             self.assertTrue(post('usb',base)['ok']);finished(diagnostics)
             result=json.load(urllib.request.urlopen(base+'/api/diagnostics'))
             self.assertEqual(result['results']['usb']['state'],'ok')
-            response=urllib.request.urlopen(base+'/diagnostics.js')
+            response=urllib.request.urlopen(base+'/app.js')
             self.assertIn('javascript',response.headers['Content-Type'])
         finally:
             diagnostics.close();server.shutdown();server.server_close();worker.join()
@@ -92,7 +92,7 @@ class DiagnosticTests(unittest.TestCase):
         state, detail = Diagnostics.wifi_result({'connected':True,'ip':'172.20.10.2','rssi':0,'rssi_valid':False})
         self.assertEqual(state, 'ok')
         self.assertNotIn('0 dBm', detail)
-        self.assertIn('HTTPS',detail)
+        self.assertEqual(detail,'172.20.10.2')
 
     def test_call_and_concurrent_checks_are_blocked_without_sending(self):
         link = FakeLink()

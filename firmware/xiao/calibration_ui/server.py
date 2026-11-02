@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local slider UI for XIAO USB servo calibration (Python standard library only)."""
+"""Local bench UI for checking and tuning the XIAO over USB (Python standard library only)."""
 import argparse
 from collections import deque
 from datetime import datetime
@@ -22,6 +22,9 @@ from diagnostics import Diagnostics, DiagnosticBusy
 
 # Lines answering one request; they are returned to the caller, not kept in the log.
 REPLY_CHANNELS = ('[CAL]', '[DIAG] mic')
+STATIC_FILES = {'/': ('index.html', 'text/html; charset=utf-8'),
+                '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+                '/logic.js': ('logic.js', 'text/javascript; charset=utf-8')}
 
 
 class SerialLink:
@@ -84,6 +87,7 @@ class SerialLink:
             for marker, stage in [
                 ('[DETECTED]', 'チャイムを検知しました'),
                 ('[BOOT] Network task running', 'XIAO起動中・ネットワーク接続待ち'),
+                ('[OK] Wi-Fi connected', 'チャイム待機中'),
                 ('Authenticated HTTPS status check passed', 'チャイム待機中（Wi-Fi・サーバー接続OK）'),
                 ('Preparing streaming call', '通話を準備中'),
                 ('Waiting for one call-button', '設定した時間を待ち、通話ボタンを1回押して戻します'),
@@ -138,13 +142,13 @@ class SerialLink:
                     'lines': [line.copy() for line in self.lines if line['id'] > after]}
 
     def send(self, command):
-        if command not in ('s', 'e', 'x', 'q', 'u', 'n', 'a', 'w', 't', 'l'):
+        if command not in ('s', 'c', 'e', 'x', 'q', 'u', 'n', 'a', 'w', 't', 'l'):
             raise ValueError('使用できないXIAOコマンドです。')
         with self.lock:
             if self.fd is None:
                 raise OSError('XIAOがUSB接続されていません。')
             os.write(self.fd, (command+'\n').encode('ascii'))
-        self.record(f'[WEB] {command}: '+{'s': '状態確認', 'e': 'チャイム登録を開始', 'x': 'チャイム登録・サーボテストを中止', 'q': '通話終了要求',
+        self.record(f'[WEB] {command}: '+{'s': '状態確認', 'c': 'テスト通話を開始', 'e': 'チャイム登録を開始', 'x': 'チャイム登録・サーボテストを中止', 'q': '通話終了要求',
             'u': 'XIAO USB応答確認', 'n': 'XIAO Wi-Fi確認', 'a': 'API HTTPS確認', 'w': 'API WebSocket確認',
             't': 'スピーカーのトーン確認', 'l': 'マイク→スピーカーのループバック確認'}[command])
         return {'ok': True}
@@ -190,6 +194,17 @@ class SerialLink:
     def mic(self):
         # Polled about twice a second, so neither the request nor the reply enters the log.
         return self.request('[DIAG] mic', 'm')
+
+    def format_storage(self):
+        # Offered only while the store is unusable, so the page never erases a registered chime.
+        if self.mic().get('storage') is not False:
+            raise ValueError('保存領域は初期化済みです。')
+        with self.lock:
+            if self.fd is None:
+                raise OSError('XIAOがUSB接続されていません。')
+            os.write(self.fd, b'FORMAT_AUDIO_STORAGE\n')
+        self.record('[WEB] 保存領域を初期化')
+        return {'ok': True}
 
     def run(self):
         while not self.stop.is_set():
@@ -361,15 +376,14 @@ def handler_for(link, diagnostics=None):
                 except (OSError, TimeoutError) as error:
                     self.reply(503, {'ok': False, 'error': str(error)})
                 return
-            if self.path == '/':
-                self.reply(200, Path(__file__).with_name('index.html').read_bytes(), 'text/html; charset=utf-8')
+            if self.path in STATIC_FILES:
+                name, content_type = STATIC_FILES[self.path]
+                self.reply(200, Path(__file__).with_name(name).read_bytes(), content_type)
             elif self.path == '/api/state':
                 try:
                     self.reply(200, link.command('@get'))
                 except (OSError, TimeoutError, ValueError) as error:
                     self.reply(503, {'ok': False, 'error': str(error)})
-            elif self.path == '/diagnostics.js':
-                self.reply(200, Path(__file__).with_name('diagnostics.js').read_bytes(), 'text/javascript; charset=utf-8')
             else:
                 self.reply(404, {'ok': False, 'error': 'Not found'})
 
@@ -392,6 +406,11 @@ def handler_for(link, diagnostics=None):
                     return
                 if self.path == '/api/console':
                     self.reply(200, link.send(body.get('command')))
+                    return
+                if self.path == '/api/format':
+                    if body.get('confirm') != 'FORMAT_AUDIO_STORAGE':
+                        raise ValueError('確認の指定がありません。')
+                    self.reply(200, link.format_storage())
                     return
                 command = command_for(self.path[5:], body)
                 self.reply(200, link.command(command))
@@ -420,7 +439,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupt)
     try:
         server = ThreadingHTTPServer(('127.0.0.1', args.http_port), handler_for(link, diagnostics))
-        print(f'XIAO角度調整: http://127.0.0.1:{args.http_port}', flush=True)
+        print(f'MONBAN 調整: http://127.0.0.1:{args.http_port}', flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
