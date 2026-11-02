@@ -1,7 +1,10 @@
 import json
 import os
 import pty
+import re
 import select
+import subprocess
+import sys
 import threading
 import tempfile
 import time
@@ -13,6 +16,7 @@ from conversation_history import ConversationHistory
 from http.server import ThreadingHTTPServer
 
 from server import command_for, handler_for, SerialLink
+from suites import Suites
 
 
 class FakeLink:
@@ -424,6 +428,76 @@ class CalibrationUITests(unittest.TestCase):
             self.assertFalse(post(url, 'save', {})['active'])
         finally:
             server.shutdown(); server.server_close(); worker.join()
+
+
+class BenchPageTests(unittest.TestCase):
+    def serve(self, **options):
+        server = ThreadingHTTPServer(('127.0.0.1', 0), handler_for(FakeLink(), **options))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f'http://127.0.0.1:{server.server_port}'
+
+    def post(self, url, path, body):
+        request = urllib.request.Request(url + path, data=json.dumps(body).encode(),
+            headers={'Origin': url, 'Content-Type': 'application/json'})
+        return json.load(urllib.request.urlopen(request))
+
+    def test_every_file_the_page_loads_is_served(self):
+        url = self.serve()
+        page = urllib.request.urlopen(url + '/').read().decode()
+        wanted = re.findall(r'(?:src|href)="(/[^"]+)"', page)
+        self.assertGreater(len(wanted), 8)
+        for path in wanted:
+            with urllib.request.urlopen(url + path) as response:
+                self.assertEqual(response.status, 200, path)
+                self.assertGreater(len(response.read()), 100, path)
+        with self.assertRaises(urllib.error.HTTPError):
+            urllib.request.urlopen(url + '/vendor/../server.py')
+
+    def test_only_the_bench_firmware_can_be_rung(self):
+        url = self.serve()
+        self.assertEqual(json.load(urllib.request.urlopen(url + '/api/target')), {'ok': True, 'target': 'xiao', 'simulated_sound': False})
+        with self.assertRaises(urllib.error.HTTPError) as refused:
+            self.post(url, '/api/simulate', {'sound': 'chime'})
+        self.assertEqual(refused.exception.code, 400)
+
+    def test_simulated_sounds_signal_the_firmware(self):
+        code = ('import signal,sys,time\n'
+                'signal.signal(signal.SIGUSR1,lambda *_:(print("chime",flush=True)))\n'
+                'signal.signal(signal.SIGUSR2,lambda *_:(print("other",flush=True),sys.exit(0)))\n'
+                'print("ready",flush=True)\n'
+                'time.sleep(10)\n')
+        firmware = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(firmware.kill)
+        self.addCleanup(firmware.stdout.close)
+        self.assertEqual(firmware.stdout.readline().strip(), 'ready')
+        url = self.serve(target='bench', simulator_pid=firmware.pid)
+        self.assertTrue(json.load(urllib.request.urlopen(url + '/api/target'))['simulated_sound'])
+        self.assertTrue(self.post(url, '/api/simulate', {'sound': 'chime'})['ok'])
+        self.assertEqual(firmware.stdout.readline().strip(), 'chime')
+        self.assertTrue(self.post(url, '/api/simulate', {'sound': 'other'})['ok'])
+        self.assertEqual(firmware.stdout.readline().strip(), 'other')
+        with self.assertRaises(urllib.error.HTTPError):
+            self.post(url, '/api/simulate', {'sound': 'anything'})
+        firmware.wait(5)
+
+    def test_tests_run_through_the_page(self):
+        suites = Suites({'good': ('good', [sys.executable, '-c', 'print("done")'])})
+        self.addCleanup(suites.close)
+        url = self.serve(suites=suites)
+        self.assertEqual(json.load(urllib.request.urlopen(url + '/api/tests'))['suites']['good']['state'], 'idle')
+        with self.assertRaises(urllib.error.HTTPError) as refused:
+            self.post(url, '/api/tests', {'suite': 'unknown'})
+        self.assertEqual(refused.exception.code, 400)
+        self.assertTrue(self.post(url, '/api/tests', {'suite': 'good'})['ok'])
+        for _ in range(200):
+            state = json.load(urllib.request.urlopen(url + '/api/tests'))
+            if state['suites']['good']['state'] == 'ok':
+                break
+            time.sleep(.02)
+        self.assertEqual(state['suites']['good']['lines'], ['done'])
+        self.assertTrue(self.post(url, '/api/tests', {'stop': True})['ok'])
 
 
 if __name__ == '__main__':

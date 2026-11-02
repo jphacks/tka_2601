@@ -139,7 +139,7 @@ static const playback_sink_t sink = {sinkStart, sinkWrite, sinkStop, 130u};
 // --- Microphone: chime and speech scripts, delivered every 20 ms.
 static std::mutex commandLock;
 static std::queue<char> commands;
-static std::atomic<bool> running{true}, ringBell{false};
+static std::atomic<bool> running{true}, ringBell{false}, ringOther{false};
 static std::atomic<int> ambient{0};
 extern "C" bool audio_app_post_command(char command) {
   std::lock_guard<std::mutex> guard(commandLock);
@@ -150,6 +150,9 @@ static int16_t pcm[AUDIO_FRAME];
 static void bellFrame(unsigned f, unsigned total, float gain) {
   const float hz = f >= total / 2 ? 880.0f : 1320.0f;
   for (unsigned i = 0; i < AUDIO_FRAME; ++i) pcm[i] = static_cast<int16_t>(gain * sinf(6.2831853f * hz * (f * AUDIO_FRAME + i) / AUDIO_RATE));
+}
+static void otherFrame(unsigned f, float gain) {
+  for (unsigned i = 0; i < AUDIO_FRAME; ++i) pcm[i] = static_cast<int16_t>(gain * sinf(6.2831853f * 420.0f * (f * AUDIO_FRAME + i) / AUDIO_RATE));
 }
 static void silenceFrame() {
   const int level = ambient;
@@ -165,7 +168,7 @@ static void drainCommands() {
   while (!commands.empty()) { audio_app_command(commands.front()); commands.pop(); }
 }
 static void audioTask() {
-  unsigned bell = 0, speech = 0;
+  unsigned bell = 0, other = 0, speech = 0;
   bool speaking = false;
   auto next = std::chrono::steady_clock::now();
   while (running) {
@@ -173,9 +176,11 @@ static void audioTask() {
     volatile audio_link_t* s = audio_link();
     const bool listening = s->voice_call_ack && s->voice_record_enabled && s->voice_listen_ack == s->voice_listen_seq && s->voice_listen_seq;
     if (ringBell.exchange(false)) bell = 80;
+    if (ringOther.exchange(false)) other = 80;
     if (!listening) { speaking = false; speech = 0; }
     else if (!speaking) { speaking = true; speech = 60; }
     if (bell) { bellFrame(80 - bell, 50, bell > 30 ? 8000.0f : 0.0f); --bell; }
+    else if (other) { otherFrame(80 - other, other > 30 ? 8000.0f : 0.0f); --other; }
     else if (speech) { bellFrame(speech, 60, 5000.0f); --speech; }
     else silenceFrame();
     feed();
@@ -211,10 +216,11 @@ static bool waitFor(bool (*condition)(), uint32_t ms) {
 }
 
 // The whole firmware behind a serial port, for working on the bench page without
-// a board. kill -USR1 rings the chime.
+// a board. kill -USR1 rings the chime; kill -USR2 plays a sound that is not the chime.
 static void bench() {
   ambient = 40;
   signal(SIGUSR1, [](int) { ringBell = true; });
+  signal(SIGUSR2, [](int) { ringOther = true; });
   console_begin();
   xlog("[BOOT] Network task running.\n");
   xlog("[OK] Wi-Fi connected + DHCP OK. IP: 127.0.0.1\n");

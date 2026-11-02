@@ -208,7 +208,8 @@
     let at = -1;
     for (const text of lines) {
       if (text.includes('[VOICE] Preparing streaming call')) at = 0;
-      if (at < 0) continue;
+      // A servo test before or after a call is not part of it.
+      if (at < 0 || at >= CALL_STEPS.length) continue;
       if (text.includes('[SERVO] CALL press once')) at = 1;
       else if (text.includes('[VOICE] Call button operation complete')) at = 2;
       else if (text.includes('[VOICE] Response 0:')) at = 3;
@@ -221,5 +222,26 @@
   }
   const callCompleted = lines => lines.some(text => text.includes('[VOICE] Call ended;'));
 
-  globalThis.MonbanLogic = {ServoEditor, pickValues, errorText, chimeProgress, callProgress, callCompleted, CALL_STEPS};
+  // What one line from the board means for the 3D model, in the order it happened.
+  const SERVO_NAMES = {CALL: 'call', END: 'end', UNLOCK: 'unlock'};
+  function sceneEvent(text) {
+    let m = text.match(/\[SERVO\] (CALL|END|UNLOCK) press once: (\d+) degrees for (\d+) ms;.* rest=(\d+)/);
+    if (m) return {type: 'press', key: SERVO_NAMES[m[1]], degrees: Math.abs(Number(m[2]) - Number(m[4])), hold: Number(m[3])};
+    m = text.match(/\[SERVO\] (CALL|END|UNLOCK) returning to \d+ degrees for (\d+) ms/);
+    if (m) return {type: 'release', key: SERVO_NAMES[m[1]], seconds: Number(m[2]) / 1000};
+    if (text.includes('[DETECTED]')) return {type: 'ringing'};
+    if (text.includes('[VOICE] Call button operation complete')) return {type: 'screen', state: 'call'};
+    if (/\[VOICE\] Response \d+:/.test(text) || text.includes('[DIAG] speaker playing') || text.includes('[DIAG] loopback playing')) return {type: 'sound', source: 'device'};
+    if (text.includes('[VOICE] Input streaming:')) return {type: 'sound', source: 'visitor'};
+    if (text.includes('[VOICE] Playback complete:') || text.includes('[VOICE] Input complete:') || /\[DIAG\] (speaker|loopback) ok=/.test(text)) return {type: 'sound', source: null};
+    if (text.includes('Call ended;') || text.includes('Call stopped;') || text.includes('Playback/call state uncertain')) return {type: 'idle'};
+    return null;
+  }
+  // How far the pinion's angle moves the rack, against what this intercom and exterior need.
+  function rackReach(degrees, radius, stroke, gap) {
+    const mm = radius * degrees * Math.PI / 180;
+    return {mm, stroke, gap, over: mm > stroke, short: gap !== null && mm <= gap, depth: gap === null ? 0 : mm - gap};
+  }
+
+  globalThis.MonbanLogic = {ServoEditor, pickValues, errorText, chimeProgress, callProgress, callCompleted, CALL_STEPS, sceneEvent, rackReach};
 })();

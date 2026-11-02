@@ -4,227 +4,68 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MONBAN 調整</title>
+<link rel="stylesheet" href="/vendor/antd-reset.css">
 <style>
-:root{--navy:#1F3A5F;--navy-dark:#142336;--navy-mid:#8FA3BC;--navy-soft:#DDE5EF;--navy-pale:#E8EDF4;--ground:#F2F2F7;--text:#1C1C1E;--sub:#5A5A60;--line:#E5E5EA}
-*{box-sizing:border-box}
-body{margin:0;background:var(--ground);color:var(--text);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
-a{color:var(--navy);text-decoration:none}
-button{font:inherit;cursor:pointer}
-button:disabled{opacity:.45;cursor:not-allowed}
-:focus-visible{outline:3px solid var(--navy-mid);outline-offset:2px}
-header{background:var(--navy);color:#fff}
-.bar{max-width:1200px;margin:0 auto;padding:0 24px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 28px;min-height:60px}
-.brand{font-size:18px;font-weight:700}
-nav{display:flex;flex-wrap:wrap;gap:4px;flex:1}
-nav a{padding:8px 14px;border-radius:8px;color:#fff;font-size:15px}
-nav a[aria-current=page]{background:#fff;color:var(--navy);font-weight:600}
-#connection{font-size:14px}
-main{max-width:1200px;margin:0 auto;padding:24px}
-main.narrow{max-width:760px}
-.head{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;margin-bottom:20px}
-h1{margin:0;font-size:28px;font-weight:700;flex:1;min-width:200px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:20px;align-items:start}
-@media (max-width:720px){nav{order:3;flex-basis:100%;padding-bottom:8px}.brand{flex:1}}
-@media (max-width:420px){.grid{grid-template-columns:minmax(0,1fr)}main{padding:16px}.bar{padding:0 16px}}
-.card{background:#fff;border-radius:12px;overflow:hidden}
-.pad{padding:20px}
-.card h2{margin:0;font-size:18px;font-weight:700}
-.card h2.small{padding:14px 16px 10px;font-size:13px;font-weight:600;color:var(--sub)}
-.primary,.secondary{min-height:48px;padding:0 24px;border-radius:12px;font-size:16px;font-weight:600}
-.primary{border:none;background:var(--navy);color:#fff}
-.secondary{border:1px solid var(--navy);background:#fff;color:var(--navy)}
-.big{min-height:56px;font-size:18px;width:100%}
-.small-button{min-height:44px;padding:0 14px;border-radius:10px;font-size:15px;font-weight:600;border:1px solid var(--navy);background:#fff;color:var(--navy);display:inline-flex;align-items:center}
-.small-button.filled{border:none;background:var(--navy);color:#fff}
-.progress{height:8px;background:var(--navy-soft);border-radius:4px;overflow:hidden;margin-bottom:24px}
-.progress div{height:100%;background:var(--navy)}
-.row{border-top:1px solid var(--line);padding:12px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-height:48px}
+body{margin:0;background:#fff}
+.bar{min-height:64px;box-sizing:border-box;padding:12px 24px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;border-bottom:1px solid #ECEEF2}
+.brand{font-size:20px;font-weight:700;margin-right:12px}
+.body{display:flex;flex-wrap:wrap;align-items:flex-start}
+.side{flex:1 1 180px;min-width:0;max-width:100%;box-sizing:border-box;padding:16px 12px}
+.side .ant-menu{border-inline-end:none!important}
+.main{flex:999 1 560px;min-width:0;box-sizing:border-box;padding:24px}
+.pane{flex:1 1 440px;min-width:0;box-sizing:border-box;padding:24px 24px 24px 0;position:sticky;top:0}
+@media (max-width:1100px){.pane{position:static;padding:0 24px 24px}}
+.head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:16px}
+.head h1{margin:0;flex:1;min-width:200px;font-size:24px;font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;align-items:start}
+.stack{display:grid;gap:16px}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:12px 0;border-top:1px solid #ECEEF2}
+.row:first-child{border-top:none;padding-top:0}
+.row:last-child{padding-bottom:0}
 .row .text{flex:1;min-width:150px}
-.row .name{font-weight:600}
-.row .detail{font-size:14px;color:var(--sub);overflow-wrap:anywhere}
-.ok{font-size:14px;font-weight:700;color:var(--navy)}
-.ng{font-size:14px;font-weight:700;color:#fff;background:var(--navy);padding:2px 8px;border-radius:6px}
-.meter{height:10px;background:var(--navy-pale);border-radius:5px;overflow:hidden;margin-top:6px}
-.meter div{height:100%;background:var(--navy)}
-.status{font-size:15px;font-weight:600}
-.notice{background:var(--navy-soft);color:var(--navy);border-radius:12px;padding:12px 16px;margin-bottom:20px;font-weight:600}
-.tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:20px}
-.tabs button{min-height:60px;border:1px solid var(--navy);border-radius:12px;background:#fff;color:var(--navy)}
-.tabs button[aria-selected=true]{background:var(--navy);color:#fff}
-.tabs b{display:block;font-size:17px;font-weight:600}
-.tabs span{display:block;font-size:13px}
-.values{display:flex;justify-content:center;flex-wrap:wrap;gap:8px 28px;margin:8px 0 18px;font-size:15px;color:var(--sub)}
-.values b{color:var(--text)}
-.control{padding:12px 0 4px;border-bottom:1px solid var(--line)}
-.control:last-child{border-bottom:none}
-.control .top{display:flex;align-items:center;gap:8px}
-.control label{flex:1;font-weight:600}
-.step{width:44px;height:44px;border:1px solid var(--navy);border-radius:10px;background:#fff;color:var(--navy);font-size:20px}
-.control output{min-width:76px;text-align:center;font-size:18px;font-weight:700}
-input[type=range]{width:100%;height:44px;accent-color:var(--navy);margin:0}
-.level{display:flex;align-items:baseline;gap:8px;margin:12px 0 8px}
-.level strong{font-size:40px;font-weight:700}
-.level span{font-size:15px;color:var(--sub)}
-.level em{margin-left:auto;font-style:normal;font-size:15px;font-weight:600}
-.scale{position:relative;height:32px;background:var(--navy-pale);border-radius:8px;overflow:hidden}
-.scale .fill{height:100%;background:var(--navy-mid)}
-.scale .mark{position:absolute;top:0;bottom:0;width:3px;background:var(--navy)}
-.line{display:flex;align-items:center;margin-top:16px}
-.line label,.line span:first-child{flex:1;font-weight:600}
-.line output{font-size:18px;font-weight:700}
-.steps{list-style:none;margin:0 0 20px;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:8px;font-size:14px}
-.steps li{color:var(--sub)}
-.steps li.done,.steps li.now{color:var(--navy)}
-.steps li.now{font-weight:700}
-.steps li::before{content:"";display:block;height:8px;border-radius:4px;background:var(--navy-soft);margin-bottom:6px}
-.steps li.done::before{background:var(--navy)}
-.steps li.now::before{background:var(--navy-mid)}
-.instruction{padding:40px 24px;text-align:center}
-.instruction .title{font-size:32px;font-weight:700;margin-bottom:24px}
-.instruction .scale{max-width:480px;margin:0 auto 8px}
-.instruction .scale .fill{background:var(--navy)}
-.instruction .sub{font-size:15px;color:var(--sub);min-height:22px;margin-bottom:28px}
-.actions{display:flex;flex-wrap:wrap;justify-content:center;gap:12px}
-.pair{display:flex;align-items:center;min-height:52px;padding:0 16px;border-top:1px solid var(--line)}
-.pair:first-child{border-top:none}
-.pair span{flex:1}
-.pair b{font-weight:600}
-#call-stage{font-size:24px;font-weight:700;margin-bottom:16px}
-.talk{min-height:420px;padding:16px 20px}
-.bubble{display:flex;margin:8px 0}
-.bubble div{max-width:80%;padding:10px 14px;border-radius:12px;background:var(--ground);font-size:15px;line-height:1.6;overflow-wrap:anywhere}
+.row .name{font-weight:500}
+.sub{font-size:14px;color:#5C616B}
+.meter{position:relative;height:8px;background:#F0F2F5;border-radius:4px;overflow:hidden}
+.meter.tall{height:28px;border-radius:8px}
+.meter>div{height:100%;background:#5E6AD2}
+.meter.soft>div{background:#B5BEEB}
+.meter .mark{position:absolute;top:0;bottom:0;width:3px;background:#5E6AD2}
+.kv{display:flex;align-items:center;font-size:14px;gap:8px}
+.kv>span:first-child{flex:1;font-weight:500}
+.bubble{display:flex;margin:6px 0}
 .bubble.ai{justify-content:flex-end}
-.bubble.ai div{background:var(--navy);color:#fff}
-.log{background:var(--navy-dark);color:var(--navy-pale);min-height:420px;padding:16px 20px}
-.log h2{color:#fff;margin-bottom:8px}
-#log{height:380px;overflow:auto;font:13px/1.8 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
-[hidden]{display:none!important}
+.bubble>div{max-width:88%;padding:6px 10px;border-radius:8px;background:#F5F6F8;font-size:14px;line-height:1.5}
+.bubble.ai>div{background:#5E6AD2;color:#fff}
+.log{margin:0;background:#17191E;color:#E6E8EE;border-radius:8px;padding:12px 16px;font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;overflow:auto}
+.scene{position:relative;height:440px;border:1px solid #E6E8EE;border-radius:8px 8px 0 0;overflow:hidden}
+.scene canvas{display:block;width:100%;height:100%;cursor:grab}
+.scene .xray{position:absolute;right:12px;top:12px}
+.scene .caption{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);width:max-content;max-width:86%;box-sizing:border-box;padding:8px 12px;border-radius:8px;border:1px solid #E6E8EE;background:#fff;font-size:14px;line-height:1.5;text-align:center}
+.scene .caption.ai{background:#5E6AD2;color:#fff}
+.under{border:1px solid #E6E8EE;border-top:none;border-radius:0 0 8px 8px;padding:12px 16px 14px}
+.fields{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:4px}
+.fields label{display:block;font-size:12px;color:#5C616B}
+.swatch{display:inline-block;width:12px;height:12px;margin-right:8px;vertical-align:-1px;border-radius:50%;border:1px solid #D9DCE3}
+.dot{display:inline-block;width:8px;height:8px;margin-right:8px;border-radius:50%;background:#D9DCE3}
+.dot.on{background:#27A644}
+.status{font-size:14px;white-space:nowrap}
+.step-control{padding:10px 0 2px;border-top:1px solid #ECEEF2}
+.step-control:first-child{border-top:none;padding-top:0}
+.step-control .top{display:flex;align-items:center;gap:8px}
+.step-control label{flex:1;font-weight:500}
+.step-control output{min-width:72px;text-align:center;font-weight:700}
 </style>
 </head>
 <body>
-<header>
-  <div class="bar">
-    <div class="brand">MONBAN</div>
-    <nav aria-label="画面">
-      <a href="#check">動作確認</a>
-      <a href="#servo">サーボ</a>
-      <a href="#audio">音</a>
-      <a href="#chime">チャイム</a>
-      <a href="#call">テスト通話</a>
-    </nav>
-    <div id="connection" role="status">接続を確認中</div>
-  </div>
-</header>
-
-<main id="page-check" data-page>
-  <div class="head">
-    <h1>動作確認</h1>
-    <div class="status"><span id="check-count">0 / 12</span> 確認済み</div>
-    <button type="button" class="primary" id="check-all">通信をまとめて確認</button>
-  </div>
-  <p class="notice" id="check-notice" role="status" hidden></p>
-  <div class="progress"><div id="check-progress" style="width:0"></div></div>
-  <div class="grid" id="check-groups"></div>
-</main>
-
-<main id="page-servo" data-page hidden>
-  <div class="head">
-    <h1>サーボ調整</h1>
-    <span class="status" id="servo-state" role="status"></span>
-    <button type="button" class="secondary" id="servo-undo">元に戻す</button>
-    <button type="button" class="primary" id="servo-save">本体に保存</button>
-  </div>
-  <p class="notice" id="servo-notice" role="status" hidden></p>
-  <div class="tabs" role="tablist" aria-label="サーボ" id="servo-tabs"></div>
-  <div class="grid">
-    <section class="card pad">
-      <svg viewBox="0 0 320 180" style="width:100%;max-width:420px;display:block;margin:0 auto" role="img" id="servo-gauge">
-        <path d="M 30 160 A 130 130 0 0 1 290 160" fill="none" stroke="#E5E5EA" stroke-width="10" stroke-linecap="round"></path>
-        <line id="gauge-rest" x1="160" y1="160" stroke="#8FA3BC" stroke-width="6" stroke-linecap="round"></line>
-        <line id="gauge-press" x1="160" y1="160" stroke="#1F3A5F" stroke-width="8" stroke-linecap="round"></line>
-        <circle cx="160" cy="160" r="10" fill="#1F3A5F"></circle>
-      </svg>
-      <div class="values"><span>待機 <span id="servo-rest"></span>°</span><b>押す <span id="servo-press"></span>°</b><span>動く量 <span id="servo-travel"></span>°</span></div>
-      <button type="button" class="primary big" id="servo-test"></button>
-      <button type="button" class="small-button" id="servo-mirror" style="width:100%;margin-top:8px;border:none;justify-content:center">向きを反転</button>
-    </section>
-    <section class="card" style="padding:8px 20px 20px" id="servo-controls"></section>
-  </div>
-</main>
-
-<main id="page-audio" data-page hidden>
-  <div class="head"><h1>音の調整</h1><span class="status" id="audio-state" role="status"></span></div>
-  <div class="grid">
-    <section class="card pad">
-      <h2>マイク</h2>
-      <div class="level"><strong id="mic-level">0</strong><span>音量</span><em id="mic-speech"></em></div>
-      <div class="scale" role="img" id="mic-scale"><div class="fill" id="mic-fill"></div><div class="mark" id="mic-mark"></div></div>
-      <div class="line"><label for="gate">話し始めの音量</label><output id="gate-value" for="gate"></output></div>
-      <input id="gate" type="range" min="30" max="3000" step="10">
-      <button type="button" class="small-button" id="audio-loop">3 秒録音して再生</button>
-    </section>
-    <section class="card pad">
-      <h2>スピーカー</h2>
-      <div class="line"><label for="volume">音量</label><output id="volume-value" for="volume"></output></div>
-      <input id="volume" type="range" min="0" max="100" step="5">
-      <button type="button" class="primary big" id="audio-tone" style="margin-top:8px">この音量で鳴らす</button>
-    </section>
-    <section class="card pad">
-      <h2>チャイムの判定</h2>
-      <div style="position:relative;height:56px;margin:12px 0 4px" role="img" id="score-scale">
-        <div style="position:absolute;left:0;right:0;top:20px;height:16px;background:var(--navy-pale);border-radius:8px;overflow:hidden"><div id="limit-fill" style="height:100%;background:var(--navy-mid);width:0"></div></div>
-        <div id="score-mark" style="position:absolute;top:12px;height:32px;width:4px;background:var(--navy);border-radius:2px;left:0" hidden></div>
-      </div>
-      <div style="display:flex;font-size:15px;margin-bottom:4px"><span style="flex:1">直近の距離 <b id="score-value">-</b></span><span>判定の上限 <b id="limit-value">-</b></span></div>
-      <div class="line"><label for="margin">判定の幅</label><output id="margin-value" for="margin"></output></div>
-      <input id="margin" type="range" min="50" max="200" step="5">
-      <div class="status" id="score-verdict"></div>
-    </section>
-  </div>
-</main>
-
-<main id="page-chime" class="narrow" data-page hidden>
-  <div class="head"><h1>チャイム登録</h1></div>
-  <p class="notice" id="chime-notice" role="status" hidden></p>
-  <ol class="steps" id="chime-steps"></ol>
-  <section class="card instruction">
-    <div class="title" id="chime-title" role="status" aria-live="polite"></div>
-    <div class="scale" role="img" aria-label="マイクの音量"><div class="fill" id="chime-fill" style="width:0"></div></div>
-    <div class="sub" id="chime-sub"></div>
-    <div class="actions">
-      <button type="button" class="primary" id="chime-format" hidden>保存領域を初期化</button>
-      <button type="button" class="primary" id="chime-start"></button>
-      <button type="button" class="secondary" id="chime-cancel">中止</button>
-    </div>
-  </section>
-  <section class="card" style="margin-top:20px">
-    <div class="pair"><span>登録</span><b id="chime-registered"></b></div>
-    <div class="pair"><span>検知した回数</span><b id="chime-detected"></b></div>
-    <div class="pair"><span>直近の距離 / 上限</span><b id="chime-score"></b></div>
-  </section>
-</main>
-
-<main id="page-call" data-page hidden>
-  <div class="head">
-    <h1>テスト通話</h1>
-    <button type="button" class="primary" id="call-toggle"></button>
-  </div>
-  <section class="card pad" style="margin-bottom:20px">
-    <div id="call-stage" role="status" aria-live="polite"></div>
-    <ol class="steps" id="call-steps" style="margin:0"></ol>
-  </section>
-  <div class="grid">
-    <section class="card talk">
-      <h2>会話</h2>
-      <div id="talk" role="log" aria-label="来訪者とAIの会話"></div>
-    </section>
-    <section class="card log">
-      <h2>本体のログ</h2>
-      <div id="log" role="log" aria-label="本体のログ" tabindex="0"></div>
-    </section>
-  </div>
-</main>
-<script src="logic.js"></script>
-<script src="app.js"></script>
+<div id="root"></div>
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script src="/vendor/dayjs.min.js"></script>
+<script src="/vendor/antd.min.js"></script>
+<script src="/vendor/three.min.js"></script>
+<script src="/scene/monban_meshes.js"></script>
+<script src="/scene/monban_scene.js"></script>
+<script src="/logic.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>

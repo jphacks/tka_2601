@@ -76,4 +76,4 @@ if [ -z "$device" ]; then
   exit 1
 fi
 echo "マイク、スピーカー、Wi-Fi は QEMU にないので、それらの確認は失敗と出ます。Ctrl-C で止まります。"
-python3 calibration_ui/server.py --serial-port "$device" --http-port "$port" --history-file "$work/history.json"
+python3 calibration_ui/server.py --serial-port "$device" --http-port "$port" --history-file "$work/history.json" --target qemu

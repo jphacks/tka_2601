@@ -12,7 +12,8 @@
 #define XIAO_SERVO_MIN_US 1000
 #define XIAO_SERVO_MAX_US 2000
 #define XIAO_SERVO_REST_DEG 0
-#define XIAO_SERVO_CALL_PRESS_DEG 180
+// The rack moves 4.5 mm x angle in radians, so 30 degrees is 2.4 mm of its 4 to 5 mm travel.
+#define XIAO_SERVO_CALL_PRESS_DEG 30
 #define XIAO_SERVO_END_PRESS_DEG 30
 #define XIAO_SERVO_UNLOCK_PRESS_DEG 30
 #define XIAO_SERVO_PRESS_MS 300

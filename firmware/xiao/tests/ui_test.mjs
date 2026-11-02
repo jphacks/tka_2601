@@ -173,9 +173,66 @@ assert.equal(call('[VOICE] Preparing streaming call.', '[VOICE] Response 1: reco
 assert.equal(call('[VOICE] Preparing streaming call.', '[SERVO] END press once: 30'), 6);
 assert.equal(call('[VOICE] Preparing streaming call.', '[VOICE] Call stopped; chime detection rearmed.'), CALL_STEPS.length);
 assert.equal(call('[VOICE] Call ended; chime detection rearmed.', '[VOICE] Preparing streaming call.'), 0);
+assert.equal(call('[VOICE] Call ended; chime detection rearmed.', '[SERVO] CALL press once: 30'), -1);
+assert.equal(call('[VOICE] Preparing streaming call.', '[VOICE] Call ended; chime detection rearmed.', '[SERVO] CALL press once: 30'), CALL_STEPS.length, 'a test press after the call');
 assert.equal(callCompleted(['[VOICE] Call stopped; chime detection rearmed.']), false);
 assert.equal(callCompleted(['[VOICE] Call ended; chime detection rearmed.']), true);
 console.log('Web UI: call progress passed');
+
+// The 3D model moves on the board's own lines.
+const {sceneEvent, rackReach} = context.MonbanLogic;
+const event = text => JSON.parse(JSON.stringify(sceneEvent(text)));
+assert.deepEqual(event('[SERVO] CALL press once: 150 degrees for 300 ms; source=saved rest=180 pulse_us=1833 at_ms=10'), {type: 'press', key: 'call', degrees: 30, hold: 300});
+assert.deepEqual(event('[SERVO] END press once: 30 degrees for 100 ms; source=saved rest=0 pulse_us=1166 at_ms=10'), {type: 'press', key: 'end', degrees: 30, hold: 100});
+assert.deepEqual(event('[SERVO] UNLOCK returning to 0 degrees for 1000 ms; at_ms=5'), {type: 'release', key: 'unlock', seconds: 1});
+assert.equal(event('[DETECTED] chime').type, 'ringing');
+assert.deepEqual(event('[VOICE] Call button operation complete; now connecting voice agent.'), {type: 'screen', state: 'call'});
+assert.deepEqual(event('[VOICE] Response 1: recording paused, playing on speaker.'), {type: 'sound', source: 'device'});
+assert.deepEqual(event('[DIAG] speaker playing'), {type: 'sound', source: 'device'});
+assert.deepEqual(event('[VOICE] Input streaming: sent=20 ms queued=3 frames rms=3541.'), {type: 'sound', source: 'visitor'});
+assert.deepEqual(event('[VOICE] Playback complete: turn 0.'), {type: 'sound', source: null});
+assert.deepEqual(event('[DIAG] loopback ok=1'), {type: 'sound', source: null});
+assert.equal(event('[VOICE] Call ended; chime detection rearmed.').type, 'idle');
+assert.equal(sceneEvent('[SERVO] Active source=saved CALL: GPIO=7 press=30 rest=0'), null);
+// The rack: 4.5 mm pinion radius against the stroke and the gap to the key.
+assert.equal(rackReach(180, 4.5, 4, 1.5).over, true, 'the old 180 degree default ran far past the rack');
+assert.equal(rackReach(10, 4.5, 4, 1.5).short, true);
+{
+  const reach = rackReach(30, 4.5, 4, 1.5);
+  assert.ok(!reach.over && !reach.short && Math.abs(reach.mm - 2.356) < 0.01 && Math.abs(reach.depth - 0.856) < 0.01);
+  assert.equal(rackReach(30, 4.5, 4, null).short, false, 'no mechanism for this servo');
+}
+console.log('Web UI: 3D events and rack reach passed');
+
+// The intercom table and fit check, by the same rules as capsule/fusion/mount_views.py.
+const sceneContext = vm.createContext({window: {THREE: {}}});
+vm.runInContext(readFileSync(new URL('../calibration_ui/scene/monban_scene.js', import.meta.url), 'utf8'), sceneContext);
+const Scene = sceneContext.window.MonbanScene;
+assert.deepEqual(Object.keys(Scene.DESIGNS), ['bird', 'matte']);
+for (const id of Object.keys(Scene.INTERCOMS)) {
+  const spec = Scene.customize(id);
+  for (const shape of ['bird', 'capsule']) {
+    const placed = Scene.layout(spec, shape);
+    assert.equal(placed.pushers.length, spec.press.length, id);
+    for (const pusher of placed.pushers) assert.ok(pusher.gap > 0, id + ': the rack rests clear of the key');
+    assert.ok(Array.isArray(Array.from(Scene.fit(spec, shape))), id);
+  }
+}
+{
+  const notes = shape => Array.from(Scene.fit(Scene.customize('vsmge20'), shape)).join(' ');
+  assert.ok(notes('capsule').includes('充電台に約 2.1 mm'), notes('capsule'));
+  assert.ok(notes('capsule').includes('通話キーに載るラックは 80%'), notes('capsule'));
+  assert.ok(notes('bird').includes('充電台に約 3.2 mm'), notes('bird'));
+  assert.equal(Scene.fit(Scene.customize('vlme30'), 'capsule').length, 0);
+  assert.ok(Array.from(Scene.fit(Scene.customize('vlwd623'), 'capsule')).join(' ').includes('重なります'));
+  // Measured values replace the table: the rail follows the keys.
+  const moved = Scene.customize('vlme30', {W: 140, D: 20, talk: {x: 10, y: -60}});
+  assert.equal(moved.W, 140);
+  assert.equal(moved.D, 20);
+  assert.deepEqual(Array.from(Scene.pressPoint(moved.buttons.find(b => b.role === 'talk'))), [10, -60]);
+  assert.equal(Scene.layout(moved, 'capsule').pushers[0].qy, -60);
+}
+console.log('Web UI: intercom table and fit check passed');
 
 // The page has one board, three servos, and no destructive control outside the guarded format.
 const page = readFileSync(new URL('../calibration_ui/index.html', import.meta.url), 'utf8');
@@ -185,15 +242,10 @@ for (const removed of [/M5/, /E84/, /board-link/, /UDP/]) {
   assert(!removed.test(page), 'index.html: ' + removed);
   assert(!removed.test(app), 'app.js: ' + removed);
 }
-assert(!/color:#(?!1F3A5F|142336|8FA3BC|DDE5EF|E8EDF4|F2F2F7|1C1C1E|5A5A60|E5E5EA|fff)/i.test(page), 'navy theme only');
-assert(app.includes("'/api/format'") && app.includes('confirm('), 'format asks first');
-// Every button in the page is connected to something.
-for (const [, id] of page.matchAll(/<button[^>]*\bid="([^"]+)"/g)) {
-  assert(new RegExp(`\\$\\('#${id}'\\)\\.onclick`).test(app), 'unconnected button: ' + id);
+assert(app.includes("'/api/format'") && app.includes('Modal.confirm('), 'format asks first');
+// Everything the page loads comes from this repository.
+for (const [, src] of page.matchAll(/(?:src|href)="([^"]+)"/g)) {
+  assert(src.startsWith('/'), 'not vendored: ' + src);
+  readFileSync(new URL('../calibration_ui' + src, import.meta.url));
 }
-// The routes must not jump the page to an element: main ids differ from the hashes.
-for (const [, name] of page.matchAll(/<a href="#([a-z]+)"/g)) {
-  assert(page.includes(`id="page-${name}"`), name);
-  assert(!page.includes(`id="${name}"`), 'hash would scroll to #' + name);
-}
-console.log('Web UI: pins, theme and removed link concepts passed');
+console.log('Web UI: pins, removed link concepts and vendored files passed');

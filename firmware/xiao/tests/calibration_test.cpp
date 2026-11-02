@@ -1,7 +1,7 @@
 #include "servo_support.h"
 int main() {
   servo_begin();
-  assert(command("@get", "\"call_press\":0"));
+  assert(command("@get", "\"call_rest\":180,\"call_press\":150"));
   assert(fake::servoPins.empty());
   for (int pin : {kCall, kEnd, kUnlock}) assert(fake::signalOutputs[pin] && fake::signalLevels[pin] == 0);
   assert(!command("@set c p 45", "begin_required"));

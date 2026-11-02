@@ -18,13 +18,22 @@ import uuid
 from zoneinfo import ZoneInfo
 from conversation_history import ConversationHistory
 from diagnostics import Diagnostics, DiagnosticBusy
+from suites import Suites, SuiteBusy
 
 
 # Lines answering one request; they are returned to the caller, not kept in the log.
 REPLY_CHANNELS = ('[CAL]', '[DIAG] mic')
+JS = 'text/javascript; charset=utf-8'
 STATIC_FILES = {'/': ('index.html', 'text/html; charset=utf-8'),
-                '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-                '/logic.js': ('logic.js', 'text/javascript; charset=utf-8')}
+                '/app.js': ('app.js', JS),
+                '/logic.js': ('logic.js', JS),
+                '/scene/monban_scene.js': ('scene/monban_scene.js', JS),
+                '/scene/monban_meshes.js': ('scene/monban_meshes.js', JS),
+                '/vendor/antd-reset.css': ('vendor/antd-reset.css', 'text/css; charset=utf-8'),
+                **{f'/vendor/{name}': (f'vendor/{name}', JS) for name in
+                   ('react.production.min.js', 'react-dom.production.min.js', 'dayjs.min.js', 'antd.min.js', 'three.min.js')}}
+# The bench firmware rings its scripted microphone on these signals; nothing else accepts them.
+SIMULATED_SOUNDS = {'chime': signal.SIGUSR1, 'other': signal.SIGUSR2}
 
 
 class SerialLink:
@@ -327,7 +336,12 @@ def command_for(action, body):
     raise ValueError('不明な操作です。')
 
 
-def handler_for(link, diagnostics=None):
+class PageServer(ThreadingHTTPServer):
+    # The page opens about ten files at once on top of its pollers; the default queue of 5 resets some.
+    request_queue_size = 128
+
+
+def handler_for(link, diagnostics=None, suites=None, target='xiao', simulator_pid=None):
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, body, content_type='application/json; charset=utf-8'):
             raw = json.dumps(body, ensure_ascii=False).encode() if isinstance(body, dict) else body
@@ -341,6 +355,15 @@ def handler_for(link, diagnostics=None):
 
         def do_GET(self):
             route = urlsplit(self.path)
+            if route.path == '/api/target':
+                self.reply(200, {'ok': True, 'target': target, 'simulated_sound': simulator_pid is not None})
+                return
+            if route.path == '/api/tests':
+                if suites is None:
+                    self.reply(503, {'ok': False, 'error': 'テストの実行が無効です。'})
+                else:
+                    self.reply(200, suites.snapshot())
+                return
             if route.path == '/api/diagnostics':
                 if diagnostics is None:
                     self.reply(503, {'ok': False, 'error': '通信診断が無効です。'})
@@ -378,7 +401,7 @@ def handler_for(link, diagnostics=None):
                 return
             if self.path in STATIC_FILES:
                 name, content_type = STATIC_FILES[self.path]
-                self.reply(200, Path(__file__).with_name(name).read_bytes(), content_type)
+                self.reply(200, (Path(__file__).parent / name).read_bytes(), content_type)
             elif self.path == '/api/state':
                 try:
                     self.reply(200, link.command('@get'))
@@ -404,6 +427,18 @@ def handler_for(link, diagnostics=None):
                         raise OSError('通信診断が無効です。')
                     self.reply(202, diagnostics.start(body.get('target')))
                     return
+                if self.path == '/api/tests':
+                    if suites is None:
+                        raise OSError('テストの実行が無効です。')
+                    self.reply(200, suites.stop() if body.get('stop') is True else suites.start(body.get('suite')))
+                    return
+                if self.path == '/api/simulate':
+                    sound = SIMULATED_SOUNDS.get(body.get('sound'))
+                    if simulator_pid is None or sound is None:
+                        raise ValueError('この接続先では音を鳴らせません。')
+                    os.kill(simulator_pid, sound)
+                    self.reply(200, {'ok': True})
+                    return
                 if self.path == '/api/console':
                     self.reply(200, link.send(body.get('command')))
                     return
@@ -414,7 +449,7 @@ def handler_for(link, diagnostics=None):
                     return
                 command = command_for(self.path[5:], body)
                 self.reply(200, link.command(command))
-            except DiagnosticBusy as error:
+            except (DiagnosticBusy, SuiteBusy) as error:
                 self.reply(409, {'ok': False, 'error': str(error)})
             except (ValueError, TypeError) as error:
                 self.reply(400, {'ok': False, 'error': str(error)})
@@ -431,19 +466,23 @@ def main():
     parser.add_argument('--serial-port', required=True)
     parser.add_argument('--http-port', type=int, default=8767)
     parser.add_argument('--history-file', default=str(Path(__file__).parent / '.runtime' / 'conversations.json'))
+    parser.add_argument('--target', choices=('xiao', 'bench', 'qemu'), default='xiao')
+    parser.add_argument('--simulator-pid', type=int, help='bench firmware process that rings its scripted microphone')
     args = parser.parse_args()
     link = SerialLink(args.serial_port, args.history_file)
     diagnostics = Diagnostics(link)
+    suites = Suites()
     def interrupt(signum, frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupt)
     try:
-        server = ThreadingHTTPServer(('127.0.0.1', args.http_port), handler_for(link, diagnostics))
+        server = PageServer(('127.0.0.1', args.http_port), handler_for(link, diagnostics, suites, args.target, args.simulator_pid))
         print(f'MONBAN 調整: http://127.0.0.1:{args.http_port}', flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        suites.close()
         diagnostics.close()
         link.close()
 

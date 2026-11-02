@@ -43,8 +43,9 @@ with Backend() as backend:
     os.close(master)
     server = subprocess.Popen([sys.executable, str(Path(__file__).parents[1] / "calibration_ui/server.py"),
                                "--serial-port", port_name, "--http-port", HTTP_PORT,
-                               "--history-file", str(Path(__file__).parents[1] / ".host-build/bench-history.json")])
-    print(f"http://127.0.0.1:{HTTP_PORT}  (chime: kill -USR1 {firmware.pid})", flush=True)
+                               "--history-file", str(Path(__file__).parents[1] / ".host-build/bench-history.json"),
+                               "--target", "bench", "--simulator-pid", str(firmware.pid)])
+    print(f"http://127.0.0.1:{HTTP_PORT}", flush=True)
     try:
         while not stopping.wait(0.5):
             pass
