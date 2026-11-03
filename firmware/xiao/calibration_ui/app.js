@@ -333,7 +333,7 @@
         h(Button, {type: 'primary', size: 'large', disabled: !device.connected || !!store.diagnostics?.running,
           onClick: () => runAllConnections().catch(error => { checkMessage = error.message; changed(); })}, '通信をまとめて確認')),
       h('div', {style: {marginBottom: 16}}, h(Meter, {value: count * 100 / rows.length, label: `${count} / ${rows.length} 確認済み`})),
-      h(Notice, {text: device.recovery ? '通話の状態が不明です。インターホンを確かめてから本体をリセットしてください' : checkMessage}),
+      h(Notice, {text: device.recovery ? '通話の状態が不明です。本体が自動で復旧を試みています。続く場合はインターホンを確かめて本体をリセットしてください' : checkMessage}),
       h('div', {className: 'grid'}, groups.map(group => h(Card, {key: group.title, size: 'small', title: group.title},
         group.rows.map(row => h(CheckRow, {key: row.key, row}))))));
   }
@@ -519,7 +519,7 @@
       h(CalibrationNotice),
       h(Card, {style: {marginBottom: 16}},
         h('div', {role: 'status', 'aria-live': 'polite', style: {fontSize: 22, fontWeight: 700, marginBottom: 16}},
-          device.recovery ? '通話の状態が不明です。インターホンを確かめてから本体をリセットしてください' : device.voiceActive ? device.stage : '待機中'),
+          device.recovery ? '通話の状態が不明です。本体が自動で復旧を試みています。続く場合はインターホンを確かめて本体をリセットしてください' : device.voiceActive ? device.stage : '待機中'),
         h(StepBar, {names: CALL_STEPS, current: at})),
       h('div', {className: 'grid'},
         h(Card, {size: 'small', title: '会話', style: {minHeight: 320}}, h(Talk)),

@@ -50,7 +50,7 @@ void execute(const char* text) {
     case 'e': case 'r': audio_app_post_command(text[0]); break;
     case 'x': audio_app_post_command('x'); servo_test_cancel(); break;
     case 'c':
-      if (voice_stream_busy()) xlog("[VOICE] Call already active or recovery required.\n");
+      if (voice_stream_busy()) xlog("[VOICE] Call already active or recovering automatically.\n");
       else voice_stream_request_call();
       break;
     case 'q': voice_stream_request_stop(); break;

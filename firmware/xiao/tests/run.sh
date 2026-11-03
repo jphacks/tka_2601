@@ -26,6 +26,8 @@ s() { for f in "$@"; do printf '%s/%s ' "$src" "$f"; done; }
 "${C[@]}" $(s voice_transport.c relay_protocol.c voice_protocol.c voice_transport_harness.c xlog_host.c) -o "$work/transport"; run transport
 "${C[@]}" -DTEST_UNPAIRED $(s voice_transport.c relay_protocol.c voice_protocol.c voice_transport_harness.c xlog_host.c) -o "$work/transport_unpaired"; run transport_unpaired
 "${C[@]}" $(s voice_session_harness.c relay_protocol.c voice_protocol.c xlog_host.c) -lm -o "$work/session"; run session
+# Legacy v1 keeps the old order: button first, then the API.
+"${C[@]}" -DVOICE_RELAY_PROTOCOL=1 $(s voice_session_harness.c relay_protocol.c voice_protocol.c xlog_host.c) -lm -o "$work/session_v1"; run session_v1
 "${C[@]}" $(s playback.c playback_test.c xlog_host.c) -o "$work/playback"; run playback
 "${C[@]}" $(s audio_core.c audio_store.c voice_capture.c audio_link.c audio_app.c storage_worker.c audio_app_test.c xlog_host.c) -lm -o "$work/audio_app"; run audio_app
 "${C[@]}" $(s audio_core.c audio_store.c door_server.c voice_protocol.c door_server_test.c xlog_host.c) -lm -o "$work/door_server"; run door_server
