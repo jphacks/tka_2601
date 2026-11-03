@@ -118,17 +118,26 @@ export async function completeSquareOAuth(deps: SquareDeps, member: CompletingMe
   if (other && other.household_id !== member.householdId) {
     throw new ProviderError(409, "この Square のアカウントは別の店で使われています", "square_merchant_in_use");
   }
-  await deps.store.saveSquareConnection({
+  const connection = {
     household_id: member.householdId,
     merchant_id: held.merchant_id,
     merchant_name: held.merchant_name,
     access_token_encrypted: await encryptToken(held.access_token, config.tokenKey),
     refresh_token_encrypted: await encryptToken(held.refresh_token, config.tokenKey),
     access_token_expires_at: held.expires_at,
-    status: "active",
+    status: "active" as const,
     last_error: null,
     connected_by: member.userId,
-  });
+  };
+  try {
+    await deps.store.saveSquareConnection(connection);
+  } catch (e) {
+    // 確かめてから書くまでに別の店が同じ Square を結び付けると、merchant_id の一意制約（23505）で落ちる
+    if ((e as { code?: unknown } | null)?.code === "23505") {
+      throw new ProviderError(409, "この Square のアカウントは別の店で使われています", "square_merchant_in_use");
+    }
+    throw e;
+  }
 }
 
 // 接続を消し、予約先を予約帳に戻す。Square への取り消しは失敗しても続ける

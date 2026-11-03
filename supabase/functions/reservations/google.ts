@@ -108,6 +108,11 @@ export async function completeOAuth(deps: GoogleDeps, member: CompletingMember, 
   // 同じアカウントで接続し直したときは、選んだカレンダーと差分の起点を残す
   const previous = await deps.store.getConnection(member.householdId);
   const sameAccount = previous !== null && previous.account_email === held.account_email;
+  // 別のアカウントではカレンダーを選び直すことになる。選ぶまでは Google を予約先にできないので、
+  // 予約先が Google のままなら予約帳に戻す（残すと読み書きがすべて 409 になる）。接続を書く前に戻す
+  if (previous !== null && !sameAccount && await deps.store.getProviderKind(member.householdId) === "google_calendar") {
+    await deps.store.setProviderKind(member.householdId, "monban");
+  }
   await deps.store.saveConnection({
     household_id: member.householdId,
     account_email: held.account_email,
