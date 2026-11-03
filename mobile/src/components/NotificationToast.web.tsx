@@ -6,6 +6,7 @@ import { type AppNotification, notificationTarget } from '../domain/notification
 import { useAuth } from '../lib/auth';
 import { useBadges } from '../lib/badges';
 import { repositories } from '../lib/container';
+import { emitNotificationReceived } from '../lib/notificationEvents.web';
 import { colors, radius } from '../theme';
 
 // Web にはプッシュ通知がないので、開いているあいだは一定の間隔で新しい通知を読み、画面の隅に出す
@@ -24,6 +25,8 @@ export function NotificationToast() {
 
   const check = useCallback(async () => {
     if (!userId || !householdId) return;
+    // 見えていないあいだは読まない。境界が進むと、戻ったときに新着として出せなくなる
+    if (document.visibilityState !== 'visible') return;
     try {
       refresh();
       const rows = await repositories.notifications.list(householdId);
@@ -34,6 +37,8 @@ export function NotificationToast() {
       }
       const boundary = seenThrough.current;
       seenThrough.current = Math.max(boundary, newest);
+      // 開いている画面（予約、通知の一覧など）も読み直させる。ネイティブのプッシュ受信と同じ
+      if (newest > boundary) emitNotificationReceived();
       // 自分の操作で作られた通知と、自分が切っている種類は出さない
       const fresh = rows.find(
         (row) =>

@@ -17,8 +17,10 @@ export function InlineDatePicker({ value, onSelect }: { value: Date; onSelect: (
         value: toInputValue(value),
         'aria-label': '日付',
         onChange: (event: { target: { value: string } }) => {
+          // 年を打っている途中（0002 など）の値は確定しない。4 桁そろったときだけ受ける
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(event.target.value)) return;
           const [year, month, day] = event.target.value.split('-').map(Number);
-          if (year && month && day) onSelect(new Date(year, month - 1, day));
+          if (year >= 1000 && month && day) onSelect(new Date(year, month - 1, day));
         },
         style: {
           height: 44,

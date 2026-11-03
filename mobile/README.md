@@ -75,7 +75,7 @@ Web で動かないものは、`.web.ts(x)` の別ファイルに分けてある
 
 | ネイティブ | Web |
 |---|---|
-| プッシュ通知（`expo-notifications`） | 使わない。30 秒ごと、またはタブに戻ったときに読み直し、新しい通知を右上に 10 秒出す（`components/NotificationToast.web.tsx`） |
+| プッシュ通知（`expo-notifications`） | 使わない。タブが見えているあいだ 30 秒ごと、またはタブに戻ったときに読み直し、新しい通知を右上に 10 秒出す。新着があれば開いている画面も読み直す（`components/NotificationToast.web.tsx`） |
 | OS のアラート（`Alert.alert`） | ブラウザの `alert` と `confirm`（`lib/webPolyfills.web.ts`） |
 | タブバー（`NativeTabs`） | 左のナビ（狭い幅では下）。`components/WebShell.web.tsx` |
 | SF Symbols | Material Symbols のフォント（`components/Icon.web.tsx`） |
