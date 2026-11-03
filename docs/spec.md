@@ -60,7 +60,7 @@ MONBAN は、インターホンに後付けして来客に AI が応答するサ
 | FR-7 | 来客時と対応後にスマホアプリへ通知する（[history.md](history.md)） | Must |
 | FR-8 | 住人がアプリで「AI への追加の指示」と「外出時の置き配の許可」を設定し、会話に反映する（[5.6](#56-house_rules)） | Must |
 | FR-9 | 店や家族でグループを作り、招待で参加し、本体をペアリングで結び付ける（[history.md](history.md)。グループと招待は実装済み。ペアリングは Supabase だけで、アプリにコードを入れる画面はない） | － |
-| FR-10 | 店が予約先（MONBAN の予約帳、Google カレンダー、ホットペッパービューティー）を選び、アプリで予約の一覧とカレンダーを見る（[reservations.md](reservations.md)） | Must |
+| FR-10 | 店が予約先（MONBAN の予約帳、Google カレンダー、Square 予約（読み取りのみ）、ホットペッパービューティー）を選び、アプリで予約の一覧とカレンダーを見る（[reservations.md](reservations.md)） | Must |
 | FR-11 | AI がインターホンで受けた予約は仮予約とし、店がアプリの予約一覧で確定する（[reservations.md 2.2](reservations.md#22-仮予約の承認)） | Must |
 | FR-12 | 予約の追加、変更、キャンセル、予約客の到着、本体や予約先の異常をアプリへ通知し、種類ごとにオンオフできる（[reservations.md 4章](reservations.md#4-通知)） | Must |
 | FR-13 | 店がアプリで口調、あいさつ、営業時間、メニュー、予約なしの来客への対応を設定し、会話に反映する（[reservations.md 5章](reservations.md#5-受け答えの設定)。アプリと Supabase まで実装。会話への反映は会話サーバー側が未実装） | Must |
