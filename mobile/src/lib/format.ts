@@ -6,16 +6,22 @@ function startOfDay(date: Date): number {
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
+// 水曜日
+export function weekdayName(day: number): string {
+  return `${WEEKDAYS[day]}曜日`;
+}
+
 // 10月17日（土）
 export function monthDay(date: Date): string {
   return `${date.getMonth() + 1}月${date.getDate()}日（${WEEKDAYS[date.getDay()]}）`;
 }
 
-// 一覧の日付の見出し。今日と昨日は頭に付ける
+// 一覧の日付の見出し。今日、昨日、明日は頭に付ける
 export function sectionTitle(date: Date, now: Date = new Date()): string {
   const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
   if (days === 0) return `今日　${monthDay(date)}`;
   if (days === 1) return `昨日　${monthDay(date)}`;
+  if (days === -1) return `明日　${monthDay(date)}`;
   return monthDay(date);
 }
 
@@ -45,4 +51,43 @@ export function durationLabel(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return rest === 0 ? `${minutes}分` : `${minutes}分${rest}秒`;
+}
+
+// 14:30〜16:00
+export function timeRange(startsAt: string, endsAt: string): string {
+  return `${hourMinute(new Date(startsAt))}〜${hourMinute(new Date(endsAt))}`;
+}
+
+// ¥8,000
+export function yen(value: number): string {
+  return `¥${value.toLocaleString('ja-JP')}`;
+}
+
+// 90分
+export function minutesLabel(minutes: number): string {
+  return `${minutes}分`;
+}
+
+// 11月2日（月）14:00〜15:30
+export function dateTimeRange(startsAt: string, endsAt: string): string {
+  return `${monthDay(new Date(startsAt))}${timeRange(startsAt, endsAt)}`;
+}
+
+// 分を 10:00 の形に。0 時から 24 時の間に収める
+// 予約の終了の時刻。翌日に入るときは 翌 0:30 と出す
+export function endClockLabel(minutes: number): string {
+  if (minutes < 24 * 60) return clockLabel(minutes);
+  const rest = minutes - 24 * 60;
+  return `翌 ${Math.floor(rest / 60)}:${pad(rest % 60)}`;
+}
+
+export function clockLabel(minutes: number): string {
+  const clamped = Math.min(Math.max(minutes, 0), 24 * 60);
+  return `${pad(Math.floor(clamped / 60))}:${pad(clamped % 60)}`;
+}
+
+// 10:00 を 0 時からの分に。読めなければ fallback
+export function clockMinutes(text: string, fallback: number): number {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(text);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : fallback;
 }

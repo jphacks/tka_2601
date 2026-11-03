@@ -4,13 +4,14 @@ import { Alert, KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from 
 
 import { QrScan } from '../components/icons';
 import { Screen } from '../components/Screen';
-import { PrimaryButton, TextField, TintButton } from '../components/ui';
-import { createHousehold } from '../lib/api';
+import { PrimaryButton, TextButton, TextField, TintButton } from '../components/ui';
 import { useAuth } from '../lib/auth';
+import { repositories } from '../lib/container';
 import { errorMessage } from '../lib/errors';
+import { logout } from '../lib/logout';
 import { colors, radius } from '../theme';
 
-// 初回: グループを作るか、家族のグループに参加する
+// 初回: お店を作るか、招待されたお店に参加する
 export default function GroupSetupScreen() {
   const { refreshMembership } = useAuth();
   const [name, setName] = useState('');
@@ -19,10 +20,10 @@ export default function GroupSetupScreen() {
   async function create() {
     setBusy(true);
     try {
-      await createHousehold(name.trim());
+      await repositories.groups.create(name.trim());
       await refreshMembership();
     } catch (error) {
-      Alert.alert('グループを作れませんでした', errorMessage(error) ?? '');
+      Alert.alert('お店を作れませんでした', errorMessage(error) ?? '');
     } finally {
       setBusy(false);
     }
@@ -33,21 +34,22 @@ export default function GroupSetupScreen() {
       <KeyboardAvoidingView behavior="padding" style={styles.flex}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Text style={styles.title} accessibilityRole="header">
-            グループを設定する
+            お店を設定する
           </Text>
           <View style={styles.section}>
             <Text style={styles.sectionTitle} accessibilityRole="header">
-              新しくグループを作る
+              新しくお店を作る
             </Text>
-            <TextField label="グループの名前" value={name} onChangeText={setName} placeholder="山田家" />
-            <PrimaryButton label="グループを作る" loading={busy} disabled={!name.trim()} onPress={create} />
+            <TextField label="お店の名前" value={name} onChangeText={setName} placeholder="ネイルサロン ひより" />
+            <PrimaryButton label="お店を作る" loading={busy} disabled={!name.trim()} onPress={create} />
           </View>
           <View style={styles.section}>
             <Text style={styles.sectionTitle} accessibilityRole="header">
-              家族のグループに参加する
+              招待されたお店に参加する
             </Text>
             <TintButton label="QR コードを読み取る" icon={<QrScan />} onPress={() => router.push('/scan')} />
           </View>
+          <TextButton label="ログアウト" onPress={() => logout()} />
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>

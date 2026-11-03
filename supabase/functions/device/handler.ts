@@ -1,3 +1,8 @@
+import { readJsonObject, reservationErrorResponse } from "../_shared/errors.ts";
+import type { NewNotification } from "../_shared/notify.ts";
+import type { ReservationProvider } from "../_shared/reservation.ts";
+import { reservationNotice } from "../_shared/reservation_notice.ts";
+import { parseAiReservation, parseDeviceRange, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
 import { type DatabaseError, visitErrorResponse } from "./errors.ts";
 
 export type DeviceAdmin = {
@@ -8,18 +13,7 @@ export type DeviceAdmin = {
 };
 
 const VISIT_PATH = /\/visits\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-const VISIT_FIELDS = [
-  "chimed_at",
-  "mode",
-  "status",
-  "answered_at",
-  "ended_at",
-  "end_reason",
-  "intent",
-  "company",
-  "outcome",
-] as const;
-
+const RESERVATION_ARRIVE_PATH = /\/reservations\/([^/]+)\/arrive$/;
 type Device = {
   device_id: string;
   household_id: string | null;
@@ -29,9 +23,18 @@ type Device = {
   extra_instructions: string;
 };
 
+// 予約を読み書きするときだけ使う
+export type DeviceReservationDeps = {
+  providerFor(householdId: string): Promise<ReservationProvider>;
+  notify(notification: NewNotification): Promise<void>;
+  // 来客がこの店のものか。違えば予約に結び付けない
+  visitBelongs(householdId: string, visitId: string): Promise<boolean>;
+};
+
 export async function handleDeviceRequest(
   req: Request,
   admin: DeviceAdmin,
+  reservations?: DeviceReservationDeps,
 ): Promise<Response> {
   const key = bearerToken(req);
   if (!key) return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -50,13 +53,39 @@ export async function handleDeviceRequest(
 
   if (path.endsWith("/settings") || path.endsWith("/mode")) {
     if (req.method !== "GET") return methodNotAllowed();
-    return Response.json({
-      paired: device.household_id !== null,
-      mode: device.mode,
-      away_leave_at_door: device.away_leave_at_door,
-      auto_away: device.auto_away,
-      extra_instructions: device.extra_instructions,
+    return Response.json(settingsBody(device, await readShop(admin, device.household_id)));
+  }
+
+  if (path.endsWith("/heartbeat")) {
+    if (req.method !== "PUT") return methodNotAllowed();
+    const { data, error } = await admin.rpc("device_heartbeat", {
+      p_device_id: device.device_id,
     });
+    if (error) throw error;
+    return Response.json(data);
+  }
+
+  const arrivePath = path.match(RESERVATION_ARRIVE_PATH);
+  if (arrivePath || path.endsWith("/reservations")) {
+    if (!reservations) return Response.json({ error: "not found" }, { status: 404 });
+    if (!device.household_id) {
+      return Response.json({ error: "この本体はまだグループに結び付いていません" }, { status: 409 });
+    }
+    try {
+      if (arrivePath) {
+        if (req.method !== "POST") return methodNotAllowed();
+        return await arrive(decodeURIComponent(arrivePath[1]), device.household_id, reservations);
+      }
+      if (req.method === "GET") {
+        const range = parseDeviceRange(new URL(req.url).searchParams);
+        const provider = await reservations.providerFor(device.household_id);
+        return Response.json(reservationListBody(provider.kind, await provider.list(range)));
+      }
+      if (req.method !== "POST") return methodNotAllowed();
+      return await createPending(req, device.household_id, reservations);
+    } catch (e) {
+      return reservationErrorResponse(e);
+    }
   }
 
   if (path.endsWith("/state")) {
@@ -87,14 +116,10 @@ export async function handleDeviceRequest(
         status: 400,
       });
     }
-    const visit = Object.fromEntries(
-      VISIT_FIELDS.filter((f) => f in body).map((f) => [f, body[f]]),
-    );
-
     const { data, error } = await admin.rpc("device_put_visit", {
       p_device_id: device.device_id,
       p_visit_id: visitPath[1].toLowerCase(),
-      p_visit: visit,
+      p_visit: visitFields(body),
       p_messages: messages,
     });
     if (error) {
@@ -104,6 +129,50 @@ export async function handleDeviceRequest(
   }
 
   return Response.json({ error: "not found" }, { status: 404 });
+}
+
+// 店舗の設定。中継は設定を 1.5 秒で読むので Google は呼ばず、読めなければ shop だけを null にする
+async function readShop(admin: DeviceAdmin, householdId: string | null): Promise<unknown> {
+  if (!householdId) return null;
+  try {
+    const { data, error } = await admin.rpc("device_shop_profile", {
+      p_household_id: householdId,
+    });
+    if (error) throw error;
+    return data ?? null;
+  } catch (e) {
+    console.warn("shop profile unavailable", e);
+    return null;
+  }
+}
+
+// 仮予約を含む既存の予約と時間が重なれば受け付けない
+async function createPending(
+  req: Request,
+  householdId: string,
+  deps: DeviceReservationDeps,
+): Promise<Response> {
+  const { input, visitId } = parseAiReservation(await readJsonObject(req));
+  if (visitId && await deps.visitBelongs(householdId, visitId)) input.visit_id = visitId;
+  const provider = await deps.providerFor(householdId);
+  const write = await provider.createIfFree(input);
+  await deps.notify(
+    reservationNotice(householdId, "reservation_pending", write.reservation, write.dedupeKey("reservation_pending")),
+  );
+  return Response.json(reservationBody(write.reservation), { status: 201 });
+}
+
+async function arrive(
+  id: string,
+  householdId: string,
+  deps: DeviceReservationDeps,
+): Promise<Response> {
+  const provider = await deps.providerFor(householdId);
+  const write = await provider.arrive(id);
+  await deps.notify(
+    reservationNotice(householdId, "reservation_arrived", write.reservation, write.dedupeKey("reservation_arrived")),
+  );
+  return Response.json(reservationBody(write.reservation));
 }
 
 // 本文を JSON のオブジェクトとして読む。だめなら 400 の Response を返す

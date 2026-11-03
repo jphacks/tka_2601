@@ -1,8 +1,6 @@
 // Expo の通知サービスへの送信。一時的な失敗は間を空けて数回試す
 // https://docs.expo.dev/push-notifications/sending-notifications/
 
-import type { Notice } from "./message.ts";
-
 export const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 // Expo が1回で受け付ける通知の数の上限
 export const EXPO_BATCH_SIZE = 100;
@@ -32,16 +30,34 @@ export type SendOptions = {
   delaysMs?: number[];
 };
 
-// 来客時も対応後も、Android の省電力中に遅らせないよう優先度を high にする
-export function buildMessages(tokens: string[], notice: Notice, visitId: string) {
-  return tokens.map((to) => ({
-    to,
-    title: notice.title,
-    body: notice.body,
+export type ExpoRow = {
+  token: string;
+  notification_id: string;
+  kind: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+};
+
+export type ExpoMessage = {
+  to: string;
+  title: string;
+  body: string;
+  sound: string;
+  priority: string;
+  data: Record<string, unknown>;
+};
+
+// どの種類の通知も、Android の省電力中に遅らせないよう優先度を high にする
+export function buildMessages(rows: ExpoRow[]): ExpoMessage[] {
+  return rows.map((row) => ({
+    to: row.token,
+    title: row.title,
+    body: row.body,
     sound: "default",
     priority: "high",
-    // アプリが通知から来客の詳細を開くため
-    data: { visit_id: visitId, kind: notice.kind },
+    // アプリが通知から画面を開くため
+    data: { ...row.data, kind: row.kind, notification_id: row.notification_id },
   }));
 }
 

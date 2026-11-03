@@ -1,5 +1,7 @@
 import { assertEquals, assertRejects, assertStrictEquals } from "jsr:@std/assert@1.0.19";
-import { type DeviceAdmin, handleDeviceRequest } from "./handler.ts";
+import type { NewNotification } from "../_shared/notify.ts";
+import { ProviderError, type Reservation, type ReservationProvider } from "../_shared/reservation.ts";
+import { type DeviceAdmin, type DeviceReservationDeps, handleDeviceRequest } from "./handler.ts";
 
 const device = {
   device_id: "device-1",
@@ -141,17 +143,24 @@ Deno.test("unsupported methods and routes retain 405 and 404 after authenticatio
 });
 
 Deno.test("successful settings and visit requests retain response and RPC payload", async () => {
-  const settings = fakeAdmin([authenticated()]);
+  const shop = { name: "テストのネイルサロン", tone: "very_polite", services: [] };
+  const settings = fakeAdmin([authenticated(), { data: shop, error: null }]);
   const response = await handleDeviceRequest(
     request("/settings", "", "GET"),
     settings.admin,
   );
   assertEquals(await response.json(), {
+    contract_version: 1,
     paired: true,
     mode: "normal",
     away_leave_at_door: false,
     auto_away: false,
     extra_instructions: "",
+    shop,
+  });
+  assertEquals(settings.calls[1], {
+    name: "device_shop_profile",
+    args: { p_household_id: "household-1" },
   });
   const result = { id: "visit-1", status: "ended", applied: true };
   const visit = fakeAdmin([authenticated(), { data: result, error: null }]);
@@ -172,4 +181,181 @@ Deno.test("successful settings and visit requests retain response and RPC payloa
       p_messages: [],
     },
   });
+});
+
+Deno.test("settings keep the existing fields when the shop profile cannot be read", async () => {
+  const replies = [
+    [authenticated(), { data: null, error: failure }],
+    // 応答を用意しないと fake は投げる（通信の失敗の代わり）
+    [authenticated()],
+  ];
+  for (const reply of replies) {
+    const { admin } = fakeAdmin(reply);
+    const response = await handleDeviceRequest(request("/settings", "", "GET"), admin);
+    assertEquals(response.status, 200);
+    const json = await response.json();
+    assertEquals([json.mode, json.shop], ["normal", null]);
+  }
+});
+
+Deno.test("unpaired devices read settings without a shop and cannot use reservations", async () => {
+  const unpaired = { ...device, household_id: null };
+  const { admin, calls } = fakeAdmin([{ data: [unpaired], error: null }]);
+  const response = await handleDeviceRequest(request("/settings", "", "GET"), admin);
+  assertEquals(((await response.json()) as { paired: boolean }).paired, false);
+  assertEquals(calls.length, 1);
+
+  const { deps } = reservationDeps();
+  const second = fakeAdmin([{ data: [unpaired], error: null }]);
+  const blocked = await handleDeviceRequest(request(`/reservations${range}`, "", "GET"), second.admin, deps);
+  assertEquals(blocked.status, 409);
+});
+
+Deno.test("heartbeat writes the device state", async () => {
+  const reply = { last_heartbeat_at: "2026-11-02T00:00:00Z" };
+  const { admin, calls } = fakeAdmin([authenticated(), { data: reply, error: null }]);
+  const response = await handleDeviceRequest(request("/heartbeat"), admin);
+  assertEquals(await response.json(), reply);
+  assertEquals(calls[1], { name: "device_heartbeat", args: { p_device_id: "device-1" } });
+
+  const wrong = fakeAdmin([authenticated()]);
+  assertEquals((await handleDeviceRequest(request("/heartbeat", "", "GET"), wrong.admin)).status, 405);
+});
+
+const range = "?from=2026-11-02T00:00:00Z&to=2026-11-03T00:00:00Z";
+const reservation: Reservation = {
+  id: "r1",
+  customer_name: "田中",
+  customer_phone: null,
+  service_name: null,
+  starts_at: "2026-11-02T05:00:00.000Z",
+  ends_at: "2026-11-02T06:00:00.000Z",
+  status: "pending",
+  source: "ai",
+  note: null,
+  arrived_at: null,
+  visit_id: null,
+  read_only: false,
+};
+const booking = JSON.stringify({
+  customer_name: "田中",
+  starts_at: "2026-11-02T14:00:00+09:00",
+  ends_at: "2026-11-02T15:00:00+09:00",
+  status: "confirmed",
+  visit_id: "visit-1",
+});
+
+function reservationDeps(existing: Reservation[] = [], visitOk = true) {
+  const sent: NewNotification[] = [];
+  const created: unknown[] = [];
+  const ranges: unknown[] = [];
+  const write = { reservation, dedupeKey: (kind: string) => `v1:${kind}` };
+  const provider = {
+    kind: "monban",
+    list(r: unknown) {
+      ranges.push(r);
+      return Promise.resolve(existing);
+    },
+    createIfFree(input: unknown) {
+      if (existing.length > 0) return Promise.reject(new ProviderError(409, "その時間にはすでに予約があります", "reservation_overlap"));
+      created.push(input);
+      return Promise.resolve(write);
+    },
+    arrive: () => Promise.resolve(write),
+  } as unknown as ReservationProvider;
+  const deps: DeviceReservationDeps = {
+    providerFor: () => Promise.resolve(provider),
+    notify(notification) {
+      sent.push(notification);
+      return Promise.resolve();
+    },
+    visitBelongs: () => Promise.resolve(visitOk),
+  };
+  return { deps, sent, created, ranges };
+}
+
+Deno.test("reservations are listed through the provider", async () => {
+  const withContact = { ...reservation, customer_phone: "090-0000-0000", note: "外部の人が書いた文" };
+  const { deps } = reservationDeps([withContact]);
+  const { admin } = fakeAdmin([authenticated()]);
+  const response = await handleDeviceRequest(request(`/reservations${range}`, "", "GET"), admin, deps);
+  const { customer_phone: _phone, note: _note, ...visible } = reservation;
+  // 電話番号とメモは本体の鍵では読めない
+  assertEquals(await response.json(), { provider: "monban", reservations: [visible] });
+
+  const bad = fakeAdmin([authenticated()]);
+  assertEquals((await handleDeviceRequest(request("/reservations", "", "GET"), bad.admin, deps)).status, 400);
+});
+
+Deno.test("the device can read at most 31 days at once", async () => {
+  const { deps, ranges } = reservationDeps();
+  const allowed = fakeAdmin([authenticated()]);
+  const ok = await handleDeviceRequest(
+    request("/reservations?from=2026-11-01T00:00:00Z&to=2026-12-02T00:00:00Z", "", "GET"),
+    allowed.admin,
+    deps,
+  );
+  assertEquals(ok.status, 200);
+  const denied = fakeAdmin([authenticated()]);
+  const tooLong = await handleDeviceRequest(
+    request("/reservations?from=2026-11-01T00:00:00Z&to=2026-12-02T00:00:01Z", "", "GET"),
+    denied.admin,
+    deps,
+  );
+  assertEquals(tooLong.status, 400);
+  assertEquals(ranges.length, 1);
+});
+
+Deno.test("a malformed percent in the reservation id returns 400", async () => {
+  const { deps } = reservationDeps();
+  const { admin } = fakeAdmin([authenticated()]);
+  const response = await handleDeviceRequest(request("/reservations/%E0%A4%A/arrive", "", "POST"), admin, deps);
+  assertEquals(response.status, 400);
+});
+
+Deno.test("reservation times without an offset are rejected", async () => {
+  const { deps, created } = reservationDeps();
+  const { admin } = fakeAdmin([authenticated()]);
+  const body = JSON.stringify({ customer_name: "田中", starts_at: "2026-11-05T14:00:00", ends_at: "2026-11-05T15:00:00" });
+  const response = await handleDeviceRequest(request("/reservations", body, "POST"), admin, deps);
+  assertEquals(response.status, 400);
+  assertEquals(created.length, 0);
+});
+
+Deno.test("AI reservations are always pending and notify the shop", async () => {
+  const { deps, sent, created } = reservationDeps();
+  const { admin } = fakeAdmin([authenticated()]);
+  const response = await handleDeviceRequest(request("/reservations", booking, "POST"), admin, deps);
+  assertEquals(response.status, 201);
+  const input = created[0] as { status: string; source: string; visit_id: string };
+  assertEquals([input.status, input.source, input.visit_id], ["pending", "ai", "visit-1"]);
+  assertEquals(sent.map((n) => [n.kind, n.actor_user_id, n.dedupe_key]), [["reservation_pending", null, "v1:reservation_pending"]]);
+});
+
+Deno.test("AI reservations that overlap an existing one return 409 without writing", async () => {
+  const { deps, sent, created } = reservationDeps([reservation]);
+  const { admin } = fakeAdmin([authenticated()]);
+  const response = await handleDeviceRequest(request("/reservations", booking, "POST"), admin, deps);
+  assertEquals(response.status, 409);
+  assertEquals((await response.json()).code, "reservation_overlap");
+  assertEquals([created.length, sent.length], [0, 0]);
+});
+
+Deno.test("a visit from another shop is not linked but the reservation is still taken", async () => {
+  const { deps, created } = reservationDeps([], false);
+  const { admin } = fakeAdmin([authenticated()]);
+  const response = await handleDeviceRequest(request("/reservations", booking, "POST"), admin, deps);
+  assertEquals(response.status, 201);
+  assertEquals((created[0] as { visit_id: null }).visit_id, null);
+});
+
+Deno.test("arrival is recorded and notified", async () => {
+  const { deps, sent } = reservationDeps();
+  const { admin } = fakeAdmin([authenticated()]);
+  const response = await handleDeviceRequest(request("/reservations/r1/arrive", "", "POST"), admin, deps);
+  assertEquals(response.status, 200);
+  assertEquals(sent[0].kind, "reservation_arrived");
+
+  const wrong = fakeAdmin([authenticated()]);
+  assertEquals((await handleDeviceRequest(request("/reservations/r1/arrive", "", "GET"), wrong.admin, deps)).status, 405);
 });

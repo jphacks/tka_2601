@@ -1,44 +1,38 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { callSeconds, durationLabel, hourMinute } from '../lib/format';
-import { intentLabel, MODE_LABELS, outcomeLabel } from '../lib/labels';
-import type { VisitSummary } from '../lib/types';
+import type { VisitSummary } from '../domain/visit';
+import { hourMinute } from '../lib/format';
+import { intentLabel, outcomeLabel, visitTitle } from '../lib/labels';
+import { intentSymbol } from '../lib/symbols';
 import { colors } from '../theme';
 import { ChevronRight } from './icons';
-import { IntentBadge } from './ui';
+import { RoundIcon } from './ui';
 
-// 来客一覧の1行。意図、会社名、時刻、対応、訪問者の最初の発話、モードと通話時間
+// 来客一覧の1行。左に意図の丸、会社名か意図、時刻、対応、訪問者の最初の発話
 export function VisitRow({ visit, onPress }: { visit: VisitSummary; onPress: () => void }) {
-  const seconds = callSeconds(visit.answered_at, visit.ended_at);
-  const meta = [MODE_LABELS[visit.mode], seconds !== null ? `通話 ${durationLabel(seconds)}` : null]
-    .filter(Boolean)
-    .join('・');
+  const time = hourMinute(new Date(visit.chimed_at));
+  const outcome = outcomeLabel(visit);
+  const excerpt = visit.first_visitor_text ? `「${visit.first_visitor_text}」` : '文字起こしなし';
 
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
+      accessibilityLabel={[intentLabel(visit), visit.company, time, outcome, excerpt].filter(Boolean).join('、')}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
+      <RoundIcon name={intentSymbol(visit.intent)} filled={visit.intent === 'emergency'} />
       <View style={styles.body}>
         <View style={styles.titleLine}>
-          <IntentBadge label={intentLabel(visit)} emphasis={visit.intent === 'emergency'} />
-          {visit.company ? (
-            <Text style={styles.company} numberOfLines={1}>
-              {visit.company}
-            </Text>
-          ) : (
-            <Text style={styles.noCompany} numberOfLines={1}>
-              会社名なし
-            </Text>
-          )}
-          <Text style={styles.time}>{hourMinute(new Date(visit.chimed_at))}</Text>
+          <Text style={styles.title} numberOfLines={1}>
+            {visitTitle(visit)}
+          </Text>
+          <Text style={styles.time}>{time}</Text>
         </View>
-        <Text style={styles.outcome}>{outcomeLabel(visit)}</Text>
+        <Text style={styles.outcome}>{outcome}</Text>
         <Text style={styles.excerpt} numberOfLines={1}>
-          {visit.first_visitor_text ? `「${visit.first_visitor_text}」` : '文字起こしなし'}
+          {excerpt}
         </Text>
-        <Text style={styles.meta}>{meta}</Text>
       </View>
       <ChevronRight />
     </Pressable>
@@ -49,20 +43,18 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
     paddingTop: 12,
     paddingBottom: 12,
-    paddingLeft: 16,
+    paddingLeft: 14,
     paddingRight: 12,
     backgroundColor: colors.card,
   },
   pressed: { backgroundColor: colors.separator },
   body: { flex: 1, minWidth: 0, gap: 3 },
-  titleLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  company: { flex: 1, minWidth: 0, fontSize: 17, fontWeight: '600', color: colors.text },
-  noCompany: { flex: 1, minWidth: 0, fontSize: 17, color: colors.textSecondary },
+  titleLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  title: { flex: 1, minWidth: 0, fontSize: 17, fontWeight: '600', color: colors.text },
   time: { fontSize: 15, color: colors.textSecondary, fontVariant: ['tabular-nums'] },
   outcome: { fontSize: 15, lineHeight: 22, color: colors.text },
   excerpt: { fontSize: 14, lineHeight: 20, color: colors.textSecondary },
-  meta: { fontSize: 13, lineHeight: 16, color: colors.textSecondary },
 });

@@ -3,10 +3,10 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { NavBar, Screen } from '../../components/Screen';
-import { getDevice, updateDevice } from '../../lib/api';
+import type { Device } from '../../domain/device';
 import { useHousehold } from '../../lib/auth';
+import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
-import type { Device } from '../../lib/types';
 import { colors, radius } from '../../theme';
 
 // house_rules 全体を 800 字に収めるための上限。DB の check 制約と同じ値
@@ -19,7 +19,8 @@ export default function InstructionsScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getDevice(household.id)
+    repositories.devices
+      .get(household.id)
       .then((d) => {
         setDevice(d);
         setText(d?.extra_instructions ?? '');
@@ -34,7 +35,7 @@ export default function InstructionsScreen() {
     if (!device) return;
     setSaving(true);
     try {
-      await updateDevice(device.id, { extra_instructions: text.trim() });
+      await repositories.devices.update(device.id, { extra_instructions: text.trim() });
       router.back();
     } catch (e) {
       Alert.alert('保存できませんでした', errorMessage(e) ?? '');
@@ -49,7 +50,7 @@ export default function InstructionsScreen() {
     <Screen>
       <NavBar
         title="追加の指示"
-        backLabel="設定"
+        backLabel="受け答え"
         onBack={() => router.back()}
         right={
           <Pressable

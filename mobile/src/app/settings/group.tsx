@@ -5,10 +5,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NavBar, Screen } from '../../components/Screen';
 import { Card, GroupHeader, LinkRow, Separator } from '../../components/ui';
-import { listMembers } from '../../lib/api';
+import type { Member } from '../../domain/group';
 import { useAuth, useHousehold } from '../../lib/auth';
+import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
-import type { Member } from '../../lib/types';
+import { SYMBOLS } from '../../lib/symbols';
 import { colors } from '../../theme';
 
 function initial(member: Member): string {
@@ -25,7 +26,8 @@ export default function GroupScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      listMembers()
+      repositories.groups
+        .listMembers()
         .then((rows) => {
           setMembers(rows);
           setError(null);
@@ -76,7 +78,12 @@ export default function GroupScreen() {
         </Card>
 
         <Card style={styles.inviteCard}>
-          <LinkRow label="家族を招待する" labelColor={colors.navy} onPress={() => router.push('/settings/invite')} />
+          <LinkRow
+            label="メンバーを招待する"
+            icon={SYMBOLS.personAdd}
+            labelColor={colors.navy}
+            onPress={() => router.push('/settings/invite')}
+          />
         </Card>
       </ScrollView>
     </Screen>

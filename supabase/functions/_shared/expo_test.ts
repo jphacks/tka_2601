@@ -1,8 +1,6 @@
-// deno test supabase/functions/push/expo_test.ts
+// deno test supabase/functions/_shared/expo_test.ts
 import { assertEquals, assertRejects } from "jsr:@std/assert@1.0.19";
 import { buildMessages, ExpoError, sendBatch, ticketOutcome } from "./expo.ts";
-
-const notice = { kind: "chime" as const, title: "来客があります", body: "10:32 にチャイムが鳴りました" };
 
 // 決めた順に応答を返す fetch。呼ばれた回数を数える
 function fakeFetch(responses: (Response | Error)[]) {
@@ -19,17 +17,25 @@ function fakeFetch(responses: (Response | Error)[]) {
 const ok = () => Response.json({ data: [{ status: "ok", id: "ticket-1" }] });
 const noSleep = { sleep: () => Promise.resolve() };
 
-Deno.test("通知は来客時も対応後も優先度 high で、data に visit_id と種類を入れる", () => {
-  assertEquals(buildMessages(["ExponentPushToken[a]"], notice, "v1"), [{
+Deno.test("どの種類の通知も優先度 high で、data に元の値と種類と通知の id を入れる", () => {
+  const row = {
+    token: "ExponentPushToken[a]",
+    notification_id: "n1",
+    kind: "chime",
+    title: "来客があります",
+    body: "10:32 にチャイムが鳴りました",
+    data: { visit_id: "v1" },
+  };
+  assertEquals(buildMessages([row]), [{
     to: "ExponentPushToken[a]",
     title: "来客があります",
     body: "10:32 にチャイムが鳴りました",
     sound: "default",
     priority: "high",
-    data: { visit_id: "v1", kind: "chime" },
+    data: { visit_id: "v1", kind: "chime", notification_id: "n1" },
   }]);
-  const ended = buildMessages(["t"], { ...notice, kind: "ended" }, "v1")[0];
-  assertEquals([ended.priority, ended.data.kind], ["high", "ended"]);
+  const reservation = buildMessages([{ ...row, kind: "reservation_created", data: { reservation_id: "r1" } }])[0];
+  assertEquals([reservation.priority, reservation.data.kind, reservation.data.reservation_id], ["high", "reservation_created", "r1"]);
 });
 
 Deno.test("503 のあと成功すれば、2回目の ticket を返す", async () => {

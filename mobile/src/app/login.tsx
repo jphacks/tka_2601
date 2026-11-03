@@ -1,14 +1,16 @@
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { router } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BackgroundShapes } from '../components/Screen';
 import { PrimaryButton, TextField } from '../components/ui';
-import { APP_NAME } from '../lib/app';
+import { APP_NAME, PRIVACY_POLICY_URL } from '../lib/app';
 import { signInWithApple, signInWithEmail, signInWithGoogle } from '../lib/authActions';
 import { errorMessage } from '../lib/errors';
+import { features } from '../lib/features';
 import { colors } from '../theme';
 
 export default function LoginScreen() {
@@ -19,7 +21,7 @@ export default function LoginScreen() {
   const [appleAvailable, setAppleAvailable] = useState(false);
 
   useEffect(() => {
-    AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
+    if (features.socialLogin) AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
   }, []);
 
   async function run(kind: 'email' | 'apple' | 'google', action: () => Promise<void>) {
@@ -90,31 +92,44 @@ export default function LoginScreen() {
             </View>
           </View>
 
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>または</Text>
-            <View style={styles.dividerLine} />
-          </View>
+          {features.socialLogin ? (
+            <>
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>または</Text>
+                <View style={styles.dividerLine} />
+              </View>
 
-          <View style={styles.providers}>
-            {appleAvailable ? (
-              <AppleAuthentication.AppleAuthenticationButton
-                buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-                buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-                cornerRadius={12}
-                style={styles.appleButton}
-                onPress={() => run('apple', signInWithApple)}
-              />
-            ) : null}
-            <Pressable
-              onPress={() => run('google', signInWithGoogle)}
-              disabled={busy !== null}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.googleButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.googleLabel}>Google でログイン</Text>
-            </Pressable>
-          </View>
+              <View style={styles.providers}>
+                {appleAvailable ? (
+                  <AppleAuthentication.AppleAuthenticationButton
+                    buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                    buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+                    cornerRadius={12}
+                    style={styles.appleButton}
+                    onPress={() => run('apple', signInWithApple)}
+                  />
+                ) : null}
+                <Pressable
+                  onPress={() => run('google', signInWithGoogle)}
+                  disabled={busy !== null}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.googleButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.googleLabel}>Google でログイン</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : null}
+
+          <Pressable
+            onPress={() => WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL)}
+            accessibilityRole="link"
+            hitSlop={8}
+            style={({ pressed }) => [styles.privacy, pressed && styles.pressed]}
+          >
+            <Text style={styles.privacyLabel}>プライバシーポリシー</Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -147,5 +162,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   googleLabel: { fontSize: 17, fontWeight: '600', color: colors.text },
+  privacy: { alignSelf: 'center' },
+  privacyLabel: { fontSize: 13, color: colors.textSecondary },
   pressed: { opacity: 0.6 },
 });

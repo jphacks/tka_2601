@@ -1,4 +1,4 @@
-// Supabase の列の値（supabase/README.md の「列の値」）。acquaintance は追加を依頼中
+// 来客の記録。値はボイスエージェントが書くので、知らない値は infrastructure の変換で丸める
 export type Mode = 'normal' | 'omakase' | 'away' | 'off';
 export type VisitStatus = 'ringing' | 'in_call' | 'ended' | 'missed';
 export type Intent = 'delivery' | 'sales' | 'service' | 'acquaintance' | 'emergency' | 'unknown';
@@ -40,23 +40,4 @@ export type VisitMessage = {
 // 一覧の1行。訪問者の最初の発話を添える
 export type VisitSummary = Visit & { first_visitor_text: string | null };
 
-export type Device = {
-  id: string;
-  household_id: string;
-  name: string | null;
-  mode: Mode;
-  away_leave_at_door: boolean;
-  auto_away: boolean;
-  extra_instructions: string;
-};
-
-export type Household = { id: string; name: string };
-
-export type Member = {
-  user_id: string;
-  full_name: string | null;
-  email: string | null;
-  role: 'owner' | 'member';
-};
-
-export type InvitePreview = { household_name: string; inviter_name: string | null };
+export const VISITS_PAGE_SIZE = 50;

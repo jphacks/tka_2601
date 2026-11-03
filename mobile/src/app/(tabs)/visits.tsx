@@ -1,18 +1,18 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 
-import { Gear } from '../components/icons';
-import { Screen } from '../components/Screen';
-import { CenterMessage, Separator } from '../components/ui';
-import { VisitRow } from '../components/VisitRow';
-import { listVisits, VISITS_PAGE_SIZE } from '../lib/api';
-import { useHousehold } from '../lib/auth';
-import { errorMessage } from '../lib/errors';
-import { dayKey, sectionTitle } from '../lib/format';
-import type { VisitSummary } from '../lib/types';
-import { colors, radius } from '../theme';
+import { Screen } from '../../components/Screen';
+import { CenterMessage, LargeTitle, Separator } from '../../components/ui';
+import { VisitRow } from '../../components/VisitRow';
+import { appendUnique } from '../../domain/collections';
+import { VISITS_PAGE_SIZE, type VisitSummary } from '../../domain/visit';
+import { useHousehold } from '../../lib/auth';
+import { repositories } from '../../lib/container';
+import { errorMessage } from '../../lib/errors';
+import { useLiveRefresh } from '../../lib/liveRefresh';
+import { dayKey, sectionTitle } from '../../lib/format';
+import { colors, radius } from '../../theme';
 
 type Section = { key: string; title: string; data: VisitSummary[] };
 
@@ -31,23 +31,24 @@ function groupByDay(visits: VisitSummary[]): Section[] {
 
 export default function VisitListScreen() {
   const household = useHousehold();
-  const insets = useSafeAreaInsets();
   const [visits, setVisits] = useState<VisitSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const loadingMore = useRef(false);
-  const page = useRef(0);
+  // 読み直しの回数。読み直す前に始めた続きの読み込みの結果を捨てる
+  const generation = useRef(0);
 
   const loadFirstPage = useCallback(async () => {
+    const current = ++generation.current;
     try {
-      const rows = await listVisits(household.id, 0);
-      page.current = 0;
+      const rows = await repositories.visits.list(household.id);
+      if (current !== generation.current) return;
       setVisits(rows);
       setHasMore(rows.length === VISITS_PAGE_SIZE);
       setError(null);
     } catch (e) {
-      setError(errorMessage(e) ?? '読み込めませんでした');
+      if (current === generation.current) setError(errorMessage(e) ?? '読み込めませんでした');
     }
   }, [household.id]);
 
@@ -58,6 +59,8 @@ export default function VisitListScreen() {
     }, [loadFirstPage]),
   );
 
+  useLiveRefresh(loadFirstPage);
+
   async function refresh() {
     setRefreshing(true);
     await loadFirstPage();
@@ -65,12 +68,14 @@ export default function VisitListScreen() {
   }
 
   async function loadMore() {
-    if (!hasMore || loadingMore.current || !visits) return;
+    const last = visits?.[visits.length - 1];
+    if (!hasMore || loadingMore.current || !last) return;
     loadingMore.current = true;
+    const started = generation.current;
     try {
-      const next = await listVisits(household.id, page.current + 1);
-      page.current += 1;
-      setVisits((current) => [...(current ?? []), ...next]);
+      const next = await repositories.visits.list(household.id, { at: last.chimed_at, id: last.id });
+      if (started !== generation.current) return;
+      setVisits((current) => appendUnique(current ?? [], next));
       setHasMore(next.length === VISITS_PAGE_SIZE);
     } finally {
       loadingMore.current = false;
@@ -79,30 +84,12 @@ export default function VisitListScreen() {
 
   const sections = useMemo(() => groupByDay(visits ?? []), [visits]);
 
-  const header = (
-    <View>
-      <View style={styles.topBar}>
-        <Pressable
-          onPress={() => router.push('/settings')}
-          accessibilityRole="button"
-          accessibilityLabel="設定"
-          style={({ pressed }) => [styles.gear, pressed && styles.pressed]}
-        >
-          <Gear />
-        </Pressable>
-      </View>
-      <Text style={styles.largeTitle} accessibilityRole="header">
-        来客
-      </Text>
-    </View>
-  );
-
   return (
-    <Screen>
+    <Screen waves={false}>
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
-        ListHeaderComponent={header}
+        ListHeaderComponent={<LargeTitle title="来客" />}
         stickySectionHeadersEnabled={false}
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionTitle} accessibilityRole="header">
@@ -114,7 +101,7 @@ export default function VisitListScreen() {
           const last = index === section.data.length - 1;
           return (
             <View style={[styles.cell, first && styles.cellFirst, last && styles.cellLast]}>
-              {first ? null : <Separator />}
+              {first ? null : <Separator inset={60} />}
               <VisitRow visit={item} onPress={() => router.push({ pathname: '/visits/[id]', params: { id: item.id } })} />
             </View>
           );
@@ -133,19 +120,16 @@ export default function VisitListScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.navy} />}
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+        contentContainerStyle={styles.content}
       />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  topBar: { height: 44, flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 8 },
-  gear: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  pressed: { opacity: 0.5 },
-  largeTitle: { paddingHorizontal: 20, paddingBottom: 4, fontSize: 34, fontWeight: '700', color: colors.text },
+  content: { paddingBottom: 32 },
   sectionTitle: {
-    paddingTop: 18,
+    paddingTop: 14,
     paddingHorizontal: 20,
     paddingBottom: 8,
     fontSize: 15,

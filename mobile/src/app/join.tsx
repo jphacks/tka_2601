@@ -6,11 +6,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { People } from '../components/icons';
 import { BackgroundShapes } from '../components/Screen';
 import { CenterMessage, PrimaryButton, TextButton } from '../components/ui';
-import { acceptInvite, getInvitePreview } from '../lib/api';
+import type { InvitePreview } from '../domain/group';
 import { useAuth } from '../lib/auth';
+import { repositories } from '../lib/container';
 import { errorMessage } from '../lib/errors';
 import { setPendingInvite } from '../lib/pendingInvite';
-import type { InvitePreview } from '../lib/types';
 import { colors } from '../theme';
 
 // 招待リンク（tka2601://join?token=...）か QR コードから開く。ログイン後だけ開ける
@@ -24,7 +24,8 @@ export default function JoinScreen() {
   useEffect(() => {
     setPendingInvite(null);
     if (!token) return;
-    getInvitePreview(token)
+    repositories.groups
+      .getInvitePreview(token)
       .then(setPreview)
       .catch(() => setPreview(null));
   }, [token]);
@@ -33,7 +34,7 @@ export default function JoinScreen() {
     if (!token) return;
     setBusy(true);
     try {
-      await acceptInvite(token);
+      await repositories.groups.acceptInvite(token);
       await refreshMembership();
       router.replace('/');
     } catch (error) {
@@ -79,7 +80,7 @@ export default function JoinScreen() {
           <People />
         </View>
         <Text style={styles.title} accessibilityRole="header">
-          {`グループ「${preview.household_name}」に\n参加しますか`}
+          {`「${preview.household_name}」に\n参加しますか`}
         </Text>
         {preview.inviter_name ? <Text style={styles.inviter}>{`${preview.inviter_name} さんからの招待`}</Text> : null}
       </View>

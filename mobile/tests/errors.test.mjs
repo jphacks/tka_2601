@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { Cancelled, errorMessage, hasErrorCode } from '../src/lib/errors.ts';
+import { ApiError, Cancelled, errorMessage, hasErrorCode } from '../src/lib/errors.ts';
 
 test('only explicit authentication cancellation suppresses the message', () => {
   assert.equal(errorMessage(new Cancelled()), null);
@@ -56,4 +56,10 @@ test('native cancellation codes are checked without assuming the rejection shape
   for (const error of [null, undefined, code, 42, {}, { code: 'ERR_REQUEST_FAILED' }, { code: 1 }]) {
     assert.equal(hasErrorCode(error, code), false);
   }
+});
+
+test('Edge Function の code を日本語にする', () => {
+  assert.equal(errorMessage(new ApiError('x', 503, 'square_not_configured')), 'Square の接続が設定されていません');
+  assert.equal(errorMessage(new ApiError('サーバーの文', 409)), 'サーバーの文');
+  assert.equal(errorMessage(new ApiError('サーバーの文', 409, 'other')), 'サーバーの文');
 });

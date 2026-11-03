@@ -46,7 +46,7 @@ const OUTCOME_TEXTS: Record<NonNullable<Visit["outcome"]>, string> = {
   delivery_slip: "不在票をお願いしました",
   declined: "お断りしました",
   callback: "改めて連絡するようお願いしました",
-  escalated: "家の者に連絡すると伝えました",
+  escalated: "担当者に連絡すると伝えました",
   none: "特に対応はしていません",
 };
 

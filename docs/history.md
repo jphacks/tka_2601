@@ -1,6 +1,6 @@
 # 会話履歴とスマホアプリ連携 要件（Supabase）
 
-MONBAN の住人アプリと、その裏側の Supabase について書く。来客ごとの会話と対応結果を Supabase に保存し、住人のスマホアプリから見られるようにするための要件と、現在の実装をまとめる。デバイス全体の仕様は [spec.md](spec.md)、作業計画は [plan.md](plan.md) にある。
+MONBAN のアプリと、その裏側の Supabase について書く。来客ごとの会話と対応結果を Supabase に保存し、スマホアプリから見られるようにするための要件と、現在の実装をまとめる。デバイス全体の仕様は [spec.md](spec.md)、作業計画は [plan.md](plan.md)、予約と通知の種類、店舗の設定は [reservations.md](reservations.md) にある。この文書の「住人」は、アプリを使う店の人や家庭の人を指す。
 
 実装の細部は、それぞれの README を正とする。
 
@@ -109,7 +109,8 @@ React Native（Expo SDK 58）で `mobile/` に実装した。画面は Claude De
 | `visits` | `id`（本体が生成）、`household_id`、`device_id`、`mode`、`chimed_at`、`answered_at`、`ended_at`、`status`、`intent`、`company`、`outcome`、`end_reason` | 来客1件 |
 | `visit_messages` | `visit_id`、`household_id`、`seq`、`speaker`、`text`、`spoken_at` | 会話の1発話。(`visit_id`, `seq`) は一意 |
 | `push_tokens` | `user_id`、`token`、`platform` | 通知の送り先 |
-| `push_deliveries` | 端末ごとの通知の送信待ち | Expo の一時的な失敗を pg_cron で送り直す |
+| `push_deliveries` | 端末ごとの通知の送信待ち | Expo の一時的な失敗を pg_cron で送り直す。`notifications` に結び付く |
+| `shop_profiles`、`shop_services`、`reservations`、`calendar_connections`、`notification_kinds`、`notifications`、`notification_preferences`、`notification_read_states` | 店舗の設定、予約帳、Google カレンダーの接続、通知 | [reservations.md](reservations.md) を参照 |
 
 主な列の値は次のとおり。[spec.md](spec.md) の状態遷移と対応結果も、この値に合わせる。
 
@@ -137,6 +138,7 @@ React Native（Expo SDK 58）で `mobile/` に実装した。画面は Claude De
 
 ## 8. 通知
 
+- 通知の種類、種類ごとのオンオフ、通知の一覧は [reservations.md 4章](reservations.md#4-通知) にある。この章は来客の通知について書く。
 - 来客時（来客の作成）と対応後（終話への更新）の2回送る。応答しなかった来客には対応後の通知を送らない。優先度は high にする。
 - 対応後の通知には、意図、会社名、対応と、訪問者の最初の発話の先頭 40 字を載せる。
 - 回線断から回復して、終話済みの来客が初めて届いたときは、対応後の通知だけを送る。

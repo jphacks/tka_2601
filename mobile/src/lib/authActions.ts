@@ -2,9 +2,10 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 
+import { repositories } from './container';
 import { Cancelled, hasErrorCode } from './errors';
 import { unregisterPushToken } from './push';
-import { requireSupabase } from './supabase';
+import { requireSupabase } from '../infrastructure/supabase/client';
 
 export async function signInWithEmail(email: string, password: string): Promise<void> {
   const { error } = await requireSupabase().auth.signInWithPassword({ email: email.trim(), password });
@@ -73,11 +74,28 @@ export async function signInWithGoogle(): Promise<void> {
   if (exchangeError) throw exchangeError;
 }
 
-export async function signOut(): Promise<void> {
+// 端末を通知の送り先から外せなかったときの失敗。店の通知が届き続けるので、画面で確かめる
+export class PushCleanupFailed extends Error {}
+
+// keepPushToken は、外せなくてもログアウトすると利用者が決めたときに付ける
+export async function signOut({ keepPushToken = false }: { keepPushToken?: boolean } = {}): Promise<void> {
   const supabase = requireSupabase();
   const { data } = await supabase.auth.getSession();
   const userId = data.session?.user.id;
-  if (userId) await unregisterPushToken(userId).catch(() => undefined);
+  if (userId && !keepPushToken) {
+    try {
+      await unregisterPushToken(userId);
+    } catch (error) {
+      throw new PushCleanupFailed(error instanceof Error ? error.message : String(error));
+    }
+  }
   const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+
+// アカウントを消して、この端末のセッションも消す。サーバーのセッションは残っていないので local だけでよい
+export async function deleteAccount(): Promise<void> {
+  await repositories.account.remove();
+  const { error } = await requireSupabase().auth.signOut({ scope: 'local' });
   if (error) throw error;
 }
