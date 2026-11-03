@@ -364,6 +364,34 @@ Deno.test("OAuth: 期限切れ、不明、別の予約先の完了の値は 404"
   assertEquals(state.connection, null);
 });
 
+// 予約先が Google のまま接続し直す。email は Google の userinfo の応答
+async function reconnect(email: string) {
+  const google = fakeGoogle((url) =>
+    url.pathname === "/token" ? Response.json({ access_token: "a", refresh_token: "r" }) : Response.json({ email })
+  );
+  const harness = setup({ config, fetch: google.fetch }, { connection: { ...baseConnection }, provider: "google_calendar" });
+  const started = await handleReservationsRequest(request("/google/start", "POST", { return_url: "tka2601://s" }), harness.deps);
+  const oauthState = new URL((await started.json()).url).searchParams.get("state");
+  const code = pendingCode(await handleReservationsRequest(request(`/google/callback?state=${oauthState}&code=abc`), harness.deps), "google");
+  const res = await handleReservationsRequest(request("/google/complete", "POST", { code }), harness.deps);
+  assertEquals(res.status, 200);
+  return { ...harness, json: await res.json() };
+}
+
+Deno.test("OAuth: 予約先が Google のとき、別のアカウントで接続し直すと予約帳に戻し、予約の読み書きを止めない", async () => {
+  const { state, json } = await reconnect("other@example.com");
+  // カレンダーは選び直しになるので、Google を予約先に残さない
+  assertEquals(state.connection?.calendar_id, null);
+  assertEquals(state.provider, "monban");
+  assertEquals([json.provider, json.google.connected, json.google.calendar_id], ["monban", true, null]);
+});
+
+Deno.test("OAuth: 予約先が Google のとき、同じアカウントで接続し直すとカレンダーと予約先を残す", async () => {
+  const { state, json } = await reconnect("shop@example.com");
+  assertEquals([state.connection?.calendar_id, state.connection?.sync_token], ["cal@example.com", "token-1"]);
+  assertEquals([state.provider, json.provider], ["google_calendar", "google_calendar"]);
+});
+
 Deno.test("OAuth: 拒否と更新トークンのない応答はアプリへ結果を返し、接続を作らない", async () => {
   const google = fakeGoogle(() => Response.json({ access_token: "access" }));
   const { deps, state } = setup({ config, fetch: google.fetch });
@@ -509,6 +537,24 @@ Deno.test("Square のアカウントが別の店で使われていれば確定�
   const res = await handleReservationsRequest(request("/square/complete", "POST", { code }), deps);
   assertEquals([res.status, (await res.json()).code], [409, "square_merchant_in_use"]);
   assertEquals(state.square?.household_id, "other-shop");
+});
+
+Deno.test("Square: 確認のあとに別の店が先に結び付けて一意制約で落ちても、500 でなく 409 を返す", async () => {
+  const square = fakeSquare((url) =>
+    url.pathname === "/oauth2/token"
+      ? Response.json({ access_token: "access", refresh_token: "refresh", merchant_id: "m1", expires_at: "2026-12-01T00:00:00Z" })
+      : Response.json({})
+  );
+  const { deps } = setup({ squareConfig, fetch: square.fetch });
+  const started = await handleReservationsRequest(request("/square/start", "POST", { return_url: "tka2601://s" }), deps);
+  const oauthState = new URL((await started.json()).url).searchParams.get("state");
+  const code = pendingCode(await handleReservationsRequest(request(`/square/callback?state=${oauthState}&code=abc`), deps), "square");
+  const racing = {
+    ...deps,
+    store: { ...deps.store, saveSquareConnection: () => Promise.reject({ code: "23505", message: "duplicate key value" }) },
+  };
+  const res = await handleReservationsRequest(request("/square/complete", "POST", { code }), racing);
+  assertEquals([res.status, (await res.json()).code], [409, "square_merchant_in_use"]);
 });
 
 Deno.test("Square の接続の断りと失敗はアプリに伝える", async () => {
