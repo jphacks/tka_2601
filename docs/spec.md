@@ -363,11 +363,12 @@ FastAPI（`backend/voice-agent`）に、PSoC 6 用の WebSocket の受け口 `/a
 | 方向 | 内容 |
 |---|---|
 | PSoC 6 → 中継 | 最初に開始の JSON（`{"type":"start","visit_id":…,"mode":…,"device_key":…}`）を 5 秒以内に送る。続けて 16 kHz・16bit・モノラルの PCM をバイナリで 20 ms（640 B）ずつ |
-| 中継 → PSoC 6 | `{"type":"ready"}`。設定を読み、部屋に入り、エージェントを呼んだ後に送る。PSoC 6 の「2 秒以内につながる」の計測はここまでとする |
+| 中継 → PSoC 6 | `{"type":"ready"}`。設定を読み、部屋に入り、エージェントを呼び、エージェントが部屋に入る（最大 10 秒待つ）のを確かめた後に送る。PSoC 6 の「2 秒以内につながる」の計測は `ready` までとするが、エージェントの参加待ちのため `ready` は最大 10 秒遅れることがある。2 秒を超えた分が参加待ちによるものかを見分けられるよう、`ready` までの所要時間は参加待ちの時間と分けて記録する |
 | 中継 → PSoC 6 | エージェントの声を 16 kHz・16bit・モノラルの PCM にしてバイナリで 20 ms（640 B）ずつ送る |
 | 中継 → PSoC 6 | JSON のイベント。確定した文字起こし（`{"type":"transcript","speaker":"visitor"\|"ai","text":…}`）、エージェントの状態（`{"type":"agent_state","state":"speaking"\|"listening"\|"thinking"}`）、エラー（`{"type":"error","code":…,"message":…}` の後に閉じる） |
 | PSoC 6 → 中継 | 終了の JSON（`{"type":"end"}`）。中継は部屋から抜けて閉じる |
 
+- エラーコードのうち `agent_unavailable`（1011 で閉じる）は、LiveKit に入れない、エージェントを呼べない、エージェントが 10 秒以内に部屋に入らない（`ready` の前）、通話中に最後のエージェントが部屋を抜けた、のいずれかを表す。ほかのコードと上限値は `backend/voice-agent/README.md` にある。
 - 中継は LiveKit の Python SDK で部屋に参加し、PSoC 6 の音を音声トラックとして流し、エージェントの音声トラックを受けて 16 kHz に変換する。エージェントが話していない間の無音は送らない。
 - 文字起こしは、エージェントが流す `lk.transcription` のうち確定したものを JSON にして渡す。`speaker` の値は Supabase の `visit_messages.speaker` と同じにした。
 - 認証は今の API キー（`Authorization: Bearer`）を使う。デバイス鍵は、家の設定を読むことと会話の文字を書くことに使う。どちらも Supabase に届かなくても会話はできる。
