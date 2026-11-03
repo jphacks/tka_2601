@@ -1,0 +1,16 @@
+wifi_config.h
+api_config.h
+upload_config.h
+servo_config.h
+.wifi-config-*
+.api-config-*
+.upload-config-*
+.env
+.env.*
+!.env.example
+.build/
+build/
+.host-build/
+calibration_ui/.runtime/
+__pycache__/
+node_modules/
