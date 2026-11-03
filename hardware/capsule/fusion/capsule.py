@@ -503,34 +503,44 @@ def rack_outline(m, pa_deg, backlash, y_pitch, y_bottom, z0, z1, zt0, zt1, phase
 
 # ---------------------------------------------------------------- pusher (numbers from kotori v3.1)
 CLR, BACK_T = 0.25, 1.6
-SV_L, SV_W, SV_H, SV_SH = 20.0, 8.3, 17.3, 5.0
+POCKET, RAIL_CLR = 0.4, 0.35                # printed holes come out small; servo and speaker sit loose and are hot-glued
+# FS0307: official 20 x 8.3 x 17.3 is the body without its ears; the user's part measures 9 thick, 27 ear to ear.
+# SV_SH = shaft axis to the end wall the lead leaves from (community 4.5, photo 4.2, not measured yet).
+# The servo goes in with shaft and lead towards the rail. Glued with the pinion already on the rack, so the mesh sets its y.
+SV_L, SV_W, SV_H, SV_SH = 20.0, 9.0, 17.3, 4.5
+SV_EAR_SPAN, SV_EAR_T, SV_EAR_UP = 27.9, 1.0, 13.0   # tip to tip (largest source), thickness, underside above the case bottom
+SV_BOSS_H, SV_BOSS_D, SV_STUB = 3.5, 7.0, 3.8        # boss above the case top and white stub above it: photo estimates
+LEAD_W, LEAD_T, LEAD_ON_BODY = 2.4, 0.8, 7.0         # 3-wire ribbon, its distance from the case bottom (from photos)
 GM, GN, GT, GGAP, HUB_D, HUB_DEP, RK_B, STROKE = 0.75, 12, 3.0, 2.0, 5.0, 2.0, 3.0, 4.0
 RP = GM * GN / 2
 RO = RP + 0.85 * GM
 YS = RP + (0.25 * GM + RK_B) / 2
 HR = 1.125 * GM + RK_B / 2
-ZS = max(BACK_T + 0.3 + RO, BACK_T + CLR + 1 + SV_W / 2)
-X_CT = -(GT / 2 + GGAP)
+ZS = max(1.0 + 0.3 + RO, 1.0 + POCKET + SV_W / 2)   # the rail no longer sits behind the servo, so the servo moves back
+X_CT = -(GT / 2 + 0.3 + SV_BOSS_H)
 X_CB = X_CT - SV_H
-Y_ST = YS + SV_SH
-Y_SB = Y_ST - SV_L
+Y_SB = YS - SV_SH
+Y_ST = Y_SB + SV_L
 Z_SB, Z_SF = ZS - SV_W / 2, ZS + SV_W / 2
+Y_E0, Y_E1 = (Y_SB + Y_ST - SV_EAR_SPAN) / 2, (Y_SB + Y_ST + SV_EAR_SPAN) / 2
+X_E0, X_E1 = X_CB + SV_EAR_UP, X_CB + SV_EAR_UP + SV_EAR_T
 RAIL = 6.0
 RAIL_R = 0.5                               # corner radius of the rail; the tunnels follow it
-Y_T1 = Y_SB - CLR - 0.8
-Y_T0 = Y_T1 - RAIL - 2 * CLR
+Y_T1 = min(Y_E0 - POCKET, -HR - CLR) - 0.8
+Y_T0 = Y_T1 - RAIL - 2 * RAIL_CLR
 Y_RC = (Y_T0 + Y_T1) / 2
-Z_T0, Z_T1 = BACK_T, BACK_T + RAIL + 0.2   # 0.2 mm in front of the rail keeps the tilt under a key load small
+Z_T0, Z_T1 = BACK_T, BACK_T + RAIL + RAIL_CLR
+GROOVE_W, GROOVE_D = 3.4, 2.2              # wire groove in the rail's back face, hidden against the intercom
 Z_RK = ZS + STROKE + 1.5
-Z_CAP = Z_SF + 0.06                       # the cap's flat seam rests on the servo; rack and pinion run up into it
+Z_CAP = Z_SF + POCKET                     # flat seam just above the servo; rack and pinion run up into the cap
 Z_RK_TOP = Z_RK + 0.4
 KPAD_L, KPAD_H, KPAD_T = 8.0, 5.0, 3.0
 Z_KPAD = BACK_T + RAIL + 0.6 * KPAD_T
 
 # capsule outer shape
 # a semicircle on a rectangle: same width and top radius as the main capsule, sides parallel down past the rail
-PXC, PR, PD = -9.65, 15.0, 15.8
-P_ARCH = (3.2, Y_T0 - 2.4, 4.0)            # semicircle centre y, bottom y, lower corner radius
+PXC, PR, PD = -11.5, 15.0, 16.0
+P_ARCH = (13.3, Y_T0 - 2.4, 4.0)           # semicircle centre y, bottom y, lower corner radius
 PYC = P_ARCH[0]
 PW = 2 * PR
 PX0, PX1, PY0, PY1 = PXC - PR, PXC + PR, P_ARCH[1], P_ARCH[0] + PR
@@ -539,9 +549,10 @@ P_RB, P_RF = 4.0, 3.5
 P_GUM = None                               # (end circle offset from the centre line, its y, its radius)
 P_COLLAR = None                            # (half length, wall above and below the tunnel, depth, edge radius)
 # one M2 x 10 from the back (hidden on the intercom side), threads straight into the cap
-SCR_X, SCR_Y = -0.4, Y_T1 + 3.7
+SCR_X, SCR_Y = X_CT + 1.0, Y_SB - POCKET - 2.1
 SCR_HEAD_R, SCR_HEAD_Z, SCR_CLR_R, SCR_PILOT_R, SCR_PILOT_Z = 2.1, 3.4, 1.2, 0.8, 13.6
-PEG_X, PEG_Y, PEG_R = PXC, -11.3, 1.5      # locates the cap on the base, in front of the rail tunnel
+PEG_X, PEG_Y, PEG_R = PXC, Y_RC, 1.5       # locates the cap on the base, in front of the rail tunnel
+W_X0, W_X1 = X_CB + 2.0, X_CB + 12.0       # lead bay: the ribbon drops from the servo, goes behind the rail, into its groove
 
 
 def pusher_parts():
@@ -557,15 +568,16 @@ def pusher_parts():
     base = inter(body, tbox(-60, -60, -1, 60, 60, Z_CAP))
     ypc = (Y_T0 + Y_T1) / 2
     for b in (
-        tbox(X_CB - CLR, Y_SB - CLR, Z_SB - CLR, X_CT + CLR, Y_ST + CLR, 30),          # servo pocket
-        tbox(X_CT, YS - HUB_D / 2 - 0.6, ZS - HUB_D / 2 - 0.6, -(GT / 2 + 0.3), YS + HUB_D / 2 + 0.6, 30),
+        tbox(X_CB - POCKET, Y_SB - POCKET, Z_SB - POCKET, X_CT + POCKET, Y_ST + POCKET, 30),  # servo pocket
+        tbox(X_E0 - 1.0, Y_E0 - POCKET, Z_SB - POCKET, X_E1 + 1.0, Y_E1 + POCKET, 30),        # ears
+        tbox(X_CT, YS - SV_BOSS_D / 2 - 0.5, ZS - SV_BOSS_D / 2 - 0.5, -(GT / 2 + 0.3), YS + SV_BOSS_D / 2 + 0.5, 30),
         tcyl((-(GT / 2 + 0.3), YS, ZS), (GT / 2 + CLR, YS, ZS), RO + 0.3),
+        tcyl((GT / 2, YS, ZS), (GT / 2 + 1.0, YS, ZS), HUB_D / 2 + 0.3),                  # stub tip past the pinion
         tbox(-(GT / 2 + CLR), -HR - CLR, -1, GT / 2 + CLR, HR + CLR, 30),                 # rack guide
-        rbar_x(-60, 60, Y_T0, Z_T0, Y_T1, Z_T1, RAIL_R + CLR if RAIL_R else 0.0),         # rail tunnel
+        rbar_x(-60, 60, Y_T0, Z_T0, Y_T1, Z_T1, RAIL_R + RAIL_CLR if RAIL_R else 0.0),    # rail tunnel
         tbox(PXC - KPAD_L / 2, ypc - KPAD_H / 2, Z_T0 + RAIL, PXC + KPAD_L / 2, ypc + KPAD_H / 2, Z_KPAD),  # pad pocket
-        tbox(X_CB + 0.5, Y_SB - CLR - 0.6, Z_SB - CLR, X_CB + 3.25, Y_SB, 30),            # lead relief
-        tbox(X_CB + 2.0, Y_ST, Z_SB - CLR, X_CB + 4.75, Y_ST + CLR + 0.6, 30),
-        tbox(X_CB - CLR, Y_SB - CLR, -1, X_CB + 3.25, Y_SB + 3.0, Z_SB),                  # lead out the back
+        tbox(W_X0, Y_T1 + 0.8, 0.6, W_X1, Y_SB, 30),                                      # lead bay; the wall over the tunnel stays so its roof bridges
+        tbox(W_X0, Y_RC - 2.0, 0.6, W_X1, Y_T1 + 0.81, Z_T0 + 0.01),                      # lead under that wall and behind the rail
         tcyl((SCR_X, SCR_Y, -1), (SCR_X, SCR_Y, SCR_HEAD_Z), SCR_HEAD_R),                 # M2 head
         tcyl((SCR_X, SCR_Y, -1), (SCR_X, SCR_Y, 30), SCR_CLR_R),
     ):
@@ -581,16 +593,39 @@ def pusher_parts():
         sub(cap, b)
     rk = prism_x(rack_outline(GM, 25.0, 0.08, YS - RP, -HR, 0.3, Z_RK, BACK_T, Z_RK, ZS + math.pi * GM / 2), -GT / 2, GT / 2)
     pn = prism_x(involute_pinion(GM, GN, 25.0, 0.08, YS, ZS), -GT / 2, GT / 2)
-    sub(pn, tcyl((-GT / 2 - 1, YS, ZS), (-GT / 2 + HUB_DEP, YS, ZS), HUB_D / 2 + 0.05))  # glued on the servo's horn hub
+    sub(pn, tcyl((-GT / 2 - 1, YS, ZS), (GT / 2 + 1, YS, ZS), HUB_D / 2 + 0.1))           # glued on the servo's stub, through hole
     return {'base': base, 'cap': cap}, {'rack': rk, 'pinion': pn}
+
+
+def fs0307(off=0.0):
+    """The real servo: case, ears, gear boss, white stub, lead stub on the end wall towards the rail."""
+    b = uni(tbox(X_CB, Y_SB, Z_SB, X_CT, Y_ST, Z_SF),
+            tbox(X_E0, Y_E0, Z_SB, X_E1, Y_E1, Z_SF),
+            tcyl((X_CT, YS, ZS), (X_CT + SV_BOSS_H, YS, ZS), SV_BOSS_D / 2),
+            tcyl((X_CT + SV_BOSS_H, YS, ZS), (X_CT + SV_BOSS_H + SV_STUB, YS, ZS), HUB_D / 2))
+    for sy in (Y_E0 + (SV_EAR_SPAN - 23.9) / 2, Y_E1 - (SV_EAR_SPAN - 23.9) / 2):
+        sub(b, tcyl((X_E0 - 1, sy, ZS), (X_E1 + 1, sy, ZS), 1.0))
+    return b
+
+
+def rail_grooved(x0, x1, yc, section=None, r=None):
+    """The rail with the wire groove in its back face."""
+    a = RAIL if section is None else section
+    b = rbar_x(x0, x1, yc - a / 2, Z_T0, yc + a / 2, Z_T0 + a, RAIL_R if r is None else r)
+    return sub(b, tbox(x0 - 1, yc - GROOVE_W / 2, Z_T0 - 1, x1 + 1, yc + GROOVE_W / 2, Z_T0 + GROOVE_D))
 
 
 def pusher_refs():
     ypc = (Y_T0 + Y_T1) / 2
     r = {}
-    r['FS0307 20 x 8.3 x 17.3'] = uni(tbox(X_CB, Y_SB, Z_SB, X_CT, Y_ST, Z_SF),
-                                      tcyl((X_CT, YS, ZS), (-GT / 2 + HUB_DEP, YS, ZS), HUB_D / 2))
-    r['rail 6 x 6'] = rbar_x(-60, 60, ypc - RAIL / 2, Z_T0, ypc + RAIL / 2, Z_T0 + RAIL, RAIL_R)
+    r['FS0307 with ears'] = fs0307()
+    r['rail 6 x 6'] = rail_grooved(-60, 60, ypc)
+    xl = (W_X0 + W_X1) / 2                      # lead: down from the servo, back, behind the rail, forward into the groove, along it
+    r['lead'] = uni(tbox(xl - LEAD_W / 2, Y_T1 + 1.0, ZS - LEAD_T / 2, xl + LEAD_W / 2, Y_SB, ZS + LEAD_T / 2),
+                    tbox(xl - LEAD_W / 2, Y_T1 + 1.0, 0.7, xl + LEAD_W / 2, Y_T1 + 1.0 + LEAD_T, ZS + LEAD_T / 2),
+                    tbox(xl - LEAD_W / 2, ypc - 0.4, 0.7, xl + LEAD_W / 2, Y_T1 + 1.8, 0.7 + LEAD_T),
+                    tbox(xl - LEAD_W / 2, ypc - 0.4, 0.7, xl + LEAD_W / 2, ypc + 0.4, Z_T0 + 1.2),
+                    tbox(xl - LEAD_W / 2, ypc - LEAD_W / 2, Z_T0 + 0.4, 60, ypc + LEAD_W / 2, Z_T0 + 0.4 + LEAD_T))
     r['PU pad compressed'] = tbox(PXC - KPAD_L / 2 + 0.1, ypc - KPAD_H / 2 + 0.1, Z_T0 + RAIL, PXC + KPAD_L / 2 - 0.1, ypc + KPAD_H / 2 - 0.1, Z_KPAD)
     r['M2 x 10 screw'] = uni(tcyl((SCR_X, SCR_Y, SCR_HEAD_Z - 1.6), (SCR_X, SCR_Y, SCR_HEAD_Z), 1.9),
                              tcyl((SCR_X, SCR_Y, SCR_HEAD_Z), (SCR_X, SCR_Y, SCR_HEAD_Z + 10.0), 1.0))
@@ -609,11 +644,16 @@ ADD_PARTS, USB_T, USB_W, USB_D = 1.25, 3.2, 8.94, 7.35
 XUSB_W, XUSB_D, XUSB_OVER = 8.94, 7.35, 1.5
 ZSPLIT = 10.96                                # the flat seam rests on the XIAO USB-C through the front's arms
 BAY_TOP = 31.0
-SPK_Y, SPK_R, SPK_T_MAX = 42.0, 10.0, 4.0     # listing says 3.6 and 4; both are checked
-SPK_Z1 = 15.1                                 # speaker face, under the dome at r = 10
-SPK_RING_ID, SPK_RING_OD = 20.3, 22.0
+SPK_Y, SPK_R, SPK_T_MAX = 42.0, 10.0, 4.0     # measured about 20 x 4
+SPK_Z1 = 14.7                                 # speaker face, under the dome even with the speaker off centre in its hole
+SPK_RING_ID, SPK_RING_OD = 21.0, 22.8         # 1 mm loose, hot-glued
 FPC_L, FPC_W, FPC_T = 37.4, 17.5, 0.2
 FPC_Y0 = 13.0
+MW_W = 7.0                                    # lead channel width, two ribbons side by side
+# no add-on board yet: XIAO alone, turned over in the board's place, its USB-C in the same opening, 5V and D8/D9 wired directly
+XF_Z1 = 7.3
+XF_Z0 = XF_Z1 - 1.25
+CAP_D, CAP_L = 8.0, 9.0                       # Rubycon 16WXA470MEFC8X9
 RAIL_Y = SPK_Y
 M_SCR = ((-10.0, 33.5), (10.0, 33.5))
 ZO = S_ZO
@@ -674,17 +714,16 @@ def main_parts():
     for f in feats:
         uni(back, inter(f, copyb(inside)))
     sub(back, tcyl((mic[0], mic[1], -1), (mic[0], mic[1], ZO), 0.8))
-    sub(back, tbox(-6.5, -1, -1, 6.5, S_Y0, 7.25), tbox(-6.5, S_Y0 - 0.1, -1, 6.5, S_Y0 + 0.5, 2.0))  # USB-C plug opening
-    sub(back, tbox(-6.0, 26.9, -1, 6.0, 28.7, 2.5))                                             # servo leads out the back
-    ty0, ty1 = RAIL_Y - RAIL / 2 - CLR, RAIL_Y + RAIL / 2 + CLR
-    sub(back, rbar_x(-60, 60, ty0, Z_T0, ty1, Z_T1, RAIL_R + CLR if RAIL_R else 0.0))
+    sub(back, tbox(-6.5, -1, -1, 6.5, S_Y0, 8.0), tbox(-6.5, S_Y0 - 0.1, -1, 6.5, S_Y0 + 0.5, 2.0))  # USB-C plug opening, either board's
+    sub(back, tbox(-MW_W / 2, BAY_TOP - 1, 0.6, MW_W / 2, RAIL_Y, Z_T0 + 0.6))                  # leads from the rail groove down into the bay
+    ty0, ty1 = RAIL_Y - RAIL / 2 - RAIL_CLR, RAIL_Y + RAIL / 2 + RAIL_CLR
+    sub(back, rbar_x(-60, 60, ty0, Z_T0, ty1, Z_T1, RAIL_R + RAIL_CLR if RAIL_R else 0.0))
     sub(back, tbox(-KPAD_L / 2, RAIL_Y - KPAD_H / 2, Z_T0 + RAIL, KPAD_L / 2, RAIL_Y + KPAD_H / 2, Z_KPAD))
     sub(back, tcyl((0, SPK_Y, 9.7), (0, SPK_Y, ZSPLIT + 1), 9.0))                               # speaker back volume
     for (sx, sy) in M_SCR:
         sub(back, tcyl((sx, sy, -1), (sx, sy, SCR_HEAD_Z), SCR_HEAD_R), tcyl((sx, sy, -1), (sx, sy, 20), SCR_CLR_R))
-    press = sub(tcyl((0, SPK_Y, ZSPLIT - 0.2), (0, SPK_Y, SPK_Z1 - SPK_T_MAX), SPK_RING_ID / 2 - 0.25), tcyl((0, SPK_Y, ZSPLIT - 1), (0, SPK_Y, SPK_Z1), 9.0))
-    sub(press, tbox(-1.5, SPK_Y - 12, ZSPLIT - 1, 1.5, SPK_Y, SPK_Z1))                          # speaker wires
-    uni(back, press)
+    sub(back, tcyl((0, SPK_Y, SPK_Z1 - SPK_T_MAX - 0.2), (0, SPK_Y, ZSPLIT + 1), SPK_RING_ID / 2))  # the speaker's rear sits below the seam
+    sub(back, tbox(-1.5, SPK_Y - 12, 9.7, 1.5, SPK_Y, ZSPLIT + 1))                              # speaker wires
     # ---- front shell: dome, speaker ring + grille, posts, stack pressers, lip
     front = inter(copyb(sh), tbox(-60, -60, ZSPLIT, 60, 80, 40))
     sub(front, inter(copyb(inside), tbox(-60, -60, ZSPLIT - 1, 60, 80, 40)))
@@ -719,6 +758,21 @@ def main_parts():
     return {'back': back, 'front': front}
 
 
+def main_refs_today():
+    """What goes in the main capsule today, in place of the add-on board stack."""
+    r = {}
+    r['XIAO PCB (flipped)'] = outline(XF_Z0, XF_Z1)
+    r['XIAO shield (flipped)'] = tbox(-5.3, YC - 6.3, XF_Z0 - 2.0, 5.3, YC + 6.3, XF_Z0)
+    r['XIAO USB-C (flipped)'] = tbox(-XUSB_W / 2, S_Y0 - XUSB_OVER, XF_Z0 - 3.21, XUSB_W / 2, S_Y0 - XUSB_OVER + XUSB_D, XF_Z0)
+    r['speaker 20 x 4'] = tcyl((0, SPK_Y, SPK_Z1 - SPK_T_MAX), (0, SPK_Y, SPK_Z1), SPK_R)
+    r['rail 6 x 6'] = rail_grooved(-60, 60, RAIL_Y)
+    r['capacitor 470 uF'] = tcyl((0.0, 9.0, XF_Z1 + 0.3 + CAP_D / 2), (0.0, 9.0 + CAP_L, XF_Z1 + 0.3 + CAP_D / 2), CAP_D / 2)
+    c = (XF_Z0 - 3.21 + XF_Z0) / 2
+    r['USB-C plug 12.4 x 6.5'] = tbox(-6.2, -20.0, c - 3.25, 6.2, S_Y0 - XUSB_OVER, c + 3.25)
+    r['leads 2 ribbons'] = tbox(-MW_W / 2 + 0.3, BAY_TOP - 1, 0.7, MW_W / 2 - 0.3, RAIL_Y, 0.7 + LEAD_T)
+    return r
+
+
 def main_refs():
     r = {}
     pcb = outline(ZO, ZO + ADD_T)
@@ -743,7 +797,7 @@ def main_refs():
     r['XIAO U.FL'] = tbox(-4.85 - 1.5, YC - 8.84 - 1.5, ZX0 + X_PCB, -4.85 + 1.5, YC - 8.84 + 1.5, ZX0 + X_PCB + 1.25)
     r['speaker 20 x 4'] = tcyl((0, SPK_Y, SPK_Z1 - SPK_T_MAX), (0, SPK_Y, SPK_Z1), SPK_R)
     r['FPC antenna A-02'] = fpc_sheet()[0]
-    r['rail 6 x 6'] = rbar_x(-60, 60, RAIL_Y - RAIL / 2, Z_T0, RAIL_Y + RAIL / 2, Z_T0 + RAIL, RAIL_R)
+    r['rail 6 x 6'] = rail_grooved(-60, 60, RAIL_Y)
     r['PU pad compressed'] = tbox(-KPAD_L / 2 + 0.1, RAIL_Y - KPAD_H / 2 + 0.1, Z_T0 + RAIL, KPAD_L / 2 - 0.1, RAIL_Y + KPAD_H / 2 - 0.1, Z_KPAD)
     plug = tbox(-6.2, -20.0, 0.45, 6.2, S_Y0, 6.95)
     r['USB-C plug 12.4 x 6.5'] = plug
@@ -795,13 +849,30 @@ def check_pusher():
             res.append(('%s / rack dz %g' % (pn, dz), overlap(pb, rb)))
         res.append((pn + ' / pinion sweep', overlap(pb, pin_env)))
     res.append(('base / cap', overlap(parts['base'], parts['cap'])))
-    res.append(('FS0307 / rail', overlap(refs['FS0307 20 x 8.3 x 17.3'], refs['rail 6 x 6'])))
-    res.append(('FS0307 / rack', overlap(refs['FS0307 20 x 8.3 x 17.3'], mech['rack'])))
+    res.append(('FS0307 / rail', overlap(refs['FS0307 with ears'], refs['rail 6 x 6'])))
+    res.append(('FS0307 / rack', overlap(refs['FS0307 with ears'], mech['rack'])))
+    for dz, rb in rack_states.items():
+        res.append(('FS0307 / rack dz %g' % dz, overlap(refs['FS0307 with ears'], rb)))
     res.append(('FS0307 / pinion sweep', overlap(tbox(X_CB, Y_SB, Z_SB, X_CT, Y_ST, Z_SF), pin_env)))
+    res.append(('lead / rail', overlap(refs['lead'], refs['rail 6 x 6'])))
+    res.append(('lead / FS0307', overlap(refs['lead'], refs['FS0307 with ears'])))
     res.append(('rack / rail', overlap(mech['rack'], refs['rail 6 x 6'])))
     res.append(('rack full / rail', overlap(rack_states[-STROKE], refs['rail 6 x 6'])))
     res.append(('rack / screw', overlap(mech['rack'], refs['M2 x 10 screw'])))
     return parts, mech, refs, res
+
+
+def check_main_today(parts):
+    refs = main_refs_today()
+    res = []
+    for pn, pb in parts.items():
+        for rn, rb in refs.items():
+            res.append((pn + ' / ' + rn, overlap(pb, rb)))
+    names = list(refs)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            res.append((a + ' / ' + b, overlap(refs[a], refs[b])))
+    return refs, res
 
 
 def check_main():
