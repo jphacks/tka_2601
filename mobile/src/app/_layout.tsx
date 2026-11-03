@@ -1,3 +1,5 @@
+import '../lib/webPolyfills';
+
 import { router, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -6,6 +8,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { Screen } from '../components/Screen';
+import { WebShell } from '../components/WebShell';
 import { PrimaryButton, TextButton } from '../components/ui';
 import { AuthProvider, useAuth } from '../lib/auth';
 import { BadgeProvider } from '../lib/badges';
@@ -83,35 +86,37 @@ function RootNavigator() {
 
   // 画面は必ずどれかのガードに入れる
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-      <Stack.Protected guard={member} redirectTo={home}>
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="visits/[id]" />
-        <Stack.Screen name="reservations/[id]" />
-        <Stack.Screen name="reservations/edit" />
-        <Stack.Screen name="assistant/index" />
-        <Stack.Screen name="settings/shop" />
-        <Stack.Screen name="settings/services" />
-        <Stack.Screen name="settings/service" />
-        <Stack.Screen name="settings/responses" />
-        <Stack.Screen name="settings/provider" />
-        <Stack.Screen name="settings/notifications" />
-        <Stack.Screen name="settings/instructions" />
-        <Stack.Screen name="settings/group" />
-        <Stack.Screen name="settings/invite" />
-      </Stack.Protected>
-      <Stack.Protected guard={signedIn && !household} redirectTo={home}>
-        <Stack.Screen name="group-setup" />
-        <Stack.Screen name="scan" />
-      </Stack.Protected>
-      <Stack.Protected guard={signedIn} redirectTo={home}>
-        <Stack.Screen name="join" />
-      </Stack.Protected>
-      <Stack.Protected guard={!signedIn} redirectTo={home}>
-        <Stack.Screen name="login" />
-        <Stack.Screen name="signup" />
-      </Stack.Protected>
-    </Stack>
+    <WebShell show={member}>
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
+        <Stack.Protected guard={member} redirectTo={home}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="visits/[id]" />
+          <Stack.Screen name="reservations/[id]" />
+          <Stack.Screen name="reservations/edit" />
+          <Stack.Screen name="assistant/index" />
+          <Stack.Screen name="settings/shop" />
+          <Stack.Screen name="settings/services" />
+          <Stack.Screen name="settings/service" />
+          <Stack.Screen name="settings/responses" />
+          <Stack.Screen name="settings/provider" />
+          <Stack.Screen name="settings/notifications" />
+          <Stack.Screen name="settings/instructions" />
+          <Stack.Screen name="settings/group" />
+          <Stack.Screen name="settings/invite" />
+        </Stack.Protected>
+        <Stack.Protected guard={signedIn && !household} redirectTo={home}>
+          <Stack.Screen name="group-setup" />
+          <Stack.Screen name="scan" />
+        </Stack.Protected>
+        <Stack.Protected guard={signedIn} redirectTo={home}>
+          <Stack.Screen name="join" />
+        </Stack.Protected>
+        <Stack.Protected guard={!signedIn} redirectTo={home}>
+          <Stack.Screen name="login" />
+          <Stack.Screen name="signup" />
+        </Stack.Protected>
+      </Stack>
+    </WebShell>
   );
 }
 

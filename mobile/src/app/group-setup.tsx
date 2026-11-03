@@ -1,12 +1,13 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { QrScan } from '../components/icons';
 import { Screen } from '../components/Screen';
 import { PrimaryButton, TextButton, TextField, TintButton } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { repositories } from '../lib/container';
+import { inviteTokenFromUrl } from '../lib/app';
 import { errorMessage } from '../lib/errors';
 import { logout } from '../lib/logout';
 import { colors, radius } from '../theme';
@@ -16,6 +17,8 @@ export default function GroupSetupScreen() {
   const { refreshMembership } = useAuth();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [inviteUrl, setInviteUrl] = useState('');
+  const inviteToken = inviteTokenFromUrl(inviteUrl.trim());
 
   async function create() {
     setBusy(true);
@@ -47,7 +50,24 @@ export default function GroupSetupScreen() {
             <Text style={styles.sectionTitle} accessibilityRole="header">
               招待されたお店に参加する
             </Text>
-            <TintButton label="QR コードを読み取る" icon={<QrScan />} onPress={() => router.push('/scan')} />
+            {Platform.OS === 'web' ? (
+              <>
+                <TextField
+                  label="招待リンク"
+                  value={inviteUrl}
+                  onChangeText={setInviteUrl}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <PrimaryButton
+                  label="参加する"
+                  disabled={!inviteToken}
+                  onPress={() => inviteToken && router.push({ pathname: '/join', params: { token: inviteToken } })}
+                />
+              </>
+            ) : (
+              <TintButton label="QR コードを読み取る" icon={<QrScan />} onPress={() => router.push('/scan')} />
+            )}
           </View>
           <TextButton label="ログアウト" onPress={() => logout()} />
         </ScrollView>

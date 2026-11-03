@@ -1,10 +1,10 @@
-import * as Notifications from 'expo-notifications';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { addDays, PENDING_RANGE_DAYS, startOfDayDate } from '../domain/reservation';
 import { useAuth } from './auth';
 import { repositories } from './container';
+import { onNotificationReceived } from './notificationEvents';
 
 type Badges = {
   unread: number;
@@ -51,12 +51,12 @@ export function BadgeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     refresh();
-    const received = Notifications.addNotificationReceivedListener(() => refresh());
+    const stopReceived = onNotificationReceived(refresh);
     const appState = AppState.addEventListener('change', (state) => {
       if (state === 'active') refresh();
     });
     return () => {
-      received.remove();
+      stopReceived();
       appState.remove();
     };
   }, [refresh]);

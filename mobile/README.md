@@ -59,6 +59,34 @@ npx expo run:ios
 
 クラウドの Supabase（`tka_2601`）に、テスト用のアカウント `ymt@example.com` がある（メール確認済み）。パスワードはリポジトリに書かず、チーム内で共有する。
 
+## Web 版
+
+同じコードを `react-native-web` で動かす。出力は 1 枚の `index.html` と JS（`app.json` の `web.output` が `single`）で、動的な道筋（`/visits/<id>` など）は `vercel.json` の rewrite で `index.html` に寄せる。
+
+```bash
+npx expo start --web
+```
+
+```bash
+npx expo export --platform web
+```
+
+Web で動かないものは、`.web.ts(x)` の別ファイルに分けてある。
+
+| ネイティブ | Web |
+|---|---|
+| プッシュ通知（`expo-notifications`） | 使わない。タブが見えているあいだ 30 秒ごと、またはタブに戻ったときに読み直し、新しい通知を右上に 10 秒出す。新着があれば開いている画面も読み直す（`components/NotificationToast.web.tsx`） |
+| OS のアラート（`Alert.alert`） | ブラウザの `alert` と `confirm`（`lib/webPolyfills.web.ts`） |
+| タブバー（`NativeTabs`） | 左のナビ（狭い幅では下）。`components/WebShell.web.tsx` |
+| SF Symbols | Material Symbols のフォント（`components/Icon.web.tsx`） |
+| 分割ボタンと日付のカレンダー | 同じ形の描画と、ブラウザの日付の入力 |
+| 招待リンクを送る | リンクをコピーする |
+| Apple と Google のログイン | `EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN` を 1 にしない。Web 用の戻り先を用意していない |
+
+### Vercel に出す
+
+Vercel のプロジェクトの Root Directory を `mobile` にする。ビルドは `vercel.json` に書いてある。環境変数に `EXPO_PUBLIC_SUPABASE_URL` と `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を入れる（ビルド時に埋め込まれる）。
+
 ## EAS のビルド
 
 `eas.json` のプロファイルは次の4つ。どれも Expo へのログイン（`npx eas-cli@latest login`）が要る。

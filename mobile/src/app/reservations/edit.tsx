@@ -1,9 +1,10 @@
-import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { InlineDatePicker } from '../../components/InlineDatePicker';
 import { NavBar, Screen } from '../../components/Screen';
 import { Card, Chip, ChipGroup, GroupHeader, NavTextButton, Separator, Stepper } from '../../components/ui';
 import { newIdempotencyKey, type ReservationInput, startOfDayDate } from '../../domain/reservation';
@@ -199,14 +200,9 @@ export default function ReservationEditScreen() {
               <Text style={styles.dateValue}>{monthDay(date)}</Text>
             </Pressable>
             {dateOpen ? (
-              <DateTimePicker
+              <InlineDatePicker
                 value={date}
-                mode="date"
-                display="inline"
-                locale="ja-JP"
-                accentColor={colors.navy}
-                themeVariant="light"
-                onValueChange={(_event, next) => {
+                onSelect={(next) => {
                   setDate(startOfDayDate(next));
                   setDateOpen(false);
                 }}

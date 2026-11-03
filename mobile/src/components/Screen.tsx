@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
@@ -11,10 +11,17 @@ const DESIGN_WIDTH = 390;
 
 // 右上の丸い形と、下の2層の波。タブの画面は内容が下まで届くので波を出さない
 export function BackgroundShapes({ waves = true }: { waves?: boolean }) {
-  const { width } = useWindowDimensions();
+  const window = useWindowDimensions();
+  // Web では画面が窓より狭いことがあるので、置かれた幅で測る
+  const [measured, setMeasured] = useState<number | null>(null);
+  const width = measured ?? window.width;
   const scale = width / DESIGN_WIDTH;
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+    <View
+      pointerEvents="none"
+      style={StyleSheet.absoluteFill}
+      onLayout={(event) => setMeasured(event.nativeEvent.layout.width)}
+    >
       <Svg width={width} height={280 * scale} viewBox="0 0 390 280" style={styles.top}>
         <Path
           d="M232 -36C312 -52 410 -6 420 82C428 156 380 214 314 222C256 229 214 196 196 146C176 92 170 -24 232 -36Z"
