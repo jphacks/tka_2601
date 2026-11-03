@@ -1,0 +1,22 @@
+press force at which the first pad slips (N). N = clamp per side, mu = friction
+model                      key           x  pad d share |   20/.4   30/.4   20/.6   30/.6
+Panasonic VL-ME30          talk/end    9.7   13.0  0.58 |     7.3    10.9    10.9    16.3
+Aiphone JS-1ME-T           talk/off    9.7   13.0  0.58 |     7.3    10.9    10.9    16.3
+Panasonic VL-MWD505        talk      -34.4   13.0  0.71 |     5.9     8.8     8.8    13.2
+Panasonic VL-MWD505        end        53.6   13.0  0.82 |     5.1     7.6     7.6    11.4
+Aiphone dearis VM-RMVU     talk        9.7    7.8  0.55 |     6.6    10.0    10.0    14.9
+Aiphone dearis VM-RMVU     off        61.6    7.8  0.84 |     4.4     6.6     6.6     9.8
+Panasonic VS-MGE20         end        27.5   13.0  0.84 |     3.6     5.4     5.4     8.1
+Panasonic VS-MGE20         call      -29.0   13.0  0.86 |     3.5     5.3     5.3     7.9
+
+foam shear reach 14 : pad pressure 0.144 MPa, E 0.36, F  5.00 N -> pad moves 0.18 mm (3 mm foam, 40 % squeezed = 1.8 mm)
+foam shear reach 14 : pad pressure 0.144 MPa, E 0.36, F 10.90 N -> pad moves 0.39 mm (3 mm foam, 40 % squeezed = 1.8 mm)
+foam shear reach 14 : pad pressure 0.144 MPa, E 0.36, F 13.08 N -> pad moves 0.47 mm (3 mm foam, 40 % squeezed = 1.8 mm)
+foam shear dearis   : pad pressure 0.240 MPa, E 0.60, F  5.00 N -> pad moves 0.18 mm (3 mm foam, 40 % squeezed = 1.8 mm)
+foam shear dearis   : pad pressure 0.240 MPa, E 0.60, F 10.90 N -> pad moves 0.39 mm (3 mm foam, 40 % squeezed = 1.8 mm)
+foam shear dearis   : pad pressure 0.240 MPa, E 0.60, F 13.08 N -> pad moves 0.47 mm (3 mm foam, 40 % squeezed = 1.8 mm)
+
+other ways to come off (F = 13.08 N, servo at 6 V)
+  rail tunnel closed: the capsule cannot leave the rail; it can only slide along it, and a key force has no component along the rail
+  cap screw: FEM 23 N on M2 thread, 2.15 mm engaged -> 1.9 MPa shear
+  tilt on the rail: 2.1 deg, press point backs off 0.39 mm (0.2 mm gap, R0.5)

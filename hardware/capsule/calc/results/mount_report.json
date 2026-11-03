@@ -1,0 +1,321 @@
+[
+ {
+  "model": "Panasonic VL-ME30",
+  "W": 129,
+  "H": 169,
+  "D": 29,
+  "z0": 2.8,
+  "rail_y": -65.21,
+  "capsules": [
+   {
+    "key": "talk/end",
+    "point": [
+     9.7,
+     -52.0
+    ],
+    "key_centre": [
+     0,
+     -52
+    ],
+    "part": "N",
+    "flipped": false,
+    "overhang_mm": 0.0,
+    "press_off_key_y": 0.0,
+    "key_h": 40,
+    "press": {
+     "key_top": 0.8,
+     "rest_gap": 2.3,
+     "depth_past_top": 1.7,
+     "tip_on_key_percent": 100,
+     "tilt_loss": 0.39,
+     "depth_after_tilt": 1.31
+    }
+   }
+  ],
+  "hits": [],
+  "covered_percent": {},
+  "paw_reach_mm": 14.0,
+  "paw_y": [
+   -68.2,
+   -52.2
+  ],
+  "main_below_intercom_mm": 22.7,
+  "rail_length_mm": 183.4,
+  "press_images": [
+   "press_VLME30_1.png"
+  ]
+ },
+ {
+  "model": "Aiphone JS-1ME-T",
+  "W": 129,
+  "H": 169,
+  "D": 28,
+  "z0": 2.8,
+  "rail_y": -75.21,
+  "capsules": [
+   {
+    "key": "talk/off",
+    "point": [
+     9.7,
+     -62.0
+    ],
+    "key_centre": [
+     0,
+     -62
+    ],
+    "part": "N",
+    "flipped": false,
+    "overhang_mm": 0.0,
+    "press_off_key_y": 0.0,
+    "key_h": 26,
+    "press": {
+     "key_top": 0.8,
+     "rest_gap": 2.3,
+     "depth_past_top": 1.7,
+     "tip_on_key_percent": 100,
+     "tilt_loss": 0.39,
+     "depth_after_tilt": 1.31
+    }
+   }
+  ],
+  "hits": [],
+  "covered_percent": {},
+  "paw_reach_mm": 14.0,
+  "paw_y": [
+   -78.2,
+   -62.2
+  ],
+  "main_below_intercom_mm": 32.7,
+  "rail_length_mm": 183.4,
+  "press_images": [
+   "press_JS1ME_1.png"
+  ]
+ },
+ {
+  "model": "Panasonic VL-MWD505",
+  "W": 165,
+  "H": 192,
+  "D": 27,
+  "z0": 2.1,
+  "rail_y": -91.21,
+  "capsules": [
+   {
+    "key": "talk",
+    "point": [
+     -34.4,
+     -78.0
+    ],
+    "key_centre": [
+     -44,
+     -78
+    ],
+    "part": "N",
+    "flipped": false,
+    "overhang_mm": 0.0,
+    "press_off_key_y": 0.0,
+    "key_h": 26,
+    "press": {
+     "key_top": 0.9,
+     "rest_gap": 1.5,
+     "depth_past_top": 2.5,
+     "tip_on_key_percent": 100,
+     "tilt_loss": 0.39,
+     "depth_after_tilt": 2.11
+    }
+   },
+   {
+    "key": "end",
+    "point": [
+     53.6,
+     -78.0
+    ],
+    "key_centre": [
+     44,
+     -78
+    ],
+    "part": "N",
+    "flipped": false,
+    "overhang_mm": 0.0,
+    "press_off_key_y": 0.0,
+    "key_h": 26,
+    "press": {
+     "key_top": 0.9,
+     "rest_gap": 1.5,
+     "depth_past_top": 2.5,
+     "tip_on_key_percent": 100,
+     "tilt_loss": 0.39,
+     "depth_after_tilt": 2.11
+    }
+   }
+  ],
+  "hits": [],
+  "covered_percent": {},
+  "paw_reach_mm": 14.0,
+  "paw_y": [
+   -94.2,
+   -78.2
+  ],
+  "main_below_intercom_mm": 37.2,
+  "rail_length_mm": 219.4,
+  "press_images": [
+   "press_VLMWD505_1.png",
+   "press_VLMWD505_2.png"
+  ]
+ },
+ {
+  "model": "Aiphone dearis VM-RMVU",
+  "W": 180,
+  "H": 240,
+  "D": 14.8,
+  "z0": 2.8,
+  "rail_y": -105.21,
+  "capsules": [
+   {
+    "key": "talk",
+    "point": [
+     9.7,
+     -92.0
+    ],
+    "key_centre": [
+     0,
+     -92
+    ],
+    "part": "N",
+    "flipped": false,
+    "overhang_mm": 0.0,
+    "press_off_key_y": 0.0,
+    "key_h": 17,
+    "press": {
+     "key_top": 1.6,
+     "rest_gap": 1.5,
+     "depth_past_top": 2.5,
+     "tip_on_key_percent": 100,
+     "tilt_loss": 0.39,
+     "depth_after_tilt": 2.11
+    }
+   },
+   {
+    "key": "off",
+    "point": [
+     61.6,
+     -92.0
+    ],
+    "key_centre": [
+     52,
+     -92
+    ],
+    "part": "N",
+    "flipped": false,
+    "overhang_mm": 0.0,
+    "press_off_key_y": 0.0,
+    "key_h": 17,
+    "press": {
+     "key_top": 1.6,
+     "rest_gap": 1.5,
+     "depth_past_top": 2.5,
+     "tip_on_key_percent": 100,
+     "tilt_loss": 0.39,
+     "depth_after_tilt": 2.11
+    }
+   }
+  ],
+  "hits": [],
+  "covered_percent": {},
+  "paw_reach_mm": 8.8,
+  "paw_y": [
+   -108.2,
+   -92.2
+  ],
+  "main_below_intercom_mm": 27.2,
+  "rail_length_mm": 234.4,
+  "press_images": [
+   "press_DEARIS_1.png",
+   "press_DEARIS_2.png"
+  ]
+ },
+ {
+  "model": "Panasonic VS-MGE20",
+  "W": 80,
+  "H": 123,
+  "D": 24.5,
+  "z0": 2.8,
+  "rail_y": -31.0,
+  "capsules": [
+   {
+    "key": "end",
+    "point": [
+     27.5,
+     -44.2
+    ],
+    "key_centre": [
+     26,
+     -42
+    ],
+    "part": "M",
+    "flipped": true,
+    "overhang_mm": 0.0,
+    "press_off_key_y": -2.2,
+    "key_h": 9,
+    "press": {
+     "key_top": 1.6,
+     "rest_gap": 1.5,
+     "depth_past_top": 2.5,
+     "tip_on_key_percent": 88,
+     "tilt_loss": 0.39,
+     "depth_after_tilt": 2.11
+    }
+   },
+   {
+    "key": "call",
+    "point": [
+     -29.0,
+     -17.8
+    ],
+    "key_centre": [
+     -25,
+     -20
+    ],
+    "part": "M",
+    "flipped": false,
+    "overhang_mm": 0.0,
+    "press_off_key_y": 2.2,
+    "key_h": 8,
+    "press": {
+     "key_top": 1.6,
+     "rest_gap": 1.5,
+     "depth_past_top": 2.5,
+     "tip_on_key_percent": 87,
+     "tilt_loss": 0.39,
+     "depth_after_tilt": 2.11
+    }
+   }
+  ],
+  "hits": [
+   [
+    "pusher 1 base",
+    "Panasonic VS-MGE20/charging stand",
+    1254.76
+   ],
+   [
+    "pusher 1 cap",
+    "Panasonic VS-MGE20/charging stand",
+    151.75
+   ]
+  ],
+  "covered_percent": {
+   "4-way": 19,
+   "menu": 15
+  },
+  "paw_reach_mm": 14.0,
+  "paw_y": [
+   -39.0,
+   -23.0
+  ],
+  "main_below_intercom_mm": 11.5,
+  "rail_length_mm": 134.4,
+  "press_images": [
+   "press_VSMGE20_1.png",
+   "press_VSMGE20_2.png"
+  ]
+ }
+]

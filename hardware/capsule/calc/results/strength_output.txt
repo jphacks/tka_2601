@@ -1,0 +1,44 @@
+--- force chain
+stall torque 6 V                                 58.84 N mm   0.6 kgf cm datasheet
+rack force at stall, 6 V                         13.08 N      
+rack force at stall, 5 V                         10.90 N      proportional, ASSUMED
+side force on rack (tan 25)                       6.10 N      
+--- pinion tooth
+Lewis root bending, stall                        20.98 MPa    limit 35 static, 12 repeated
+  safety factor, static                           1.67        
+  same at a 5 N key                               8.02 MPa    repeated limit 12
+2-D FEM root tension, stall                      71.61 MPa    8088 elements, 99.9% = 45.1
+--- pinion on the servo hub (glue)
+glue shear on phi 5 x 2 mm                        0.75 MPa    adhesion to the hub material is unknown
+--- rack
+Euler buckling, 4 mm free tip                  4475.15 N      load 13 N
+tip pressure on the key, 3 x 4.7 mm               0.93 MPa    
+--- capsule on the rail (two contact bands, rail centre 13.6 mm below the press point)
+rail tilt until the second contact                2.08 deg    R0.5 corners; 0.2 mm clearance
+press point moves back by the tilt                0.39 mm     of the 4 mm stroke
+contact force, front band (rigid)                25.79 N      FEM: fem_results.json
+--- rail corner radius: tilt of the capsule on the rail at the working clearance and at 0.2 mm
+    R0.0: flat 6.0 mm, gap 0.5: 4.8 deg, press point -0.88 mm, contact 23 N | gap 0.2: 1.9 deg, -0.35 mm
+    R0.5: flat 5.0 mm, gap 0.5: 5.2 deg, press point -0.99 mm, contact 26 N | gap 0.2: 2.1 deg, -0.39 mm
+    R1.0: flat 4.0 mm, gap 0.5: 6.4 deg, press point -1.26 mm, contact 33 N | gap 0.2: 2.5 deg, -0.50 mm
+    R1.5: flat 3.0 mm, gap 0.5: 8.2 deg, press point -1.69 mm, contact 44 N | gap 0.2: 3.3 deg, -0.68 mm
+    R2.0: flat 2.0 mm, gap 0.5: 11.5 deg, press point -2.47 mm, contact 65 N | gap 0.2: 4.6 deg, -0.99 mm
+    R2.5: flat 1.0 mm, gap 0.5: 19.1 deg, press point -4.28 mm, contact 112 N | gap 0.2: 7.6 deg, -1.71 mm
+--- M2 x 10 into PLA
+thread shear, 2.15 mm engagement                  2.30 MPa    limit 15 across layers
+head on the seat                                  3.00 MPa    
+--- rail 6 x 6 x 1 aluminium (span = W + 2 x 11 mm)
+VS-MGE20: bending, centre load                    0.05 mm     stress 11.5 MPa
+  twist, moment split to two paws                 0.08 deg    moves the press point 0.02 mm
+  same rail printed in PLA                        1.05 mm     not recommended
+VL-ME30: bending, centre load                     0.15 mm     stress 17.1 MPa
+  twist, moment split to two paws                 0.12 deg    moves the press point 0.03 mm
+  same rail printed in PLA                        3.41 mm     not recommended
+dearis: bending, centre load                      0.37 mm     stress 22.9 MPa
+  twist, moment split to two paws                 0.16 deg    moves the press point 0.04 mm
+  same rail printed in PLA                        8.16 mm     not recommended
+--- paws: friction only (kotori v3.1 strength_v3.py, same geometry)
+    single row 12.5-18.7 N, VS-MGE20 two rows 9.0-13.5 N (clamp 20-30 N, mu 0.4-0.6). None of these is measured.
+stall force against the two-row low case          1.45 x      > 1 means the paws slip before anything breaks
+--- with a dynamic factor of 2.0 on the tooth
+Lewis root bending                               41.96 MPa    limit 35
