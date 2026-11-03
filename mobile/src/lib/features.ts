@@ -6,6 +6,8 @@ export const features = {
   assistant: process.env.EXPO_PUBLIC_FEATURE_ASSISTANT === '1',
   // Google カレンダーと Square。OAuth のシークレットが要る
   externalProviders: process.env.EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS === '1',
+  // 受付（ボイスバックエンド）の案内文と Google カレンダーでの照合。Edge Function「door」のシークレットが要る
+  reception: process.env.EXPO_PUBLIC_FEATURE_RECEPTION === '1',
   // Apple と Google のログイン。Apple は削除時のトークンの失効も要る。Web では出さない
   socialLogin: process.env.EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN === '1' && Platform.OS !== 'web',
 };

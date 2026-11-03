@@ -2,6 +2,7 @@
 // ここで丸めて画面を落とさない。形が変わったらここを直す
 import type { AssistantProposal, DayHours, TimeSpan } from '../../domain/assistant';
 import type { AppNotification } from '../../domain/notification';
+import type { ReceptionCalendar, ReceptionEvent, ReceptionGoogle, ReceptionVisit } from '../../domain/reception';
 import type { ProviderState, Reservation, ReservationProvider, ReservationSource, ReservationStatus } from '../../domain/reservation';
 import type { BusinessHour, BusinessType, ShopProfile, Tone, WalkInPolicy } from '../../domain/shop';
 import type { EndReason, Intent, Mode, Outcome, Speaker, Visit, VisitMessage, VisitStatus } from '../../domain/visit';
@@ -242,4 +243,27 @@ export function toAssistantProposal(value: unknown): AssistantProposal {
     default:
       return UNREADABLE;
   }
+}
+
+export function toReceptionVisit(row: Row): ReceptionVisit {
+  return {
+    created: text(row.created),
+    status: text(row.status),
+    name: text(row.name),
+    staff: text(row.staff),
+    staff_notified: row.staff_notified === true,
+    notification_reason: text(row.notification_reason),
+  };
+}
+
+export function toReceptionGoogle(row: Row): ReceptionGoogle {
+  return { configured: row.configured === true, calendar_id: text(row.calendar_id) };
+}
+
+export function toReceptionCalendar(row: Row): ReceptionCalendar {
+  return { id: text(row.id), summary: text(row.summary) };
+}
+
+export function toReceptionEvent(row: Row): ReceptionEvent {
+  return { start: nullableText(row.start), eligible: row.eligible === true, name: text(row.name) };
 }

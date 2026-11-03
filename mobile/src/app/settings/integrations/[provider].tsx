@@ -1,23 +1,33 @@
 import * as Linking from 'expo-linking';
-import { router, useFocusEffect } from 'expo-router';
+import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { Fragment, useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { NavBar, Screen } from '../../components/Screen';
-import { Card, CenterMessage, GroupHeader, InfoRow, PrimaryButton, RadioRow, Separator, TextButton } from '../../components/ui';
-import type { GoogleCalendar, ProviderState, ReservationProvider } from '../../domain/reservation';
-import { confirmAction } from '../../lib/confirm';
-import { repositories } from '../../lib/container';
-import { errorMessage } from '../../lib/errors';
-import { features } from '../../lib/features';
-import { PROVIDER_LABELS, PROVIDER_ORDER } from '../../lib/labels';
-import { colors } from '../../theme';
+import { ReceptionGoogleSection } from '../../../components/ReceptionGoogleSection';
+import { NavBar, Screen } from '../../../components/Screen';
+import {
+  Card,
+  CenterMessage,
+  GroupHeader,
+  InfoRow,
+  PrimaryButton,
+  RadioRow,
+  RowSwitch,
+  Separator,
+  TextButton,
+} from '../../../components/ui';
+import type { GoogleCalendar, ProviderState } from '../../../domain/reservation';
+import { confirmAction } from '../../../lib/confirm';
+import { repositories } from '../../../lib/container';
+import { errorMessage } from '../../../lib/errors';
+import { features } from '../../../lib/features';
+import { type Integration, isIntegration } from '../../../lib/integrations';
+import { PROVIDER_LABELS } from '../../../lib/labels';
+import { colors } from '../../../theme';
 
-const RETURN_PATH = 'settings/provider';
-
-type Connectable = 'google_calendar' | 'square';
+type Connectable = Exclude<Integration, 'hotpepper'>;
 
 const CONNECTIONS: Record<
   Connectable,
@@ -48,16 +58,16 @@ const CONNECTIONS: Record<
   },
 };
 
-function isConnectable(provider: ReservationProvider | undefined): provider is Connectable {
-  return provider === 'google_calendar' || provider === 'square';
+export default function IntegrationRoute() {
+  const { provider } = useLocalSearchParams<{ provider?: string }>();
+  // 知らない名前の URL（古い通知や手で開いたもの）は設定に戻す
+  return isIntegration(provider) ? <IntegrationScreen provider={provider} /> : <Redirect href="/settings" />;
 }
 
-export default function ProviderScreen() {
+function IntegrationScreen({ provider }: { provider: Integration }) {
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<ProviderState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // ログインが済んでいない予約先を選んだあいだは、画面の上でだけ選択中にする
-  const [selecting, setSelecting] = useState<ReservationProvider | null>(null);
   const [calendars, setCalendars] = useState<GoogleCalendar[] | null>(null);
   const [calendarsError, setCalendarsError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,7 +82,8 @@ export default function ProviderScreen() {
       setError(errorMessage(e) ?? '読み込めませんでした');
       return;
     }
-    // ログインが切れているとカレンダーは読めないが、予約先の選択とログインし直しはできるようにする
+    if (provider !== 'google_calendar') return;
+    // ログインが切れているとカレンダーは読めないが、使うかどうかの切り替えとログインし直しはできるようにする
     setCalendarsError(null);
     try {
       setCalendars(next.google.connected ? await repositories.providers.listGoogleCalendars() : null);
@@ -80,7 +91,7 @@ export default function ProviderScreen() {
       setCalendars(null);
       setCalendarsError(errorMessage(e) ?? '読み込めませんでした');
     }
-  }, []);
+  }, [provider]);
 
   useFocusEffect(
     useCallback(() => {
@@ -88,18 +99,12 @@ export default function ProviderScreen() {
     }, [load]),
   );
 
-  async function choose(provider: ReservationProvider) {
-    if (!state || busy) return;
-    const notReady =
-      (provider === 'google_calendar' && !state.google.calendar_id) || (provider === 'square' && !state.square.connected);
-    if (notReady) {
-      setSelecting(provider);
-      return;
-    }
-    setSelecting(null);
+  // アプリの予約一覧に出す連携を切り替える。切ると、アプリの予約帳に戻る
+  async function setInUse(next: boolean) {
+    if (busy) return;
     setBusy(true);
     try {
-      setState(await repositories.providers.select(provider));
+      setState(await repositories.providers.select(next ? provider : 'monban'));
     } catch (e) {
       Alert.alert('変更できませんでした', errorMessage(e) ?? '');
     } finally {
@@ -111,7 +116,7 @@ export default function ProviderScreen() {
     const connection = CONNECTIONS[kind];
     setBusy(true);
     try {
-      const returnUrl = Linking.createURL(RETURN_PATH);
+      const returnUrl = Linking.createURL(`settings/integrations/${kind}`);
       const url = await connection.start(returnUrl);
       const result = await WebBrowser.openAuthSessionAsync(url, returnUrl);
       if (result.type !== 'success') return;
@@ -124,11 +129,8 @@ export default function ProviderScreen() {
       if (outcome !== 'pending' || typeof query?.code !== 'string') return;
       // 同意画面から戻っただけでは接続されない。ログインした本人のセッションで完了させる
       await connection.complete(query.code);
-      // Square はカレンダーを選ばないので、ログインが済んだら予約先も切り替える
-      if (kind === 'square') {
-        await repositories.providers.select('square');
-        setSelecting(null);
-      }
+      // Square はカレンダーを選ばないので、つないだら予約一覧にも使う
+      if (kind === 'square') await repositories.providers.select('square');
       await load();
     } catch (e) {
       Alert.alert('ログインできませんでした', errorMessage(e) ?? '');
@@ -137,13 +139,15 @@ export default function ProviderScreen() {
     }
   }
 
-  // カレンダーを選んだら予約先も Google に切り替える
+  // 初めてカレンダーを選んだときは、予約一覧にも使う。選び直すときは、使うかどうかを変えない
   async function chooseCalendar(calendarId: string) {
+    if (!state || busy) return;
+    const first = !state.google.calendar_id;
     setBusy(true);
     try {
       await repositories.providers.selectGoogleCalendar(calendarId);
-      setState(await repositories.providers.select('google_calendar'));
-      setSelecting(null);
+      if (first) await repositories.providers.select('google_calendar');
+      await load();
     } catch (e) {
       Alert.alert('変更できませんでした', errorMessage(e) ?? '');
     } finally {
@@ -155,7 +159,6 @@ export default function ProviderScreen() {
     setBusy(true);
     try {
       await CONNECTIONS[kind].logout();
-      setSelecting(null);
       await load();
     } catch (e) {
       Alert.alert('ログアウトできませんでした', errorMessage(e) ?? '');
@@ -164,66 +167,59 @@ export default function ProviderScreen() {
     }
   }
 
-  function connectionOf(provider: Connectable) {
-    if (!state) return null;
-    if (provider === 'google_calendar') {
-      return {
-        connected: state.google.connected,
-        status: state.google.status,
-        lastError: state.google.last_error,
-        account: state.google.account_email,
-      };
-    }
-    return {
-      connected: state.square.connected,
-      status: state.square.status,
-      lastError: state.square.last_error,
-      account: state.square.merchant_name,
-    };
-  }
-
-  const selected = selecting ?? state?.provider;
-  const kind = isConnectable(selected) ? selected : null;
-  const connection = kind ? connectionOf(kind) : null;
+  const connectable: Connectable | null = provider === 'hotpepper' ? null : provider;
+  const connection =
+    state && connectable
+      ? connectable === 'google_calendar'
+        ? {
+            connected: state.google.connected,
+            status: state.google.status,
+            lastError: state.google.last_error,
+            account: state.google.account_email,
+          }
+        : {
+            connected: state.square.connected,
+            status: state.square.status,
+            lastError: state.square.last_error,
+            account: state.square.merchant_name,
+          }
+      : null;
   const failed = connection?.status === 'error';
-  const google = state?.google;
-  // 接続先が未設定でも、すでに選んでいる予約先は外せるように残す
-  const providers = PROVIDER_ORDER.filter(
-    (provider) => features.externalProviders || !isConnectable(provider) || provider === state?.provider,
+  const inUse = state?.provider === provider;
+  // Google はカレンダーを選ぶまで、読む先がない
+  const canUse = provider !== 'google_calendar' || !!state?.google.calendar_id;
+
+  const switchRow = (
+    <View style={styles.switchRow}>
+      <Text style={styles.switchLabel}>予約一覧に使う</Text>
+      <RowSwitch
+        accessibilityLabel="予約一覧に使う"
+        value={inUse}
+        disabled={busy || !canUse}
+        onValueChange={setInUse}
+      />
+    </View>
   );
 
   return (
     <Screen>
-      <NavBar title="予約先" backLabel="設定" onBack={() => router.back()} />
+      <NavBar title={PROVIDER_LABELS[provider]} backLabel="設定" onBack={() => router.back()} />
       {!state ? (
         <CenterMessage>{error ?? <ActivityIndicator color={colors.navy} />}</CenterMessage>
       ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
-          <GroupHeader title="予約先" first />
-          <Card>
-            {providers.map((provider, index) => (
-              <Fragment key={provider}>
-                {index > 0 ? <Separator /> : null}
-                <RadioRow
-                  label={PROVIDER_LABELS[provider]}
-                  value={isConnectable(provider) && connectionOf(provider)?.connected ? 'ログイン済み' : undefined}
-                  selected={selected === provider}
-                  onPress={() => choose(provider)}
-                />
-              </Fragment>
-            ))}
-          </Card>
-
-          {kind && connection ? (
+          <GroupHeader title="予約の表示" first />
+          {connectable && connection ? (
             connection.connected ? (
               <>
-                <GroupHeader title={PROVIDER_LABELS[kind]} />
                 <Card>
                   {connection.account ? <InfoRow label="アカウント" value={connection.account} /> : null}
-                  {connection.account && failed ? <Separator /> : null}
+                  {connection.account ? <Separator /> : null}
                   {failed ? <InfoRow label="接続エラー" value={connection.lastError ?? '予約を読めません'} /> : null}
+                  {failed ? <Separator /> : null}
+                  {switchRow}
                 </Card>
-                {kind === 'google_calendar' ? (
+                {connectable === 'google_calendar' ? (
                   <>
                     <GroupHeader title="カレンダー" />
                     <Card>
@@ -233,7 +229,7 @@ export default function ProviderScreen() {
                             {index > 0 ? <Separator /> : null}
                             <RadioRow
                               label={calendar.name}
-                              selected={google?.calendar_id === calendar.id}
+                              selected={state.google.calendar_id === calendar.id}
                               onPress={() => chooseCalendar(calendar.id)}
                             />
                           </Fragment>
@@ -249,29 +245,38 @@ export default function ProviderScreen() {
                   </>
                 ) : null}
                 <View style={styles.actions}>
-                  {failed || (kind === 'google_calendar' && calendarsError) ? (
-                    <PrimaryButton label={CONNECTIONS[kind].loginLabel} loading={busy} onPress={() => login(kind)} />
+                  {failed || (connectable === 'google_calendar' && calendarsError) ? (
+                    <PrimaryButton label={CONNECTIONS[connectable].loginLabel} loading={busy} onPress={() => login(connectable)} />
                   ) : null}
                   <TextButton
                     label="ログアウト"
                     disabled={busy}
                     onPress={() =>
                       confirmAction({
-                        title: CONNECTIONS[kind].logoutTitle,
+                        title: CONNECTIONS[connectable].logoutTitle,
                         confirmLabel: 'ログアウト',
                         cancelLabel: '戻る',
-                        onConfirm: () => logout(kind),
+                        onConfirm: () => logout(connectable),
                       })
                     }
                   />
                 </View>
               </>
             ) : (
-              <View style={styles.actions}>
-                <PrimaryButton label={CONNECTIONS[kind].loginLabel} loading={busy} onPress={() => login(kind)} />
-              </View>
+              <>
+                <Card>
+                  <InfoRow label="状態" value="未接続" />
+                </Card>
+                <View style={styles.actions}>
+                  <PrimaryButton label={CONNECTIONS[connectable].loginLabel} loading={busy} onPress={() => login(connectable)} />
+                </View>
+              </>
             )
-          ) : null}
+          ) : (
+            <Card>{switchRow}</Card>
+          )}
+
+          {provider === 'google_calendar' && features.reception ? <ReceptionGoogleSection /> : null}
         </ScrollView>
       )}
     </Screen>
@@ -281,4 +286,6 @@ export default function ProviderScreen() {
 const styles = StyleSheet.create({
   loading: { minHeight: 52, alignItems: 'center', justifyContent: 'center' },
   actions: { marginTop: 16, marginHorizontal: 16, gap: 8 },
+  switchRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 },
+  switchLabel: { flex: 1, fontSize: 17, color: colors.text },
 });

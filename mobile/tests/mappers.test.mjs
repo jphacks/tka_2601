@@ -5,6 +5,10 @@ import {
   toAssistantProposal,
   toNotification,
   toProviderState,
+  toReceptionCalendar,
+  toReceptionEvent,
+  toReceptionGoogle,
+  toReceptionVisit,
   toReservation,
   toShopProfile,
   toVisit,
@@ -134,4 +138,20 @@ test('broken assistant proposals never reach the write path', () => {
     assert.equal(toAssistantProposal(broken).type, 'unknown');
   }
   assert.equal(toAssistantProposal({ type: 'unknown', reason: '理由' }).reason, '理由');
+});
+
+test('reception rows from the door backend tolerate missing and wrongly typed fields', () => {
+  assert.deepEqual(toReceptionVisit({ created: '2026-11-04T01:00:00Z', status: 'ended', name: '山田', staff: '佐藤' }), {
+    created: '2026-11-04T01:00:00Z',
+    status: 'ended',
+    name: '山田',
+    staff: '佐藤',
+    staff_notified: false,
+    notification_reason: '',
+  });
+  assert.equal(toReceptionVisit({ staff_notified: 'true' }).staff_notified, false);
+  assert.deepEqual(toReceptionGoogle({ configured: true, calendar_id: 7 }), { configured: true, calendar_id: '' });
+  assert.deepEqual(toReceptionCalendar({ id: 'a@example.com' }), { id: 'a@example.com', summary: '' });
+  assert.deepEqual(toReceptionEvent({ start: null, eligible: false, name: '休憩' }), { start: null, eligible: false, name: '休憩' });
+  assert.equal(toReceptionEvent({ eligible: 1 }).eligible, false);
 });
