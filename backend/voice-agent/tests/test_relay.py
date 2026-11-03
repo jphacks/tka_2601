@@ -30,14 +30,19 @@ def start_message(mode="omakase"):
 class FakeLink:
     """Stands in for the LiveKit room. Tests push agent output through push()."""
 
-    def __init__(self, outbox):
+    def __init__(self, outbox, agent_joins=True):
         self.outbox = outbox
+        self.agent_joins = agent_joins
         self.loop = asyncio.get_running_loop()
         self.audio = []
         self.closed = False
 
     async def send_audio(self, pcm):
         self.audio.append(pcm)
+
+    async def wait_for_agent(self, timeout):
+        if not self.agent_joins:
+            await asyncio.wait_for(asyncio.Event().wait(), timeout)
 
     async def aclose(self):
         self.closed = True
@@ -48,10 +53,10 @@ class FakeLink:
 
 @pytest.fixture
 def livekit(monkeypatch):
-    calls = SimpleNamespace(links=[], dispatched=[], deleted=[], settings_keys=[], house=HouseSettings())
+    calls = SimpleNamespace(links=[], dispatched=[], deleted=[], settings_keys=[], house=HouseSettings(), agent_joins=True)
 
     async def connect_agent_room(room, identity, outbox):
-        link = FakeLink(outbox)
+        link = FakeLink(outbox, calls.agent_joins)
         calls.links.append(link)
         return link
 
@@ -169,6 +174,35 @@ def test_relay_reports_agent_dispatch_failure(livekit, monkeypatch):
     assert livekit.links[0].closed
 
 
+def test_relay_reports_agent_that_never_joins(livekit, monkeypatch):
+    livekit.agent_joins = False
+    monkeypatch.setattr(relay, "AGENT_JOIN_TIMEOUT_SECONDS", 0.05)
+    with TestClient(api.app) as client:
+        with client.websocket_connect("/api/relay", headers=auth_headers()) as ws:
+            ws.send_json(start_message())
+            # The first message is the error, so no ready was sent.
+            assert ws.receive_json()["code"] == "agent_unavailable"
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+            assert closed.value.code == relay.CLOSE_SERVER_ERROR
+    assert livekit.links[0].closed
+    assert livekit.deleted == [livekit.dispatched[0][0]]
+
+
+def test_relay_reports_agent_leaving_mid_call(livekit):
+    with TestClient(api.app) as client:
+        with client.websocket_connect("/api/relay", headers=auth_headers()) as ws:
+            ws.send_json(start_message())
+            assert ws.receive_json() == {"type": "ready"}
+            livekit.links[0].push(("closed", "agent_unavailable"))
+            assert ws.receive_json()["code"] == "agent_unavailable"
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+            assert closed.value.code == relay.CLOSE_SERVER_ERROR
+    assert livekit.links[0].closed
+    assert livekit.deleted == [livekit.dispatched[0][0]]
+
+
 @pytest.mark.parametrize("pcm", [b"\x00", b"\x00" * (relay.MAX_AUDIO_MESSAGE_BYTES + 2)])
 def test_relay_rejects_invalid_audio(livekit, pcm):
     with TestClient(api.app) as client:
@@ -225,6 +259,95 @@ def bare_link():
     link._agent_speaking = False
     link._tasks = set()
     return link
+
+
+def agent_link(remote=()):
+    link = bare_link()
+    link._agent_identities = set()
+    link._agent_joined = asyncio.Event()
+    link._room = SimpleNamespace(remote_participants={p.identity: p for p in remote})
+    return link
+
+
+def participant(identity, kind):
+    return SimpleNamespace(identity=identity, kind=kind)
+
+
+AGENT_KIND = relay.rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+STANDARD_KIND = relay.rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD
+
+
+def test_wait_for_agent_sees_agent_joining_or_already_present():
+    async def scenario():
+        link = agent_link()
+        waiting = asyncio.create_task(link.wait_for_agent(1))
+        await asyncio.sleep(0)
+        link._on_participant_connected(participant("human", STANDARD_KIND))
+        await asyncio.sleep(0)
+        assert not waiting.done()
+        link._on_participant_connected(participant("agent-1", AGENT_KIND))
+        await waiting
+        await agent_link([participant("agent-1", AGENT_KIND)]).wait_for_agent(1)
+
+    asyncio.run(scenario())
+
+
+def test_wait_for_agent_times_out_without_agent():
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(agent_link([participant("human", STANDARD_KIND)]).wait_for_agent(0.05))
+
+
+def test_agent_leaving_is_reported_once_the_last_agent_is_gone():
+    link = agent_link()
+    for identity in ("agent-1", "agent-2"):
+        link._on_participant_connected(participant(identity, AGENT_KIND))
+    link._on_participant_disconnected(participant("human", STANDARD_KIND))
+    link._on_participant_disconnected(participant("agent-1", AGENT_KIND))
+    assert drain(link._outbox) == []
+    link._on_participant_disconnected(participant("agent-2", AGENT_KIND))
+    assert drain(link._outbox) == [("closed", relay.RelayErrorCode.AGENT_UNAVAILABLE)]
+
+
+def test_own_teardown_does_not_report_agent_leaving():
+    class FakeRoom:
+        def __init__(self):
+            self.handlers = {}
+
+        def on(self, event, handler):
+            self.handlers[event] = handler
+
+        def off(self, event, handler):
+            if self.handlers.get(event) == handler:
+                del self.handlers[event]
+
+        def unregister_text_stream_handler(self, _topic):
+            pass
+
+        def unregister_byte_stream_handler(self, _topic):
+            pass
+
+        async def disconnect(self):
+            # LiveKit may report the remote agent leaving while we disconnect.
+            handler = self.handlers.get("participant_disconnected")
+            if handler:
+                handler(participant("agent-1", AGENT_KIND))
+
+    class FakeSource:
+        async def aclose(self):
+            pass
+
+    async def scenario():
+        link = agent_link()
+        link._room = FakeRoom()
+        link._source = FakeSource()
+        link._room.on("participant_connected", link._on_participant_connected)
+        link._room.on("participant_disconnected", link._on_participant_disconnected)
+        link._on_participant_connected(participant("agent-1", AGENT_KIND))
+        await link.aclose()
+        return drain(link._outbox), link._room.handlers, link._tasks
+
+    items, handlers, tasks = asyncio.run(scenario())
+    assert items == [] and handlers == {} and not tasks
 
 
 def drain(queue):

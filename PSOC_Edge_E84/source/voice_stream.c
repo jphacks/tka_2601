@@ -24,11 +24,18 @@ typedef struct {
 static call_t call;
 static volatile bool busy, start_requested, stop_requested, recovery_required;
 static volatile uint8_t probe_requested;
+/* Recovery bookkeeping; only the voice task touches it after run_call() sets it up. */
+static TickType_t recovery_began, recovery_logged;
+static uint32_t recovery_delay_ms, recovery_attempts;
+static bool recovery_log_seen;
+/* v2 keeps the agent idle until call_started, so the API can be proven reachable
+ * before the servo answers the intercom. Legacy v1 greets on ready: old order. */
+#define VOICE_SERVER_FIRST (VOICE_RELAY_PROTOCOL!=1)
 
 bool voice_stream_busy(void) { return busy; }
 void voice_stream_request_call(void) {
     if (!recovery_required) start_requested=true;
-    else printf("[VOICE] Recovery required; check intercom and reset both boards before a new call.\n");
+    else printf("[VOICE] M5 state unconfirmed; new calls wait for automatic recovery.\n");
 }
 void voice_stream_request_stop(void) { stop_requested=true; }
 void voice_stream_request_probe(void) { probe_requested=true; }
@@ -224,11 +231,21 @@ static bool await_call_started(void)
     while (!stop_requested && e84_network_voice_ready() &&
            xTaskGetTickCount()-start<pdMS_TO_TICKS(65000)) {
         voice_packet_t p;
-        int r=voice_transport_poll(&call.m5,&p);
+        int r;
+        if (VOICE_SERVER_FIRST) {
+            /* The API session already exists: keep it alive and notice its loss. */
+            r=voice_transport_poll(&call.server,&p);
+            if (r<0) { call.io_failure="server_connection_lost"; return false; }
+            if (r>0 && !server_packet(&p)) { call.io_failure="server_protocol_error"; return false; }
+        }
+        r=voice_transport_poll(&call.m5,&p);
         if (r<0 || (r>0 && !m5_packet(&p))) return false;
         if (call.state==CONNECT_AGENT) return true;
         if (xTaskGetTickCount()-last_ping>=pdMS_TO_TICKS(5000)) {
             if (!control(&call.m5,VOICE_PING,0,0)) return false;
+            if (VOICE_SERVER_FIRST && !control(&call.server,VOICE_PING,0,0)) {
+                call.io_failure="server_send_failed"; return false;
+            }
             last_ping=xTaskGetTickCount();
         }
         vTaskDelay(pdMS_TO_TICKS(1));
@@ -353,6 +370,21 @@ static bool end_on_error(void)
     }
     return false;
 }
+static bool connect_server(const char **reason)
+{
+    *reason="server_connect_failed";
+    if (!voice_transport_server(&call.server)) return false;
+    *reason="server_ready_failed";
+    if (!control(&call.server,VOICE_HELLO,0,0) || !await_ready(&call.server)) return false;
+    printf("[VOICE] Server ready: /api/relay protocol %u.\n",voice_transport_legacy(&call.server)?1u:2u);
+    return true;
+}
+static void enter_recovery(void)
+{
+    recovery_began=xTaskGetTickCount(); recovery_delay_ms=VOICE_RECOVERY_RETRY_MIN_MS;
+    recovery_attempts=0; recovery_log_seen=false;
+    recovery_required=true;
+}
 static bool run_call(uint32_t session)
 {
     memset(&call,0,sizeof(call)); call.session=session; voice_transport_init(&call.server); voice_transport_init(&call.m5);
@@ -360,6 +392,14 @@ static bool run_call(uint32_t session)
     const char *reason="capture_pause_failed";
     printf("[VOICE] Preparing streaming call.\n");
     if (!pause_capture(true)) goto cleanup;
+    if (VOICE_SERVER_FIRST) {
+        /* The servo answers the real intercom: prove the API is usable first.
+         * On failure nothing has been pressed and chime detection is re-armed. */
+        if (!connect_server(&reason)) {
+            if (!stop_requested) printf("[VOICE] API unreachable (%s); intercom button not pressed.\n",reason);
+            goto cleanup;
+        }
+    }
     /* Complete the physical button operation before starting an agent. */
     reason="m5_connect_failed";
     if (!voice_transport_m5(&call.m5)) goto cleanup;
@@ -373,10 +413,11 @@ static bool run_call(uint32_t session)
     reason="call_button_failed";
     if (!control(&call.m5,VOICE_CALL_START,0,0)) goto cleanup;
     printf("[VOICE] Waiting for one call-button press and release; voice agent not started.\n");
-    if (!await_call_started() || stop_requested) goto cleanup;
-    reason="server_connect_failed";
-    if (!voice_transport_server(&call.server) || !control(&call.server,VOICE_HELLO,0,0) || !await_ready(&call.server)) goto cleanup;
-    printf("[VOICE] Server ready: /api/relay protocol %u.\n",voice_transport_legacy(&call.server)?1u:2u);
+    if (!await_call_started() || stop_requested) {
+        if (call.io_failure) reason=call.io_failure;
+        goto cleanup;
+    }
+    if (!VOICE_SERVER_FIRST && !connect_server(&reason)) goto cleanup;
     reason="agent_start_failed";
     if (stop_requested || !control(&call.server,VOICE_CALL_START,0,0)) goto cleanup;
     phase(WAIT_REPLY);
@@ -427,11 +468,91 @@ cleanup:
         printf("[VOICE] %s; chime detection rearmed.\n",success?"Call ended":"Call stopped");
         return true;
     }
-    /* Cannot prove that M5 stopped: hold capture muted until both boards are reset. */
-    recovery_required=true;
+    /* Cannot prove that M5 stopped: hold capture muted until recovery_step()
+     * reconnects and the M5 confirms it is idle. */
+    enter_recovery();
     busy=false; // Closed transports are free for diagnostics; new calls remain inhibited.
-    printf("[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and reset both boards. Diagnostics available.\n");
+    printf("[VOICE] Playback/call state uncertain. Recording remains paused; reconnecting to the M5 automatically (first retry in %lu s). Diagnostics available.\n",
+        (unsigned long)(recovery_delay_ms/1000u));
     return false;
+}
+/* Fresh session, CANCEL only: the M5 answers CALL_ENDED without actuating a servo
+ * (no call exists in this session) and refuses HELLO while a servo is moving. It
+ * never sends CALL_START/CALL_END, so recovery can neither call nor press. */
+static bool run_recovery(uint32_t session, const char **reason)
+{
+    memset(&call,0,sizeof(call)); call.session=session;
+    voice_transport_init(&call.server); voice_transport_init(&call.m5);
+    bool ok=false;
+    *reason="m5_connect_failed";
+    if (!voice_transport_m5(&call.m5)) goto done;
+    voice_header_t hello={.type=VOICE_HELLO,.session=session,.length=strlen(M5_TOKEN)};
+    *reason="m5_auth_failed";
+    if (!voice_transport_send(&call.m5,&hello,M5_TOKEN) || !await_ready(&call.m5)) goto done;
+    *reason="cancel_send_failed";
+    if (!control(&call.m5,VOICE_CANCEL,0,0)) goto done;
+    *reason="end_unconfirmed";
+    TickType_t start=xTaskGetTickCount();
+    while (!stop_requested && xTaskGetTickCount()-start<pdMS_TO_TICKS(VOICE_RECOVERY_CONFIRM_MS)) {
+        voice_packet_t p;
+        int r=voice_transport_poll(&call.m5,&p);
+        if (r<0) break;
+        if (r>0 && packet_session(&p)) {
+            if (p.header.type==VOICE_CALL_ENDED && p.header.turn==0) { ok=true; break; }
+            if (p.header.type==VOICE_ERROR) break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    if (stop_requested) *reason="manual_stop";
+done:
+    voice_transport_close(&call.m5);
+    if (ok) {
+        *reason="capture_rearm_failed";
+        ok=pause_capture(false);
+    }
+    return ok;
+}
+static bool next_session(volatile e84_shared_t *s, uint32_t *counter, uint32_t *session)
+{
+    if (*counter==UINT32_MAX) return false;
+    *session=s->seed[0]^(++*counter);
+    if (!*session) {
+        if (*counter==UINT32_MAX) return false;
+        *session=s->seed[0]^(++*counter);
+    }
+    return true;
+}
+/* Called by the voice task only when idle. Never overlaps a call or diagnostic. */
+static void recovery_step(volatile e84_shared_t *s, uint32_t *counter)
+{
+    if (!recovery_required || busy) return;
+    TickType_t now=xTaskGetTickCount();
+    if (now-recovery_began<pdMS_TO_TICKS(recovery_delay_ms)) return;
+    if (!VOICE_STREAM_ENABLED || !e84_network_voice_ready() || !m5_link_configured() || !s->seed_ready) return;
+    uint32_t session;
+    if (!next_session(s,counter,&session)) return; // ID space exhausted: stays muted
+    stop_requested=false; busy=true;
+    ++recovery_attempts;
+    const char *reason="";
+    bool cleared=run_recovery(session,&reason);
+    busy=false;
+    now=xTaskGetTickCount();
+    if (cleared) {
+        recovery_required=false;
+        printf("[VOICE] M5 confirmed idle after %lu recovery attempt(s); chime detection rearmed.\n",
+            (unsigned long)recovery_attempts);
+        return;
+    }
+    recovery_began=now;
+    if (recovery_delay_ms<VOICE_RECOVERY_RETRY_MAX_MS) {
+        recovery_delay_ms*=2u;
+        if (recovery_delay_ms>VOICE_RECOVERY_RETRY_MAX_MS) recovery_delay_ms=VOICE_RECOVERY_RETRY_MAX_MS;
+    }
+    if (!recovery_log_seen || now-recovery_logged>=pdMS_TO_TICKS(VOICE_RECOVERY_LOG_MS)) {
+        recovery_log_seen=true; recovery_logged=now;
+        printf("[VOICE] M5 state still uncertain (attempt %lu: %s). Recording remains paused; retry in %lu s.\n",
+            (unsigned long)recovery_attempts,reason,(unsigned long)(recovery_delay_ms/1000u));
+    }
 }
 void voice_stream_task(void *argument)
 {
@@ -460,11 +581,8 @@ void voice_stream_task(void *argument)
             }
             else if (counter==UINT32_MAX) printf("[VOICE] Session ID limit reached; reset required.\n");
             else {
-                uint32_t session=s->seed[0]^(++counter);
-                if (!session) {
-                    if (counter==UINT32_MAX) continue;
-                    session=s->seed[0]^(++counter);
-                }
+                uint32_t session;
+                if (!next_session(s,&counter,&session)) { available_before=available; vTaskDelay(pdMS_TO_TICKS(50)); continue; }
                 stop_requested=false; busy=true;
                 if (diagnostic && !detected && !manual) {
                     if (diagnostic==2) (void)run_api_probe(session);
@@ -477,6 +595,7 @@ void voice_stream_task(void *argument)
                 }
             }
         }
+        else if (recovery_required) recovery_step(s,&counter);
         available_before=available;
         vTaskDelay(pdMS_TO_TICKS(50));
     }

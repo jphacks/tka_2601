@@ -28,6 +28,40 @@ function Test-Listening([int[]] $Ports) {
     return $true
 }
 
+function Stop-BackendServices {
+    Stop-ScheduledTask -TaskName $AgentTask -ErrorAction SilentlyContinue
+    Stop-ScheduledTask -TaskName $ApiTask -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    foreach ($port in @(8081, 8093)) {
+        Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty OwningProcess -Unique |
+            ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Start-BackendServices {
+    $agentAction = New-ScheduledTaskAction -Execute $Python -Argument '-m door_backend.agent start' -WorkingDirectory $AppRoot
+    $apiAction = New-ScheduledTaskAction -Execute $Python -Argument '-m uvicorn door_backend.api:app --host 127.0.0.1 --port 8093' -WorkingDirectory $AppRoot
+    Set-ScheduledTask -TaskName $AgentTask -Action $agentAction | Out-Null
+    Set-ScheduledTask -TaskName $ApiTask -Action $apiAction | Out-Null
+    Start-ScheduledTask -TaskName $ApiTask | Out-Null
+    Start-ScheduledTask -TaskName $AgentTask | Out-Null
+
+    for ($i = 0; $i -lt 30; $i++) {
+        Start-Sleep -Seconds 2
+        if (Test-Listening -Ports @(8081, 8093)) { return $true }
+    }
+    return $false
+}
+
+# Deployment progress, tracked so the catch block can always bring the services back.
+$work = $null
+$stage = "$AppRoot.next"
+$backup = "$AppRoot.previous"
+$servicesStopped = $false
+$appMoved = $false
+$stageInstalled = $false
+
 try {
     $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'door-voice-backend-updater' }
     $encodedHead = [Uri]::EscapeDataString("$RepositoryOwner`:$DeploymentBranch")
@@ -63,8 +97,6 @@ try {
     $work = Join-Path $env:TEMP ('door-voice-update-' + [Guid]::NewGuid().ToString('N'))
     $archive = Join-Path $work 'source.zip'
     $extract = Join-Path $work 'extract'
-    $stage = "$AppRoot.next"
-    $backup = "$AppRoot.previous"
     New-Item -ItemType Directory -Path $work -Force | Out-Null
     Invoke-WebRequest -Uri "$ApiRoot/zipball/$sha" -Headers $headers -OutFile $archive
     Expand-Archive -LiteralPath $archive -DestinationPath $extract -Force
@@ -87,55 +119,49 @@ try {
         Pop-Location
     }
 
-    Stop-ScheduledTask -TaskName $AgentTask -ErrorAction SilentlyContinue
-    Stop-ScheduledTask -TaskName $ApiTask -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    foreach ($port in @(8081, 8093)) {
-        Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty OwningProcess -Unique |
-            ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
-    }
+    $servicesStopped = $true
+    Stop-BackendServices
     if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Recurse -Force }
     Move-Item -LiteralPath $AppRoot -Destination $backup
+    $appMoved = $true
     Move-Item -LiteralPath $stage -Destination $AppRoot
+    $stageInstalled = $true
     Copy-Item -LiteralPath (Join-Path $source 'deploy\windows\auto-update.ps1') -Destination $UpdaterPath -Force
 
-    $agentAction = New-ScheduledTaskAction -Execute $Python -Argument '-m door_backend.agent start' -WorkingDirectory $AppRoot
-    $apiAction = New-ScheduledTaskAction -Execute $Python -Argument '-m uvicorn door_backend.api:app --host 127.0.0.1 --port 8093' -WorkingDirectory $AppRoot
-    Set-ScheduledTask -TaskName $AgentTask -Action $agentAction | Out-Null
-    Set-ScheduledTask -TaskName $ApiTask -Action $apiAction | Out-Null
-    Start-ScheduledTask -TaskName $ApiTask
-    Start-ScheduledTask -TaskName $AgentTask
-
-    $ready = $false
-    for ($i = 0; $i -lt 30; $i++) {
-        Start-Sleep -Seconds 2
-        if (Test-Listening -Ports @(8081, 8093)) { $ready = $true; break }
-    }
+    $ready = Start-BackendServices
     if (-not $ready) { throw 'The API and Agent listeners did not both become ready.' }
 
     Set-Content -LiteralPath $InstalledShaPath -Value $sha -Encoding ASCII
-    Remove-Item -LiteralPath $backup -Recurse -Force
-    Remove-Item -LiteralPath $work -Recurse -Force
+    # The new revision is live and recorded; a cleanup failure must not trigger a rollback.
+    foreach ($leftover in @($backup, $work)) {
+        try { Remove-Item -LiteralPath $leftover -Recurse -Force } catch { Write-DeployLog "Cleanup failed for $leftover`: $($_.Exception.Message)" }
+    }
     Write-DeployLog "Deployed $sha from $branch; API and Agent listeners are ready."
 } catch {
     Write-DeployLog "Deployment failed: $($_.Exception.Message)"
-    if (Test-Path -LiteralPath $backup) {
-        foreach ($task in @($AgentTask, $ApiTask)) { Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue }
-        foreach ($port in @(8081, 8093)) {
-            Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
-                Select-Object -ExpandProperty OwningProcess -Unique |
-                ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+    try {
+        if ($appMoved) {
+            Write-DeployLog 'Recovery: rolling back to the previous backend revision.'
+            Stop-BackendServices
+            if (Test-Path -LiteralPath $AppRoot) { Remove-Item -LiteralPath $AppRoot -Recurse -Force }
+            Move-Item -LiteralPath $backup -Destination $AppRoot
+            $recovered = Start-BackendServices
+            Write-DeployLog "Rolled back to the previous backend revision; API and Agent listeners ready: $recovered."
+        } elseif ($servicesStopped) {
+            Write-DeployLog 'Recovery: the previous backend was not moved; restarting it in place.'
+            $recovered = Start-BackendServices
+            Write-DeployLog "Restarted the previous backend in place; API and Agent listeners ready: $recovered."
+        } else {
+            Write-DeployLog 'Recovery: not needed; the services were not stopped.'
         }
-        if (Test-Path -LiteralPath $AppRoot) { Remove-Item -LiteralPath $AppRoot -Recurse -Force }
-        Move-Item -LiteralPath $backup -Destination $AppRoot
-        $agentAction = New-ScheduledTaskAction -Execute $Python -Argument '-m door_backend.agent start' -WorkingDirectory $AppRoot
-        $apiAction = New-ScheduledTaskAction -Execute $Python -Argument '-m uvicorn door_backend.api:app --host 127.0.0.1 --port 8093' -WorkingDirectory $AppRoot
-        Set-ScheduledTask -TaskName $AgentTask -Action $agentAction | Out-Null
-        Set-ScheduledTask -TaskName $ApiTask -Action $apiAction | Out-Null
-        Start-ScheduledTask -TaskName $ApiTask
-        Start-ScheduledTask -TaskName $AgentTask
-        Write-DeployLog 'Rolled back to the previous backend revision.'
+    } catch {
+        Write-DeployLog "Recovery failed: $($_.Exception.Message)"
+    }
+    # Remove leftovers; the live AppRoot and the backup are never touched here.
+    foreach ($leftover in @($work, $(if (-not $stageInstalled) { $stage }))) {
+        if ($leftover -and (Test-Path -LiteralPath $leftover)) {
+            try { Remove-Item -LiteralPath $leftover -Recurse -Force } catch { Write-DeployLog "Cleanup failed for $leftover`: $($_.Exception.Message)" }
+        }
     }
     exit 1
 }

@@ -44,9 +44,13 @@ int voice_transport_poll(voice_transport_t *link, voice_packet_t *packet);
                 "-fsanitize=address,undefined", "-I", str(temp),
                 str(temp / "harness.c"), "-o", str(binary),
             ], check=True)
-            result=subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            result=subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('Call ending: reason=manual_stop',result.stdout)
             self.assertIn('Call ending: reason=m5_probe_failed',result.stdout)
+            self.assertIn('automatic M5 recovery', result.stdout)
+            self.assertIn('API unreachable', result.stdout)
+            self.assertIn('M5 confirmed idle', result.stdout)
             print(result.stdout,end='')
 
 
