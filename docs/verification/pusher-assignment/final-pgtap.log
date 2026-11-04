@@ -1,0 +1,314 @@
+supabase/tests/database/app_groups.test.sql
+1..44
+ok 1 - anon はグループを作れない
+ok 2 - anon はメンバーの一覧を読めない
+ok 3 - anon は本体を結び付けられない
+ok 4 - U1 はグループを作れる
+ok 5 - すでにグループに入っている人は作れない
+ok 6 - グループの名前は前後の空白を除く
+ok 7 - 作った人は owner になる
+ok 8 - 空の名前では作れない
+ok 9 - グループに入っていない人は招待を作れない
+ok 10 - グループに入っていない人はメンバーの一覧を読めない
+ok 11 - 招待トークンは 48 桁の 16 進
+ok 12 - 招待トークンは何度呼んでも同じ
+45522eb9330d611c3c3f4296e40b783b6aac005880064939
+82db7fde-81ce-4495-a662-ccc3e3c6453b
+ok 13 - 招待を受けた人は、参加の前にグループ名と招待した人の名前を読める
+ok 14 - 違うトークンは PT404
+ok 15 - 違うトークンでは入れない
+ok 16 - U3 は招待でグループに入れる
+ok 17 - 入った人はそのグループを読める
+ok 18 - すでにグループに入っている人は入れない
+ok 19 - メンバーの名前（full_name、なければ name）、メール、役割を入った順に返す
+ok 20 - 住人は招待の表を直接は読めない
+ok 21 - service_role も招待の表を直接は読めない
+ok 22 - 1人1グループを DB でも守る
+ok 23 - ペアリングコードは見間違えやすい文字を除いた 8 文字
+WGPBZJMH
+1d22f34c-ebc1-4332-ade1-0dc3df969ab0
+ok 24 - 結び付く前の本体は、グループなし、モードは通常
+ok 25 - 結び付く前の本体は来客を書けない
+ok 26 - 住人は本体を登録できない
+ok 27 - 結び付く前の本体は住人から見えない
+ok 28 - グループに入っていない人は結び付けられない
+ok 29 - 違うコードでは結び付けられない
+ok 30 - コードは小文字やハイフンが入っていても受け付ける
+ok 31 - 結び付けた本体はグループの住人から見える
+ok 32 - 使ったコードは二度と使えない
+ok 33 - AI への追加の指示は 351 字だと拒否する
+ok 34 - AI への追加の指示は 350 字まで入る
+ok 35 - 住人は自動の外出の状態を書けない
+ok 36 - メンバーのだれが変えた設定も本体が読める
+ok 37 - 本体は自動の外出の状態を書ける
+ok 38 - 住人は自動の外出の状態を読める
+ok 39 - 住人は device_set_state を呼べない
+ok 40 - 結び付けた本体は来客を書け、意図に知人を使える
+ok 41 - 知らない意図は拒否する
+ok 42 - メンバーは結び付けた本体の来客を読める
+ok 43 - ペアリングコードは使うと消える
+ok 44 - 本体は U1 のグループに結び付いた
+
+WARNING:  Vault に push_function_url か push_webhook_secret がないため通知を送りません
+
+supabase/tests/database/history_access.test.sql
+1..65
+ok 1 - H1 住人 A は自分の家の来客3件だけを読む
+ok 2 - H1 住人 A は家 B の来客を読めない
+ok 3 - H1 住人 A は自分の家の発話だけを読む
+ok 4 - H1 住人 A は自分の家だけを読む
+ok 5 - H1 住人 A は自分の家の住人だけを読む
+ok 6 - H1 住人 A は自分の家のデバイスだけを読む
+ok 7 - H1 anon は来客を読めない
+ok 8 - H1 anon は発話を読めない
+ok 9 - H1 anon は家を読めない
+ok 10 - H1 anon はデバイスを読めない
+ok 11 - H1 anon はトークンを読めない
+ok 12 - 住人はデバイス鍵を読めない
+ok 13 - 住人は device_authenticate を呼べない
+ok 14 - 住人は device_put_visit を呼べない
+ok 15 - anon はデバイス鍵を読めない
+ok 16 - anon は device_authenticate を呼べない
+ok 17 - service_role もデバイス鍵を直接は読めない（device_authenticate だけが読む）
+ok 18 - 鍵 A はデバイス A とそのモードを返す
+ok 19 - 知らない鍵は 0 行
+ok 20 - 正しい鍵で呼ぶと last_seen_at が入る
+ok 21 - 他のデバイスの last_seen_at は変わらない
+ok 22 - H2 デバイス A はデバイス B の来客を更新できず、発話も足せない
+ok 23 - H2 デバイス B の来客は変わらない
+ok 24 - H2 デバイス B の来客の発話は増えない
+ok 25 - H3 住人は来客を作れない
+ok 26 - H3 住人は来客を書き換えられない
+ok 27 - H3 住人は発話を足せない
+ok 28 - H3 住人は発話を書き換えられない
+ok 29 - H3 住人は発話だけを消せない
+ok 30 - H3 住人はデバイスのモード以外を変えられない
+ok 31 - 住人 A は自分の家のデバイスのモードを変えられる
+ok 32 - 住人 A は家 B のデバイスのモードを変えられない
+ok 33 - H3 住人 A は家 B の来客を消せない
+ok 34 - 住人が変えたモードを本体が読める
+ok 35 - H3b anon は来客を消せない
+ok 36 - H3b 住人は1回の削除で2件以上を消せない
+ok 37 - H3b まとめて消そうとした来客は残る
+ok 38 - H3b 住人 A は自分の家の来客を1件消せる
+ok 39 - H3b 来客を消すと発話も消える
+ok 40 - H3b 家 B の発話は残る
+773d3b1f-500a-456d-a7da-0d1fd661d70a
+49a786b3-4c7a-41d2-a2a7-f282c6098a6b
+ok 41 - H4 (1) 来客の作成
+ok 42 - H4 (1) の送り直し
+ok 43 - H4 (2) 通話中への更新
+ok 44 - H4 (3) 終話と発話を3回送る
+ok 45 - H4 来客は1件
+ok 46 - H4 発話は2件
+ok 47 - H4 送らなかった項目は前の値が残り、家はデバイスから決まる
+ok 48 - 終話の後に届いた古い送信は状態を戻さない
+ok 49 - 終話を missed に変えない
+ok 50 - 古い送信の項目は来客に入らない
+ok 51 - 古い送信でも発話は足す
+ok 52 - status のない送信は拒否する
+ok 53 - 知らないモードは拒否する
+ok 54 - Webhook は来客の作成と終話への更新で2回
+ok 55 - Webhook は Vault の URL と合言葉で送る
+ok 56 - 応答しなかった来客の作成
+ok 57 - 応答しなかった来客を missed にする
+ok 58 - 終話済みの来客が初めて届く（回線断からの回復）
+ok 59 - missed への更新では送らず、終話済みの来客の作成では1回送る
+ok 60 - 終話済みの来客の発話も入る
+ok 61 - 住人は自分のトークンを登録できる
+ok 62 - 住人は他人のトークンを登録できない
+ok 63 - 住人 B は住人 A のトークンを読めない
+ok 64 - 家に属さないアカウントはトークンを登録できない
+ok 65 - 家に属さないアカウントは来客を読めない
+
+WARNING:  Vault に push_function_url か push_webhook_secret がないため通知を送りません
+WARNING:  Vault に push_function_url か push_webhook_secret がないため通知を送りません
+WARNING:  Vault に push_function_url か push_webhook_secret がないため通知を送りません
+WARNING:  Vault に push_function_url か push_webhook_secret がないため通知を送りません
+
+supabase/tests/database/push_retry.test.sql
+1..21
+ok 1 - 住人は送信待ちを読めない
+ok 2 - 住人は送信待ちに入れられない
+ok 3 - anon は送信待ちを取り出せない
+ok 4 - 家の住人の端末ごとに入れ、同じトークンは1つにまとめる
+ok 5 - 同じ通知は二度入れない
+ok 6 - 別の通知は別に入れる
+ok 7 - 来客時の通知を2件取り出す
+ok 8 - 取り出すときに文面と data も返す
+ok 9 - 取り出した送信待ちは、送信中のあいだ取り出せない
+ok 10 - 1件は受け付け、1件は送り直しと記録する
+ok 11 - 送り直しだけが再び取り出され、受け付け済みの端末には送らない
+ok 12 - 受け付け済みの行への記録は無視する
+ok 13 - 受け付け済みは後から変わらない
+ok 14 - 取り出した回数を数える
+b3f656ef-cf45-4770-a348-2c8aa02c1055
+b62339d0-77a8-4fac-9389-c81a7cdf9e31
+
+ok 15 - 送る時期が来た送信待ちがなければ、再送を頼まない
+
+ok 16 - 送る時期が来た送信待ちがあれば、合言葉を付けて push に再送を頼む
+
+ok 17 - 10 分を過ぎた送信待ちはあきらめる
+ok 18 - あきらめた送信待ちは取り出さない
+ok 19 - pg_cron が1分ごとに再送を確かめる
+ok 20 - 来客を消すと送信待ちも消える
+ok 21 - 来客を消すと通知も消える
+
+WARNING:  Vault に push_function_url か push_webhook_secret がないため通知を送りません
+
+supabase/tests/database/pusher_settings.test.sql
+{"schema_version":1,"enabled_pushers":["p1"],"assignments":{"call_start":"p1","call_end":"p1"}}
+{"schema_version":1,"enabled_pushers":["p2"],"assignments":{"call_start":"p2","call_end":"p2"}}
+{"schema_version":1,"enabled_pushers":["p1","p2"],"assignments":{"call_start":"p1","call_end":"p2"}}
+{"schema_version":1,"enabled_pushers":["p1","p2"],"assignments":{"call_start":"p2","call_end":"p1"}}
+{"schema_versions":[1],"pushers":[{"id":"p1","gpio":7},{"id":"p2","gpio":8}]}
+ok 1 - unconfigured device has no desired settings
+ok 2 - local revision zero report does not create a desired revision
+ok 3 - local mapping report preserves absent desired configuration
+ok 4 - actual local mapping is retained in the report
+ok 5 - same local revision cannot change its contents
+ok 6 - anon cannot read reports
+ok 7 - anon cannot save settings
+ok 8 - owner saves shared physical pusher one
+ok 9 - desired configuration is read back as one complete object
+ok 10 - identical current save is idempotent
+ok 11 - stale app snapshot cannot overwrite a save
+ok 12 - another household cannot change the device
+ok 13 - unpaired device cannot be edited by a resident
+ok 14 - resident cannot assign revision numbers directly
+ok 15 - resident cannot forge an applied acknowledgement
+ok 16 - resident cannot remove reports
+ok 17 - resident cannot insert a report row
+ok 18 - resident cannot use service-only settings reads
+ok 19 - resident cannot call the device report RPC
+ok 20 - null desired configuration is not a save operation
+ok 21 - expected revision is mandatory
+ok 22 - unsupported schema is rejected
+ok 23 - unlock output is not eligible
+ok 24 - shared mode requires both functions on the enabled pusher
+ok 25 - two enabled pushers require distinct function assignments
+ok 26 - arbitrary extra settings cannot enter the cloud configuration
+ok 27 - non-owner member may swap the two functions
+ok 28 - future device revision is rejected
+ok 29 - desired revision with different content is rejected
+ok 30 - unreported ACK overtaken by a new save must fetch current desired settings
+ok 31 - device may acknowledge the exact desired configuration
+2026-11-04T16:15:38.787509+00:00
+ok 32 - physical uncertainty remains visible after config application
+ok 33 - capabilities are available to the app
+ok 34 - repeated ACK does not claim a new application time
+ok 35 - same applied revision cannot change content
+ok 36 - reported revision and contents must both be present or both absent
+ok 37 - unknown runtime status cannot imply safe completion
+ok 38 - oversized device capabilities are rejected
+ok 39 - physical pusher two can serve both functions
+ok 40 - cloud save does not change the last applied revision
+ok 41 - late ACK cannot regress an applied revision
+ok 42 - previous confirmed config can report failure while a newer desired version waits
+ok 43 - status-only report preserves the last confirmed applied state
+ok 44 - successful retry advances applied state
+ok 45 - successful retry clears the device error
+ok 46 - other household can save its own separate configuration
+ok 47 - RLS hides other households and unpaired device reports
+ok 48 - RLS exposes only the resident household device
+ok 49 - table constraint disallows future applied revisions
+ok 50 - table constraint rejects positive desired revision without config
+1..50
+
+
+supabase/tests/database/shop_reservations.test.sql
+1..83
+ok 1 - グループを作ると設定の行ができ、口調の既定は最も丁寧にする
+ok 2 - 通知の種類は9つ
+ok 3 - anon は設定を読めない
+ok 4 - anon はメニューを読めない
+ok 5 - anon は予約を読めない
+ok 6 - anon は通知を読めない
+ok 7 - anon は通知の種類を読めない
+ok 8 - 他のグループの設定を読めない
+ok 9 - 他のグループのメニューを読めない
+ok 10 - 他のグループの通知を読めない
+ok 11 - メンバーは通知の種類を読める
+ok 12 - メンバーは予約帳を直接読めない
+ok 13 - メンバーは予約帳に直接書けない
+ok 14 - メンバーは接続（更新トークン）を読めない
+ok 15 - メンバーは OAuth の state を読めない
+ok 16 - メンバーは保留のトークンを読めない
+ok 17 - メンバーは重なりを確かめて作る関数を呼べない
+ok 18 - メンバーは通知を発行できない
+ok 19 - メンバーは自分の書き込みの記録を読めない
+ok 20 - メンバーは Square の接続（トークン）を読めない
+ok 21 - メンバーは外部の予約の状態を直接読めない
+ok 22 - メンバーは外部の予約の状態を直接書けない
+ok 23 - メンバーは送信待ちを読めない
+ok 24 - メンバーは予約先を直接変えられない
+ok 25 - メンバーは受け答えと営業時間を変えられる
+ok 26 - 変えた口調を読める
+ok 27 - あいさつは 80 字まで
+ok 28 - 決まった口調だけを入れられる
+ok 29 - メンバーは店名を変えられる
+ok 30 - 他のグループの店名は読めない
+ok 31 - 他のグループのメニューを足せない
+ok 32 - メンバーは自分の店のメニューを足せる
+ok 33 - 自分の通知設定を足せる
+ok 34 - 他の人の通知設定は足せない
+ok 35 - 自分の既読の位置を書ける
+ok 36 - 他の人の既読の位置は書けない
+ok 37 - メンバーは通知を作れない
+ok 38 - 他のグループの設定は変えられない
+ok 39 - 他の人の通知設定は読めない
+ok 40 - 通知を作ると id を返す
+ok 41 - 同じ dedupe_key は作らず null を返す
+ok 42 - 別の店なら同じキーでも作る
+ok 43 - 発行すると id を返す
+ok 44 - 発行で送信待ちも入る
+ok 45 - 同じキーの発行は同じ id を返す
+ok 46 - 呼び直しても送信待ちは増えない
+ok 47 - 呼び直しても記録は増えない
+ok 48 - 記録があればその id を返す
+ok 49 - 足りない送信待ちを入れる
+ok 50 - その種類をオフにした人には送らない
+ok 51 - 操作した本人には送らない
+ok 52 - 操作した人がいなければ全員に送る
+ok 53 - オンのままの人に送る
+
+ok 54 - 死活通信を送ったことのない本体は対象にしない
+ok 55 - 本体は死活通信を送れる
+
+ok 56 - 死活通信が新しいあいだは通知しない
+
+ok 57 - 死活通信が 15 分途絶えたら通知する
+
+ok 58 - 同じ途絶は1回だけ通知する
+ok 59 - 接続切れの通知も送信待ちに入る
+2e1ba91c-9e26-41e5-a158-1cf215e32dfb
+bdb7e42a-37ab-42ae-ba15-ceca344cfee2
+
+ok 60 - カレンダーを選び終えた接続がなければ呼ばない
+
+ok 61 - 接続があれば、合言葉を付けて calendar-sync を呼ぶ
+ok 62 - 古い書き込みの記録を片付ける
+ok 63 - 10 分たった保留のトークンを片付ける
+ok 64 - pg_cron が1分ごとに確かめる
+ok 65 - 空いていれば作る
+ok 66 - 重なれば PT409
+ok 67 - 終わりと始まりが同じ時刻なら重ならない
+ok 68 - 別の店の予約とは重ならない
+ok 69 - 数える状態を仮予約だけにすると確定とは重ならない（Square の予約帳）
+ok 70 - 同じ店の同じ冪等キーは入らない
+ok 71 - 別の店なら同じキーを使える
+ok 72 - キーのない予約はいくつでも入る
+ok 73 - キーの形が違えば入らない
+ok 74 - 予定の id が決まる前に記録できる
+ok 75 - 同じ書き込みの id は記録できない
+ok 76 - 空いていれば権利を取れる
+ok 77 - 取られている間は取れない
+
+ok 78 - 解放すれば取れる
+ok 79 - 期限が切れた権利は取り直せる
+ok 80 - 接続のない店は取れない
+
+ok 81 - 本人のトークンだけを消す
+ok 82 - 本人の送信待ちだけを消す
+ok 83 - anon と authenticated は権利と片付けの関数を呼べない

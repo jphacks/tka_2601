@@ -1,0 +1,461 @@
+
+> tka2601-mobile@1.0.0 test
+> node --experimental-strip-types --test tests/*.test.mjs
+
+TAP version 13
+# Subtest: screens and components reach data only through the container
+ok 1 - screens and components reach data only through the container
+  ---
+  duration_ms: 3.253125
+  type: 'test'
+  ...
+# Subtest: the domain and repository layers do not depend on the implementations
+ok 2 - the domain and repository layers do not depend on the implementations
+  ---
+  duration_ms: 1.371375
+  type: 'test'
+  ...
+# Subtest: the import check catches every way of loading a module
+ok 3 - the import check catches every way of loading a module
+  ---
+  duration_ms: 0.095917
+  type: 'test'
+  ...
+# Subtest: only the container and the auth files read the implementations
+ok 4 - only the container and the auth files read the implementations
+  ---
+  duration_ms: 3.6745
+  type: 'test'
+  ...
+# Subtest: the auth files read only the client
+ok 5 - the auth files read only the client
+  ---
+  duration_ms: 1.671083
+  type: 'test'
+  ...
+# (node:26950) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/domain/devicePairing.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: pairing accepts case and human-readable separators without changing code identity
+ok 6 - pairing accepts case and human-readable separators without changing code identity
+  ---
+  duration_ms: 0.424333
+  type: 'test'
+  ...
+# Subtest: pairing rejects ambiguous characters, partial codes and unexpected punctuation
+ok 7 - pairing rejects ambiguous characters, partial codes and unexpected punctuation
+  ---
+  duration_ms: 0.090083
+  type: 'test'
+  ...
+# Subtest: claim errors distinguish consumed codes, memberships and already registered devices
+ok 8 - claim errors distinguish consumed codes, memberships and already registered devices
+  ---
+  duration_ms: 0.133333
+  type: 'test'
+  ...
+# (node:26951) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/infrastructure/supabase/deviceRequest.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a response deadline releases the caller and aborts its request
+ok 9 - a response deadline releases the caller and aborts its request
+  ---
+  duration_ms: 5.635166
+  type: 'test'
+  ...
+# Subtest: successful and failed requests retain their result before the deadline
+ok 10 - successful and failed requests retain their result before the deadline
+  ---
+  duration_ms: 0.186833
+  type: 'test'
+  ...
+# (node:26952) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/lib/errors.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: only explicit authentication cancellation suppresses the message
+ok 11 - only explicit authentication cancellation suppresses the message
+  ---
+  duration_ms: 0.543333
+  type: 'test'
+  ...
+# Subtest: known authentication and network messages retain their translations
+ok 12 - known authentication and network messages retain their translations
+  ---
+  duration_ms: 0.111417
+  type: 'test'
+  ...
+# Subtest: matching preserves priority, case insensitivity, and repeated calls
+ok 13 - matching preserves priority, case insensitivity, and repeated calls
+  ---
+  duration_ms: 0.040833
+  type: 'test'
+  ...
+# Subtest: unrecognized response messages remain available to the caller
+ok 14 - unrecognized response messages remain available to the caller
+  ---
+  duration_ms: 0.04525
+  type: 'test'
+  ...
+# Subtest: non-error rejection values can be formatted without property access failures
+ok 15 - non-error rejection values can be formatted without property access failures
+  ---
+  duration_ms: 0.049958
+  type: 'test'
+  ...
+# Subtest: native cancellation codes are checked without assuming the rejection shape
+ok 16 - native cancellation codes are checked without assuming the rejection shape
+  ---
+  duration_ms: 0.055958
+  type: 'test'
+  ...
+# Subtest: Edge Function の code を日本語にする
+ok 17 - Edge Function の code を日本語にする
+  ---
+  duration_ms: 0.125958
+  type: 'test'
+  ...
+# (node:26953) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/lib/labels.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: 予約先の順序は予約帳、Google、Square、ホットペッパー
+ok 18 - 予約先の順序は予約帳、Google、Square、ホットペッパー
+  ---
+  duration_ms: 0.54275
+  type: 'test'
+  ...
+# Subtest: 手で入力する予約先は、承認の確認で入力を尋ねる
+ok 19 - 手で入力する予約先は、承認の確認で入力を尋ねる
+  ---
+  duration_ms: 0.049959
+  type: 'test'
+  ...
+# Subtest: 外部の予約の受付元は今の予約先で出す
+ok 20 - 外部の予約の受付元は今の予約先で出す
+  ---
+  duration_ms: 0.039125
+  type: 'test'
+  ...
+# (node:26954) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/infrastructure/supabase/mappers.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: unknown visit values from the voice agent are rounded without crashing
+ok 21 - unknown visit values from the voice agent are rounded without crashing
+  ---
+  duration_ms: 0.378917
+  type: 'test'
+  ...
+# Subtest: known visit values pass through and null stays null
+ok 22 - known visit values pass through and null stays null
+  ---
+  duration_ms: 0.086583
+  type: 'test'
+  ...
+# Subtest: unknown speakers still render as a message
+ok 23 - unknown speakers still render as a message
+  ---
+  duration_ms: 0.044334
+  type: 'test'
+  ...
+# Subtest: reservation fills defaults for unknown and missing values
+ok 24 - reservation fills defaults for unknown and missing values
+  ---
+  duration_ms: 0.054458
+  type: 'test'
+  ...
+# Subtest: provider state survives missing sections and unknown providers
+ok 25 - provider state survives missing sections and unknown providers
+  ---
+  duration_ms: 0.113875
+  type: 'test'
+  ...
+# Subtest: shop profile rounds unknown settings and drops broken hours
+ok 26 - shop profile rounds unknown settings and drops broken hours
+  ---
+  duration_ms: 0.269833
+  type: 'test'
+  ...
+# Subtest: notification data falls back to an empty object
+ok 27 - notification data falls back to an empty object
+  ---
+  duration_ms: 0.078
+  type: 'test'
+  ...
+# Subtest: assistant proposals keep valid shapes
+ok 28 - assistant proposals keep valid shapes
+  ---
+  duration_ms: 0.104708
+  type: 'test'
+  ...
+# Subtest: broken assistant proposals never reach the write path
+ok 29 - broken assistant proposals never reach the write path
+  ---
+  duration_ms: 0.198709
+  type: 'test'
+  ...
+# (node:26955) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/domain/notification.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: notification targets prefer the reservation and ignore other values
+ok 30 - notification targets prefer the reservation and ignore other values
+  ---
+  duration_ms: 0.639083
+  type: 'test'
+  ...
+# Subtest: unread is judged by time, with offsets compared as instants
+ok 31 - unread is judged by time, with offsets compared as instants
+  ---
+  duration_ms: 0.080541
+  type: 'test'
+  ...
+# Subtest: the newest notification time is picked regardless of order
+ok 32 - the newest notification time is picked regardless of order
+  ---
+  duration_ms: 0.061125
+  type: 'test'
+  ...
+# Subtest: kinds keep table order within categories and fall back to their default
+ok 33 - kinds keep table order within categories and fall back to their default
+  ---
+  duration_ms: 0.164625
+  type: 'test'
+  ...
+# (node:26956) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/domain/pusher.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: one pusher can serve both actions on either physical output
+ok 34 - one pusher can serve both actions on either physical output
+  ---
+  duration_ms: 0.665292
+  type: 'test'
+  ...
+# Subtest: two pushers always receive different roles and can be swapped
+ok 35 - two pushers always receive different roles and can be swapped
+  ---
+  duration_ms: 0.080625
+  type: 'test'
+  ...
+# Subtest: rejects absent, duplicate, unsupported and inconsistent assignments
+ok 36 - rejects absent, duplicate, unsupported and inconsistent assignments
+  ---
+  duration_ms: 0.1575
+  type: 'test'
+  ...
+# Subtest: physical output order is normalized without changing roles
+ok 37 - physical output order is normalized without changing roles
+  ---
+  duration_ms: 0.073041
+  type: 'test'
+  ...
+# Subtest: unknown capability data does not claim unsupported firmware
+ok 38 - unknown capability data does not claim unsupported firmware
+  ---
+  duration_ms: 0.129833
+  type: 'test'
+  ...
+# Subtest: only a matching version and configuration with an application timestamp counts as applied
+ok 39 - only a matching version and configuration with an application timestamp counts as applied
+  ---
+  duration_ms: 0.048459
+  type: 'test'
+  ...
+# Subtest: application failure and manual recovery take precedence over an older success
+ok 40 - application failure and manual recovery take precedence over an older success
+  ---
+  duration_ms: 0.07175
+  type: 'test'
+  ...
+# Subtest: local setup remains a local setup until the user explicitly saves a desired configuration
+ok 41 - local setup remains a local setup until the user explicitly saves a desired configuration
+  ---
+  duration_ms: 0.064042
+  type: 'test'
+  ...
+# Subtest: refuses corrupt version and configuration data from the API
+ok 42 - refuses corrupt version and configuration data from the API
+  ---
+  duration_ms: 0.207
+  type: 'test'
+  ...
+# (node:26957) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/domain/reservation.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: day, week and month ranges start at local midnight
+ok 43 - day, week and month ranges start at local midnight
+  ---
+  duration_ms: 1.57275
+  type: 'test'
+  ...
+# Subtest: adding days crosses month boundaries
+ok 44 - adding days crosses month boundaries
+  ---
+  duration_ms: 0.074
+  type: 'test'
+  ...
+# Subtest: month week count follows a Sunday start
+ok 45 - month week count follows a Sunday start
+  ---
+  duration_ms: 0.055125
+  type: 'test'
+  ...
+# Subtest: reservations are grouped by local day in start order without cancellations
+ok 46 - reservations are grouped by local day in start order without cancellations
+  ---
+  duration_ms: 0.470209
+  type: 'test'
+  ...
+# Subtest: the next reservation is confirmed, not arrived and not finished
+ok 47 - the next reservation is confirmed, not arrived and not finished
+  ---
+  duration_ms: 0.129625
+  type: 'test'
+  ...
+# Subtest: external customers keep their calendar title
+ok 48 - external customers keep their calendar title
+  ---
+  duration_ms: 0.039209
+  type: 'test'
+  ...
+# Subtest: business hours are normalized to all seven days with saved values kept
+ok 49 - business hours are normalized to all seven days with saved values kept
+  ---
+  duration_ms: 0.104916
+  type: 'test'
+  ...
+# Subtest: closed days come from the business hours
+ok 50 - closed days come from the business hours
+  ---
+  duration_ms: 0.047709
+  type: 'test'
+  ...
+# Subtest: visible hours cover the business hours and reservations
+ok 51 - visible hours cover the business hours and reservations
+  ---
+  duration_ms: 0.319875
+  type: 'test'
+  ...
+# Subtest: visible hours fall back when every day is closed and stay valid for the calendar
+ok 52 - visible hours fall back when every day is closed and stay valid for the calendar
+  ---
+  duration_ms: 0.372834
+  type: 'test'
+  ...
+# Subtest: visible hours look only at the part of a reservation inside the shown day
+ok 53 - visible hours look only at the part of a reservation inside the shown day
+  ---
+  duration_ms: 0.268542
+  type: 'test'
+  ...
+# Subtest: empty clock values fall back to the defaults
+ok 54 - empty clock values fall back to the defaults
+  ---
+  duration_ms: 0.046417
+  type: 'test'
+  ...
+# Subtest: a day change never saves an empty clock and keeps the other days
+ok 55 - a day change never saves an empty clock and keeps the other days
+  ---
+  duration_ms: 0.064875
+  type: 'test'
+  ...
+# Subtest: arrival can be recorded only for confirmed reservations of the day
+ok 56 - arrival can be recorded only for confirmed reservations of the day
+  ---
+  duration_ms: 0.051792
+  type: 'test'
+  ...
+# Subtest: a reservation from midnight to midnight is not treated as all day
+ok 57 - a reservation from midnight to midnight is not treated as all day
+  ---
+  duration_ms: 0.043709
+  type: 'test'
+  ...
+# Subtest: the end label shows when it falls on the next day
+ok 58 - the end label shows when it falls on the next day
+  ---
+  duration_ms: 0.046542
+  type: 'test'
+  ...
+# Subtest: pages never repeat a row
+ok 59 - pages never repeat a row
+  ---
+  duration_ms: 0.04675
+  type: 'test'
+  ...
+# Subtest: reservations are split into one segment per visible day
+ok 60 - reservations are split into one segment per visible day
+  ---
+  duration_ms: 0.131
+  type: 'test'
+  ...
+# Subtest: segments stay inside the visible range and leave a same-day reservation alone
+ok 61 - segments stay inside the visible range and leave a same-day reservation alone
+  ---
+  duration_ms: 0.042708
+  type: 'test'
+  ...
+# Subtest: a fully covered day and a reservation ending at midnight do not create an empty day
+ok 62 - a fully covered day and a reservation ending at midnight do not create an empty day
+  ---
+  duration_ms: 0.028125
+  type: 'test'
+  ...
+# Subtest: idempotency keys look like uuids and differ
+ok 63 - idempotency keys look like uuids and differ
+  ---
+  duration_ms: 0.113208
+  type: 'test'
+  ...
+# Subtest: the keyset filter selects rows after the cursor, breaking ties by id
+ok 64 - the keyset filter selects rows after the cursor, breaking ties by id
+  ---
+  duration_ms: 0.028417
+  type: 'test'
+  ...
+# Subtest: 仮予約はカードに開始の早い順で出し、日付の見出しの下には出さない
+ok 65 - 仮予約はカードに開始の早い順で出し、日付の見出しの下には出さない
+  ---
+  duration_ms: 0.06475
+  type: 'test'
+  ...
+# (node:26958) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/src/lib/symbols.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: 来客の意図ごとのアイコン。意図がなければ不明にする
+ok 66 - 来客の意図ごとのアイコン。意図がなければ不明にする
+  ---
+  duration_ms: 0.373958
+  type: 'test'
+  ...
+# Subtest: 通知の種類ごとのアイコン。知らない種類はベルにする
+ok 67 - 通知の種類ごとのアイコン。知らない種類はベルにする
+  ---
+  duration_ms: 0.085708
+  type: 'test'
+  ...
+# Subtest: 動作モードのアイコン
+ok 68 - 動作モードのアイコン
+  ---
+  duration_ms: 0.299834
+  type: 'test'
+  ...
+1..68
+# tests 68
+# suites 0
+# pass 68
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 69.349083
+
+> tka2601-mobile@1.0.0 typecheck
+> tsc --noEmit

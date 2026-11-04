@@ -46,7 +46,10 @@ servo_config_result_t servo_pusher_apply(const servo_pusher_config_t *config);
 servo_config_result_t servo_pusher_apply_local(const servo_pusher_config_t *config);
 const char *servo_pusher_result_error(servo_config_result_t result);
 uint8_t servo_pusher_pin(uint8_t physical_id); /* UINT8_MAX for unknown ID */
-void servo_pusher_set_pending(bool pending);
+/* Durable gate: a failed write/readback leaves calls inhibited. Clearing is
+ * allowed only after servo_pusher_apply verifies the current desired mapping. */
+bool servo_pusher_set_pending(bool pending);
+bool servo_pusher_pending(void);
 bool servo_recovery_required(void);
 bool servo_recovery_confirm(void); /* Operator has confirmed intercom is idle. */
 

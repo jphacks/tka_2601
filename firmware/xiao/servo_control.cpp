@@ -55,6 +55,7 @@ constexpr servo_pusher_config_t kDefaultPushers = {0, SERVO_PUSHER_SCHEMA_VERSIO
 servo_pusher_config_t pushers = kDefaultPushers, callPushers = kDefaultPushers;
 Calibration callAngles = kDefaultAngles;
 bool storageReady = false, pusherPending = false;
+bool pendingMarkerVerified = false, pendingClearVerified = false;
 bool sharedMarked = false, manualRequired = false, interruptedSharedStart = false;
 uint32_t storageGeneration = 0;
 int storageSlot = -1;
@@ -159,6 +160,7 @@ bool decodeRecord(const uint8_t* bytes, Calibration& a, servo_pusher_config_t& c
   return generation && validAngles(a) && validPushers(c);
 }
 bool saveSettings(const Calibration& a, const servo_pusher_config_t& c) {
+  pendingClearVerified = false;
   Preferences prefs;
   storageError = "storage_unavailable";
   if (!prefs.begin("monban-servo", false)) return false;
@@ -193,6 +195,37 @@ bool saveSettings(const Calibration& a, const servo_pusher_config_t& c) {
   storageSlot = nextSlot; ++storageGeneration; storageReady = true; storageError = "";
   return true;
 }
+bool verifySettingsRecord() {
+  if (!storageReady || storageSlot < 0) return false;
+  Preferences prefs;
+  if (!prefs.begin("monban-servo", true)) return false;
+  uint8_t expected[kRecordBytes], stored[kRecordBytes];
+  encodeRecord(expected, angles, pushers, storageGeneration);
+  const bool verified = prefs.getBytesLength(kSlotKeys[storageSlot]) == sizeof(stored) &&
+    prefs.getBytes(kSlotKeys[storageSlot], stored, sizeof(stored)) == sizeof(stored) &&
+    !memcmp(expected, stored, sizeof(stored));
+  prefs.end();
+  return verified;
+}
+bool writePendingMarker(bool pending) {
+  pendingMarkerVerified = false;
+  Preferences prefs;
+  if (!prefs.begin("monban-servo", false)) return false;
+  const uint8_t value = pending ? 1 : 0;
+  uint8_t verified = 0xff;
+  const bool written = prefs.putBytes("pusher-pending", &value, 1) == 1 &&
+    prefs.getBytesLength("pusher-pending") == 1 &&
+    prefs.getBytes("pusher-pending", &verified, 1) == 1 && verified == value;
+  // A failed or unverified clear must leave the durable gate armed whenever
+  // storage is still writable. The in-memory gate remains armed in every case.
+  if (!written && !pending) {
+    const uint8_t armed = 1;
+    (void)prefs.putBytes("pusher-pending", &armed, 1);
+  }
+  prefs.end();
+  pendingMarkerVerified = written;
+  return written;
+}
 bool writeSharedMarker(bool active) {
   Preferences prefs;
   if (!prefs.begin("monban-servo", false)) return false;
@@ -225,6 +258,7 @@ void loadCalibration() {
   angles = savedAngles = kDefaultAngles;
   pushers = kDefaultPushers; storageSlot = -1; storageGeneration = 0;
   storageReady = false; calibrationStored = false; sharedMarked = manualRequired = false;
+  pusherPending = true; pendingMarkerVerified = pendingClearVerified = false;
   Preferences prefs;
   // ESP32 NVS cannot open a namespace read-only before its first creation.
   // Create the empty namespace on first boot; an actual storage failure still
@@ -254,6 +288,15 @@ void loadCalibration() {
     sharedMarked = markerLength != 1 || prefs.getBytes("shared-op", &marker, 1) != 1 || marker != 0;
   }
   manualRequired = sharedMarked || !storageReady;
+  const size_t pendingLength = prefs.getBytesLength("pusher-pending");
+  uint8_t pending = 0xff;
+  if (!pendingLength) {
+    // Existing installations have no pending marker until a desired update is
+    // observed; retaining their last local wiring is the migration default.
+    pusherPending = false; pendingMarkerVerified = true;
+  } else if (pendingLength == 1 && prefs.getBytes("pusher-pending", &pending, 1) == 1 && pending <= 1) {
+    pusherPending = pending != 0; pendingMarkerVerified = true;
+  }
   prefs.end();
 }
 void calibrationReply(const char* error = nullptr) {
@@ -610,22 +653,31 @@ bool servo_pusher_get(servo_pusher_config_t *out) {
 }
 servo_config_result_t servo_pusher_apply(const servo_pusher_config_t *config) {
   Guard guard(servoLock);
+  pendingClearVerified = false;
   if (!config) return SERVO_CONFIG_INVALID;
   if (config->schema_version != SERVO_PUSHER_SCHEMA_VERSION) return SERVO_CONFIG_UNSUPPORTED_SCHEMA;
   if (!validPushers(*config) || !config->revision) return SERVO_CONFIG_INVALID;
   if (config->revision < pushers.revision) return SERVO_CONFIG_STALE_REVISION;
-  if (config->revision == pushers.revision)
-    return samePushers(*config, pushers) ? SERVO_CONFIG_UNCHANGED : SERVO_CONFIG_REVISION_CONFLICT;
+  if (config->revision == pushers.revision) {
+    if (!samePushers(*config, pushers)) return SERVO_CONFIG_REVISION_CONFLICT;
+    if (pusherPending) {
+      if (!verifySettingsRecord()) return SERVO_CONFIG_STORAGE_FAILED;
+      pendingClearVerified = true;
+    }
+    return SERVO_CONFIG_UNCHANGED;
+  }
   if (manualRequired) return SERVO_CONFIG_RECOVERY_REQUIRED;
   if (!storageReady) return SERVO_CONFIG_STORAGE_FAILED;
   if (callOwned || calibrating || servoTesting || servoPhase != ServoPhase::Idle) return SERVO_CONFIG_BUSY;
   if (!saveSettings(angles, *config)) return SERVO_CONFIG_STORAGE_FAILED;
   pushers = *config; savedAngles = angles; calibrationStored = true;
+  pendingClearVerified = true;
   setStatus("Pusher assignments saved");
   return SERVO_CONFIG_APPLIED;
 }
 servo_config_result_t servo_pusher_apply_local(const servo_pusher_config_t *config) {
   Guard guard(servoLock);
+  pendingClearVerified = false;
   if (!config || config->revision || !validPushers(*config)) return SERVO_CONFIG_INVALID;
   // Local wiring stays at revision zero so a future cloud revision one can
   // replace it. A provisioned device's revision space is owned by the server.
@@ -656,7 +708,26 @@ const char *servo_pusher_result_error(servo_config_result_t result) {
 uint8_t servo_pusher_pin(uint8_t physical_id) {
   return physical_id >= 1 && physical_id <= 3 ? pinFor(static_cast<PusherId>(physical_id)) : UINT8_MAX;
 }
-void servo_pusher_set_pending(bool pending) { Guard guard(servoLock); pusherPending = pending; }
+bool servo_pusher_set_pending(bool pending) {
+  Guard guard(servoLock);
+  if (pending) {
+    pendingClearVerified = false;
+    if (pusherPending && pendingMarkerVerified) return true;
+    pusherPending = true;
+    return writePendingMarker(true);
+  }
+  if (!pusherPending && pendingMarkerVerified) return true;
+  // Only authenticated apply/readback can authorize clearing the gate. Neither
+  // local calibration nor an operator's intercom-idle confirmation does so.
+  if (!pendingClearVerified || !storageReady) return false;
+  if (!writePendingMarker(false)) {
+    pusherPending = true; pendingClearVerified = false;
+    return false;
+  }
+  pusherPending = false; pendingClearVerified = false;
+  return true;
+}
+bool servo_pusher_pending(void) { Guard guard(servoLock); return pusherPending; }
 bool servo_recovery_required(void) { Guard guard(servoLock); return manualRequired; }
 bool servo_recovery_confirm(void) {
   Guard guard(servoLock);

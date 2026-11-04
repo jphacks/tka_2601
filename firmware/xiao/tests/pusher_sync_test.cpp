@@ -90,6 +90,7 @@ static void reported(unsigned revision, const char* error = "null") {
 static void conflictSync(const std::string& fallbackResponse, bool expectFallback = true, unsigned firstStatus = 409) {
   static unsigned desiredRevision = 3;
   const auto before = requests.size(), operations = fake::servoPins.size(), writes = fake::storageWrites;
+  const bool wasPending = servo_pusher_pending();
   responses.push_back(http(settings(desiredRevision++, 1)));
   responses.push_back(http("{\"error\":\"pusher_report_config_conflict\"}", firstStatus));
   if (expectFallback) responses.push_back(fallbackResponse);
@@ -109,7 +110,9 @@ static void conflictSync(const std::string& fallbackResponse, bool expectFallbac
   }
   assert(actual().revision == 2 && servo_recovery_required());
   assert(command("@get", "\"pusher_pending\":true"));
-  assert(fake::servoPins.size() == operations && fake::storageWrites == writes);
+  assert(fake::servoPins.size() == operations);
+  assert(fake::storageWrites == writes + (wasPending ? 0u : 1u));
+  assert(fake::preferenceRecords["monban-servo/pusher-pending"] == std::vector<unsigned char>{1});
 }
 int main() {
   servo_begin();
@@ -152,6 +155,10 @@ int main() {
   sync(http(settings(2, 2))); reported(1, "\"busy\"");
   assert(command("@get", "\"pusher_pending\":true"));
   servo_call_cancel(); servo_call_close(); assert(!servo_call_open());
+  servo_begin(); // Pending new wiring survives power loss before apply.
+  pusher_sync_step(false); assert(servo_pusher_pending() && !servo_call_open());
+  sync(http("{\"paired\":true,\"pusher_settings\":null}")); reported(1, "\"settings_missing\"");
+  assert(servo_pusher_pending() && !servo_call_open());
   sync(http(settings(2, 2))); reported(2);
   assert(actual().call_start == 2 && command("@get", "\"pusher_pending\":false"));
   noPoll(4999); getOnly(2, 2, 1); // A changed desired/applied mapping restores fast GET.
@@ -160,9 +167,12 @@ int main() {
   assert(!servo_call_open());
   sync(http(settings(1, 1))); reported(2, "\"stale_revision\"");
   assert(!servo_call_open());
-  sync(http("{\"paired\":true,\"pusher_settings\":null}")); reported(2);
+  sync(http("{\"paired\":true,\"pusher_settings\":null}")); reported(2, "\"settings_missing\"");
+  assert(!servo_call_open());
+  sync(http("{\"paired\":true,\"mode\":\"normal\"}")); reported(2, "\"settings_missing\"");
+  assert(!servo_call_open());
+  sync(http(settings(2, 2))); reported(2); // Only a validated desired snapshot clears the gate.
   assert(servo_call_open()); servo_call_cancel(); servo_call_close();
-  sync(http("{\"paired\":true,\"mode\":\"normal\"}")); reported(2);
   // The durable runtime interlock is reported separately from configuration ACK.
   assert(servo_test('e')); tick(100); tick(100); assert(servo_recovery_required());
   sync(http(settings(2, 2))); reported(2);

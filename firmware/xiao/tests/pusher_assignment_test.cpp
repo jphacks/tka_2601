@@ -12,6 +12,7 @@ static void apply(uint8_t mask, uint8_t start, uint8_t end) {
   auto c = next(mask, start, end);
   const auto before = fake::servoDuties.size();
   assert(servo_pusher_apply(&c) == SERVO_CONFIG_APPLIED);
+  assert(servo_pusher_set_pending(false));
   assert(current().revision == c.revision);
   assert(fake::servoDuties.size() == before);
 }
@@ -31,11 +32,6 @@ static void localWiringBeforeProvisioning() {
   assert(command("@pusher 0 2 2 2") && fake::storageWrites == writes);
   servo_begin();
   assert(current().revision == 0 && current().enabled_mask == 2 && current().call_end == 2);
-  servo_pusher_set_pending(true);
-  assert(!command("@pusher 0 3 1 2", "busy"));
-  assert(command("@get", "\"pusher_pending\":true"));
-  assert(!servo_call_open());
-  servo_pusher_set_pending(false);
   assert(servo_call_open());
   assert(!command("@pusher 0 3 1 2", "busy"));
   servo_call_cancel(); closed();
@@ -46,6 +42,12 @@ static void localWiringBeforeProvisioning() {
   assert(!command("@pusher 0 3 1 2", "storage_failed"));
   assert(current().enabled_mask == 2);
   servo_begin(); assert(current().enabled_mask == 2 && current().revision == 0);
+  assert(servo_pusher_set_pending(true));
+  assert(!command("@pusher 0 3 1 2", "busy"));
+  assert(command("@get", "\"pusher_pending\":true"));
+  assert(command("@confirm") && servo_pusher_pending());
+  assert(!servo_pusher_set_pending(false) && !servo_call_open());
+  servo_begin(); assert(servo_pusher_pending() && !servo_call_open());
   // The server's first revision replaces any local wiring; USB cannot overwrite it.
   apply(3, 1, 2);
   assert(current().revision == 1);
@@ -109,6 +111,102 @@ static void migrationAndValidation() {
   assert(fake::servoPins.size() == before);
 }
 
+static void durablePendingGate() {
+  const auto operations = fake::servoPins.size();
+  assert(!servo_pusher_pending() && !servo_recovery_required());
+  const auto writes = fake::storageWrites;
+  assert(servo_pusher_set_pending(true));
+  assert(servo_pusher_pending() && !servo_call_open());
+  assert(fake::storageWrites == writes + 1);
+  assert(servo_pusher_set_pending(true) && fake::storageWrites == writes + 1);
+  assert(!servo_pusher_set_pending(false)); // No authenticated apply/readback yet.
+  assert(command("@confirm") && servo_pusher_pending());
+  // Saving calibration cannot erase an already observed desired update.
+  assert(command("@begin") && command("@time r 100") && command("@save"));
+  servo_begin();
+  assert(servo_pusher_pending() && !servo_call_open() && !servo_recovery_required());
+  assert(command("@confirm") && !servo_pusher_set_pending(false));
+  assert(!command("@pusher 0 3 1 2", "cloud_managed"));
+  assert(servo_pusher_pending());
+  auto same = current();
+  const auto beforeReadback = fake::storageWrites;
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+  assert(servo_pusher_pending() && fake::storageWrites == beforeReadback);
+  assert(servo_pusher_set_pending(false));
+  const auto clearedWrites = fake::storageWrites;
+  assert(servo_pusher_set_pending(false) && fake::storageWrites == clearedWrites);
+  servo_begin();
+  assert(!servo_pusher_pending() && servo_call_open());
+  servo_call_cancel(); closed();
+
+  // A new desired revision can commit while its pending-clear is still owed.
+  assert(servo_pusher_set_pending(true));
+  auto newer = next(3, 2, 1);
+  assert(servo_pusher_apply(&newer) == SERVO_CONFIG_APPLIED);
+  assert(servo_pusher_pending() && !servo_call_open());
+  servo_begin();
+  assert(current().revision == newer.revision && servo_pusher_pending() && !servo_call_open());
+  assert(!servo_pusher_set_pending(false)); // Boot does not retain a RAM-only verification token.
+  assert(servo_pusher_apply(&newer) == SERVO_CONFIG_UNCHANGED);
+  assert(servo_pusher_set_pending(false));
+
+  // A failed gate write blocks calls in RAM and can be retried after storage
+  // becomes writable; unverified writes never count as durable acknowledgement.
+  fake::failWriteKey = "pusher-pending";
+  assert(!servo_pusher_set_pending(true));
+  assert(servo_pusher_pending() && !servo_call_open());
+  fake::failWriteKey.clear();
+  assert(servo_pusher_set_pending(true));
+  servo_begin(); assert(servo_pusher_pending() && !servo_call_open());
+  same = current();
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+  fake::failWriteKey = "pusher-pending";
+  assert(!servo_pusher_set_pending(false));
+  assert(servo_pusher_pending() && !servo_call_open());
+  fake::failWriteKey.clear();
+  servo_begin(); assert(servo_pusher_pending() && !servo_call_open());
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+  assert(servo_pusher_set_pending(false));
+
+  fake::corruptReadKey = "pusher-pending";
+  assert(!servo_pusher_set_pending(true));
+  servo_begin(); assert(servo_pusher_pending() && !servo_call_open());
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+  fake::corruptReadKey = "pusher-pending";
+  assert(!servo_pusher_set_pending(false));
+  assert(fake::preferenceRecords["monban-servo/pusher-pending"] == std::vector<unsigned char>{1});
+  servo_begin(); assert(servo_pusher_pending() && !servo_call_open());
+  assert(command("@confirm") && servo_pusher_pending());
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+  assert(servo_pusher_set_pending(false));
+
+  // Corrupt length/value or an unreadable marker is fail-closed after boot.
+  for (const auto& corrupt : {std::vector<unsigned char>{7}, std::vector<unsigned char>{0, 0}}) {
+    fake::preferenceRecords["monban-servo/pusher-pending"] = corrupt;
+    servo_begin();
+    assert(servo_pusher_pending() && !servo_call_open());
+    assert(!servo_pusher_set_pending(false));
+    assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+    assert(servo_pusher_set_pending(false));
+  }
+  fake::failReadKey = "pusher-pending";
+  servo_begin(); assert(servo_pusher_pending() && !servo_call_open());
+  fake::failReadKey.clear();
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+  assert(servo_pusher_set_pending(false));
+
+  // A same-revision response cannot unlock a gate using only RAM state when
+  // the current persisted configuration itself cannot be read back.
+  assert(servo_pusher_set_pending(true));
+  fake::failNextStorageRead = true;
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_STORAGE_FAILED);
+  assert(!servo_pusher_set_pending(false) && servo_pusher_pending());
+  servo_begin(); assert(servo_pusher_pending() && !servo_call_open());
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+  assert(servo_pusher_set_pending(false));
+  assert(fake::servoPins.size() == operations);
+}
+
 static void reversedTwoAndSnapshot() {
   // Diagnostics follow the assigned logical start, not the physical output ID.
   auto tests = fake::servoPins.size();
@@ -127,14 +225,16 @@ static void reversedTwoAndSnapshot() {
   assert(servo_pusher_apply(&change) == SERVO_CONFIG_BUSY);
   tick(1); assert(fake::attachedPin == kEnd && fake::servoDuties.back() == duty(65));
   assert(!command("@begin", "receiver_busy"));
-  servo_pusher_set_pending(true);
+  assert(servo_pusher_set_pending(true));
   finish(); assert(servo_call_status() == SERVO_CALL_STARTED);
   assert(servo_end_press());
   assert(fake::attachedPin == kCall && fake::servoDuties.back() == duty(35));
   finish(); assert(servo_call_status() == SERVO_CALL_ENDED);
   closed();
   assert(!servo_call_open());
-  servo_pusher_set_pending(false);
+  const auto confirmed = current();
+  assert(servo_pusher_apply(&confirmed) == SERVO_CONFIG_UNCHANGED);
+  assert(servo_pusher_set_pending(false));
   assert(servo_call_open()); servo_call_cancel(); closed();
   assert(command("@begin"));
   assert(servo_pusher_apply(&change) == SERVO_CONFIG_BUSY);
@@ -294,7 +394,7 @@ static void durableFailuresAndLocalTests() {
 }
 
 int main() {
-  localWiringBeforeProvisioning(); migrationAndValidation(); reversedTwoAndSnapshot(); sharedBothProfiles();
+  localWiringBeforeProvisioning(); migrationAndValidation(); durablePendingGate(); reversedTwoAndSnapshot(); sharedBothProfiles();
   cancellationAndPowerLoss(); durableFailuresAndLocalTests();
-  puts("pusher assignments: v1 migration, physical routing, snapshots, journal, replay, shared interlock and power loss passed");
+  puts("pusher assignments: v1 migration, physical routing, snapshots, journal, replay, durable pending/shared interlocks and power loss passed");
 }

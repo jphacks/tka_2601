@@ -109,19 +109,22 @@ void pusher_sync_step(bool network_ready) {
         bool current_ok=servo_pusher_get(&current);
         bool changed=!current_ok || current.revision!=desired.revision || current.schema_version!=desired.schema_version ||
             current.enabled_mask!=desired.enabled_mask || current.call_start!=desired.call_start || current.call_end!=desired.call_end;
-        servo_pusher_set_pending(changed);
-        if(changed && voice_stream_recovery_required()) error="manual_check_required";
+        if(changed && !servo_pusher_set_pending(true)) error="storage_failed";
+        else if(changed && voice_stream_recovery_required()) error="manual_check_required";
         else {
             servo_config_result_t applied=servo_pusher_apply(&desired);
             error=servo_pusher_result_error(applied);
             if(error && !error[0]) error=NULL;
-            if(applied==SERVO_CONFIG_APPLIED || applied==SERVO_CONFIG_UNCHANGED) servo_pusher_set_pending(false);
+            if((applied==SERVO_CONFIG_APPLIED || applied==SERVO_CONFIG_UNCHANGED) &&
+               !servo_pusher_set_pending(false)) error="storage_failed";
         }
     } else if(parsed==PUSHER_SETTINGS_LOCAL || parsed==PUSHER_SETTINGS_MISSING) {
-        servo_pusher_set_pending(false);
+        /* Absence is compatible with legacy devices, but cannot erase an
+         * already observed update, including one preserved across restart. */
+        if(servo_pusher_pending()) error="settings_missing";
     } else {
-        servo_pusher_set_pending(true);
-        error=parsed==PUSHER_SETTINGS_UNPAIRED?"device_unpaired":"invalid_settings_response";
+        error=servo_pusher_set_pending(true)?
+            (parsed==PUSHER_SETTINGS_UNPAIRED?"device_unpaired":"invalid_settings_response"):"storage_failed";
     }
     servo_pusher_config_t actual;
     bool actual_ok=servo_pusher_get(&actual);
@@ -140,7 +143,7 @@ void pusher_sync_step(bool network_ready) {
     /* Once a rejected ACK's status-only report succeeds, deduplicate that
      * successful projection until desired/actual/runtime/error changes. */
     if(conflict_context) {
-        servo_pusher_set_pending(true);
+        if(!servo_pusher_set_pending(true)) error="storage_failed";
         bytes=pusher_status_encode(body,sizeof(body),NULL,error,voice_stream_recovery_required(),
                                    servo_pusher_pin(1),servo_pusher_pin(2));
     }
@@ -159,7 +162,7 @@ void pusher_sync_step(bool network_ready) {
     if(revision_conflict) {
         /* A newer cloud save can overtake a locally committed but unreported
          * revision. The next sync still has to fetch/apply desired state. */
-        servo_pusher_set_pending(true);
+        if(!servo_pusher_set_pending(true)) error="storage_failed";
         if(actual_ok && !conflict_context) {
             bytes=pusher_status_encode(body,sizeof(body),NULL,error,voice_stream_recovery_required(),
                                        servo_pusher_pin(1),servo_pusher_pin(2));

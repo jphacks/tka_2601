@@ -8,8 +8,9 @@ inline std::vector<unsigned char> storedCalibration;
 inline bool failStorage = false;
 inline bool readOnlyNamespaceMissing = false;
 inline std::map<std::string, std::vector<unsigned char>> preferenceRecords;
-inline std::string failWriteKey, corruptReadKey;
+inline std::string failWriteKey, corruptReadKey, failReadKey;
 inline bool failNextStorageWrite = false;
+inline bool failNextStorageRead = false;
 inline size_t storageWrites = 0;
 }
 class Preferences {
@@ -28,6 +29,8 @@ class Preferences {
   void end() {}
   size_t getBytesLength(const char* key) { return bytes(key).size(); }
   size_t getBytes(const char* key, void* out, size_t capacity) {
+    if (fake::failReadKey == key) return 0;
+    if (fake::failNextStorageRead) { fake::failNextStorageRead = false; return 0; }
     const auto& data = bytes(key);
     const size_t n = data.size();
     if (n > capacity) return 0;
