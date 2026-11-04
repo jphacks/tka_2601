@@ -7,6 +7,8 @@ static audio_link_t mailbox;
 audio_jobs_t audio_jobs;
 static uint32_t tick;
 static bool network_ready, server_connects, auto_ack, stop_on_start, server_opened;
+static bool server_keepalives;
+static uint32_t server_ping_at;
 static uint8_t failed_send_type;
 static voice_packet_t server_in[8];
 static unsigned server_used, server_read;
@@ -79,7 +81,13 @@ bool voice_transport_send(voice_transport_t *link, const voice_header_t *header,
 int voice_transport_poll(voice_transport_t *link, voice_packet_t *packet)
 {
     assert(link == &call.server);
-    if (server_read == server_used) return 0;
+    if (server_read == server_used) {
+        if (!server_keepalives || (uint32_t)(tick-server_ping_at)<1000u) return 0;
+        server_ping_at=tick;
+        memset(packet,0,sizeof(*packet));
+        packet->header.type=VOICE_PING; packet->header.session=call.session;
+        return 1;
+    }
     *packet = server_in[server_read++];
     return 1;
 }
@@ -93,6 +101,8 @@ static void reset(void)
     network_ready = server_connects = auto_ack = servo_open_ok = post_ok = true;
     call_completes = end_completes = cancel_completes = true;
     stop_on_start = busy = start_requested = stop_requested = recovery_required = false;
+    cooldown_active=server_keepalives=false;
+    cooldown_began=server_ping_at=0;
     server_opened=false;
     failed_send_type = 0u;
     server_used = server_read = sent_count = 0u;
@@ -418,8 +428,74 @@ static void test_local_sound_checks(void)
     fresh_call();
     run_loopback(); assert(playback_opens==0u && tick-1000u>=5000u);
 }
+static void test_call_time_limit(void)
+{
+    /* Exact 50 s boundary, including millis() wrapping through zero. */
+    const uint32_t starts[]={0u,1000u,UINT32_MAX-100u};
+    for (unsigned i=0;i<sizeof(starts)/sizeof(starts[0]);++i) {
+        reset(); call.began=starts[i]; call.may_have_answered=true;
+        tick=call.began+49999u; assert(!call_time_limit_reached());
+        tick+=1u; assert(call_time_limit_reached());
+        call.may_have_answered=false; assert(!call_time_limit_reached());
+    }
+    /* The real session loop must stop even if a responsive server never sends
+     * a greeting. Keepalives prevent the shorter connection watchdog firing. */
+    fresh_call();
+    server_in[server_used++]=packet(VOICE_READY,0,0); server_keepalives=true;
+    assert(run_call(123u));
+    assert(call_presses==1u && cancels==1u && closes==1u);
+    assert(cooldown_began-call.began==50000u);
+    assert(count_sent(VOICE_CALL_START)==1u && count_sent(VOICE_CANCEL)==1u);
+    /* Waiting for relay READY uses the same total deadline, not another60s. */
+    fresh_call(); server_keepalives=true;
+    assert(run_call(123u));
+    assert(cooldown_began-call.began==50000u);
+    assert(call_presses==1u && cancels==1u && count_sent(VOICE_CALL_START)==0u);
+    /* A diagnostic does not own an intercom call or inherit its deadline. */
+    reset(); call.server.diagnostic=true; tick=UINT32_MAX;
+    server_in[server_used++]=packet(VOICE_READY,0,0);
+    assert(await_ready());
+}
+static void test_post_call_cooldown(void)
+{
+    const uint32_t starts[]={0u,1000u,UINT32_MAX-100u};
+    for (unsigned i=0;i<sizeof(starts)/sizeof(starts[0]);++i) {
+        reset(); tick=starts[i]; start_requested=true;
+        begin_call_cooldown(); assert(!start_requested);
+        tick+=19999u;
+        bool detected=true; voice_stream_request_call();
+        assert(!start_requested); /* Rejected even before the scheduler polls. */
+        suppress_cooldown_requests(&detected);
+        assert(!detected && !start_requested && cooldown_active);
+        /* Requests made during cooldown never reappear at expiry. */
+        tick+=1u; detected=true; suppress_cooldown_requests(&detected);
+        assert(!detected && !start_requested && !cooldown_active);
+        detected=true; voice_stream_request_call();
+        suppress_cooldown_requests(&detected);
+        assert(detected && start_requested);
+    }
+    /* No button attempt means no cooldown: setup can be fixed immediately. */
+    fresh_call(); api_configured=false;
+    assert(run_call(123u)); api_configured=true;
+    assert(!cooldown_active && call_presses==0u);
+    fresh_call(); voice_stream_request_stop();
+    assert(run_call(123u) && !cooldown_active);
+    /* A failed connection after a press still inhibits repeated attempts. */
+    fresh_call(); server_connects=false;
+    assert(run_call(123u) && cooldown_active && !recovery_required);
+    /* Unconfirmed END must retain recovery independently of timer expiry. */
+    fresh_call(); server_in[server_used++]=packet(VOICE_READY,0,0);
+    stop_on_start=true; cancel_completes=false;
+    assert(!run_call(123u) && cooldown_active && recovery_required);
+    tick=cooldown_began+20000u;
+    bool detected=false; suppress_cooldown_requests(&detected);
+    assert(!cooldown_active && recovery_required);
+    voice_stream_request_call(); assert(!start_requested);
+}
 int main(void)
 {
+    test_call_time_limit();
+    test_post_call_cooldown();
     test_api_probe_does_not_start_conversation();
     test_wait_for_actual_playback_done();
     test_stale_and_mismatched_packets();
@@ -430,6 +506,6 @@ int main(void)
     test_agent_only_after_button_released();
     test_whole_call();
     test_local_sound_checks();
-    puts("PASS: playback gating, packet identity, final turn, capture errors, safe stop and local sound checks");
+    puts("PASS: 50s call deadline, 20s cooldown, playback gating, packet identity, capture errors and safe stop");
     return 0;
 }
