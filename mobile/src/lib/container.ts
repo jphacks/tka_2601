@@ -6,6 +6,7 @@ import { supabaseGroupRepository } from '../infrastructure/supabase/groupReposit
 import { supabaseNotificationRepository } from '../infrastructure/supabase/notificationRepository';
 import { supabaseProviderRepository } from '../infrastructure/supabase/providerRepository';
 import { supabasePushTokenRepository } from '../infrastructure/supabase/pushTokenRepository';
+import { supabasePusherSettingsRepository } from '../infrastructure/supabase/pusherSettingsRepository';
 import { supabaseReservationRepository } from '../infrastructure/supabase/reservationRepository';
 import { supabaseShopRepository } from '../infrastructure/supabase/shopRepository';
 import { supabaseVisitRepository } from '../infrastructure/supabase/visitRepository';
@@ -16,6 +17,7 @@ export const repositories: Repositories = {
   providers: supabaseProviderRepository,
   visits: supabaseVisitRepository,
   devices: supabaseDeviceRepository,
+  pusherSettings: supabasePusherSettingsRepository,
   shop: supabaseShopRepository,
   notifications: supabaseNotificationRepository,
   assistant: supabaseAssistantRepository,

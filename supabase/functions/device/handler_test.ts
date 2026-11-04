@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertStrictEquals } from "jsr:@std/assert@1.0.19";
+import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import type { NewNotification } from "../_shared/notify.ts";
 import { ProviderError, type Reservation, type ReservationProvider } from "../_shared/reservation.ts";
 import { type DeviceAdmin, type DeviceReservationDeps, handleDeviceRequest } from "./handler.ts";
@@ -144,7 +144,7 @@ Deno.test("unsupported methods and routes retain 405 and 404 after authenticatio
 
 Deno.test("successful settings and visit requests retain response and RPC payload", async () => {
   const shop = { name: "テストのネイルサロン", tone: "very_polite", services: [] };
-  const settings = fakeAdmin([authenticated(), { data: shop, error: null }]);
+  const settings = fakeAdmin([authenticated(), { data: shop, error: null }, { data: null, error: null }]);
   const response = await handleDeviceRequest(
     request("/settings", "", "GET"),
     settings.admin,
@@ -157,6 +157,7 @@ Deno.test("successful settings and visit requests retain response and RPC payloa
     auto_away: false,
     extra_instructions: "",
     shop,
+    pusher_settings: null,
   });
   assertEquals(settings.calls[1], {
     name: "device_shop_profile",
@@ -184,18 +185,120 @@ Deno.test("successful settings and visit requests retain response and RPC payloa
 });
 
 Deno.test("settings keep the existing fields when the shop profile cannot be read", async () => {
-  const replies = [
-    [authenticated(), { data: null, error: failure }],
-    // 応答を用意しないと fake は投げる（通信の失敗の代わり）
-    [authenticated()],
-  ];
-  for (const reply of replies) {
-    const { admin } = fakeAdmin(reply);
+  for (const transportFailure of [false, true]) {
+    const { admin: inner } = fakeAdmin([authenticated(), { data: null, error: null }]);
+    const admin: DeviceAdmin = {
+      rpc(name, args) {
+        if (name !== "device_shop_profile") return inner.rpc(name, args);
+        if (transportFailure) throw new Error("shop transport failed");
+        return Promise.resolve({ data: null, error: failure });
+      },
+    };
     const response = await handleDeviceRequest(request("/settings", "", "GET"), admin);
     assertEquals(response.status, 200);
     const json = await response.json();
     assertEquals([json.mode, json.shop], ["normal", null]);
   }
+});
+
+const pusherConfig = {
+  schema_version: 1,
+  enabled_pushers: ["p1"],
+  assignments: { call_start: "p1", call_end: "p1" },
+};
+const pusherReport = {
+  applied_revision: 0,
+  applied_config: pusherConfig,
+  apply_error: null,
+  runtime_status: "normal",
+  capabilities: { schema_versions: [1], pushers: [{ id: "p1", gpio: 7 }, { id: "p2", gpio: 8 }] },
+};
+
+Deno.test("settings return the authenticated device snapshot and never hide its read failures", async () => {
+  const snapshot = { desired_revision: 1, desired_config: pusherConfig, applied_revision: null };
+  const { admin, calls } = fakeAdmin([
+    authenticated(), { data: null, error: null }, { data: snapshot, error: null },
+  ]);
+  const response = await handleDeviceRequest(request("/settings", "", "GET"), admin);
+  assertEquals((await response.json()).pusher_settings, snapshot);
+  assertEquals(calls[2], { name: "device_get_pusher_settings", args: { p_device_id: "device-1" } });
+  const unavailable = fakeAdmin([authenticated(), { data: null, error: null }, { data: null, error: failure }]);
+  let caught: unknown;
+  try { await handleDeviceRequest(request("/settings", "", "GET"), unavailable.admin); } catch (error) { caught = error; }
+  assertStrictEquals(caught, failure);
+});
+
+Deno.test("firmware pusher settings exclude large shop and reported fields without a shop query", async () => {
+  const snapshot = {
+    desired_revision: 1, desired_config: pusherConfig,
+    applied_config: { ignored: "x".repeat(8000) }, capabilities: { ignored: "x".repeat(8000) },
+    shop: { services: Array(100).fill("large service") }, extra_instructions: "x".repeat(8000),
+  };
+  const { admin, calls } = fakeAdmin([authenticated(), { data: snapshot, error: null }]);
+  const response = await handleDeviceRequest(request("/pusher-settings", "", "GET"), admin);
+  const text = await response.text();
+  assertEquals(JSON.parse(text), { contract_version: 1, paired: true, pusher_settings: { desired_revision: 1, desired_config: pusherConfig } });
+  assertEquals(new TextEncoder().encode(text).length < 512, true);
+  assertEquals(calls.map((call) => call.name), ["device_authenticate", "device_get_pusher_settings"]);
+  for (const paired of [false, true]) {
+    const state = { ...device, household_id: paired ? "household-1" : null };
+    const missing = fakeAdmin([{ data: [state], error: null }, ...(paired ? [{ data: null, error: null }] : [])]);
+    const absent = await handleDeviceRequest(request("/pusher-settings", "", "GET"), missing.admin);
+    assertEquals(await absent.json(), { contract_version: 1, paired, pusher_settings: null });
+  }
+  const anonymous = fakeAdmin([]);
+  assertEquals((await handleDeviceRequest(request("/pusher-settings", "", "GET", false), anonymous.admin)).status, 401);
+  const method = fakeAdmin([authenticated()]);
+  assertEquals((await handleDeviceRequest(request("/pusher-settings", "{}", "PUT"), method.admin)).status, 405);
+});
+
+Deno.test("pusher reports use the authenticated identity and retain device revision zero", async () => {
+  const result = { desired_revision: 0, desired_config: null, ...pusherReport };
+  const { admin, calls } = fakeAdmin([authenticated(), { data: result, error: null }]);
+  const response = await handleDeviceRequest(request("/pusher-status", JSON.stringify({ ...pusherReport, device_id: "other-device" })), admin);
+  assertEquals(await response.json(), result);
+  assertEquals(calls[1], {
+    name: "device_report_pusher_status",
+    args: {
+      p_device_id: "device-1", p_applied_revision: 0, p_applied_config: pusherConfig,
+      p_apply_error: null, p_runtime_status: "normal", p_capabilities: pusherReport.capabilities,
+    },
+  });
+});
+
+Deno.test("status-only reports and pusher conflicts retain their contract", async () => {
+  const status = { ...pusherReport, applied_revision: null, applied_config: null, runtime_status: "manual_check_required", apply_error: "storage_failed" };
+  const { admin } = fakeAdmin([authenticated(), { data: status, error: null }]);
+  assertEquals((await handleDeviceRequest(request("/pusher-status", JSON.stringify(status)), admin)).status, 200);
+  for (const [code, expected] of [["PT409", 409], ["22023", 400]] as const) {
+    const failed = fakeAdmin([authenticated(), { data: null, error: { code, message: "pusher_report_conflict" } }]);
+    const response = await handleDeviceRequest(request("/pusher-status", JSON.stringify(pusherReport)), failed.admin);
+    assertEquals(response.status, expected);
+    assertEquals(await response.json(), { error: "pusher_report_conflict" });
+  }
+});
+
+Deno.test("invalid pusher reports never reach mutation and require device credentials", async () => {
+  const invalid: unknown[] = [
+    {}, { ...pusherReport, applied_revision: true }, { ...pusherReport, applied_revision: 1.5 },
+    { ...pusherReport, applied_revision: -1 }, { ...pusherReport, applied_revision: 4294967296 },
+    { ...pusherReport, applied_revision: null }, { ...pusherReport, applied_config: null },
+    { ...pusherReport, runtime_status: "ended" }, { ...pusherReport, apply_error: "x".repeat(129) },
+    { ...pusherReport, capabilities: [] }, { ...pusherReport, capabilities: { too_large: "x".repeat(4096) } },
+    { ...pusherReport, applied_config: { ...pusherConfig, schema_version: 2 } },
+    { ...pusherReport, applied_config: { ...pusherConfig, enabled_pushers: ["p3"] } },
+    { ...pusherReport, applied_config: { ...pusherConfig, assignments: { call_start: "p1", call_end: "p2" } } },
+  ];
+  for (const body of invalid) {
+    const { admin, calls } = fakeAdmin([authenticated()]);
+    const response = await handleDeviceRequest(request("/pusher-status", JSON.stringify(body)), admin);
+    assertEquals(response.status, 400);
+    assertEquals(calls.length, 1);
+  }
+  const unauthenticated = fakeAdmin([]);
+  assertEquals((await handleDeviceRequest(request("/pusher-status", JSON.stringify(pusherReport), "PUT", false), unauthenticated.admin)).status, 401);
+  const wrongMethod = fakeAdmin([authenticated()]);
+  assertEquals((await handleDeviceRequest(request("/pusher-status", "", "GET"), wrongMethod.admin)).status, 405);
 });
 
 Deno.test("unpaired devices read settings without a shop and cannot use reservations", async () => {

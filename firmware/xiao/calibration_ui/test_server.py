@@ -54,6 +54,22 @@ def read_line(master, timeout=2):
 
 
 class CalibrationUITests(unittest.TestCase):
+    def test_shared_confirmation_is_explicit_and_preserves_recovery_until_board_confirms(self):
+        self.assertEqual(command_for('confirm', {'confirm': 'INTERCOM_IDLE'}), '@confirm')
+        for body in ({}, {'confirm': True}, {'confirm': 'OTHER'}):
+            with self.assertRaises(ValueError): command_for('confirm', body)
+        link = SerialLink('/nonexistent-test-port')
+        try:
+            link.record_reply('[CAL]', '{"ok":true,"manual_check_required":true}')
+            self.assertTrue(link.snapshot()['recovery_required'])
+            link.record('[BOOT] Network task running.')
+            self.assertTrue(link.snapshot()['recovery_required'], 'a restart does not dismiss the outstanding check')
+            link.record_reply('[CAL]', '{"ok":true,"manual_check_required":false}')
+            link.record('[VOICE] Operator confirmed idle; chime detection rearmed.')
+            self.assertFalse(link.snapshot()['recovery_required'])
+        finally:
+            link.close()
+
     def test_recovery_releases_diagnostics_but_preserves_warning(self):
         link = SerialLink('/nonexistent-test-port')
         try:
@@ -452,10 +468,14 @@ class CalibrationUITests(unittest.TestCase):
             self.assertEqual(link.commands[-1], '@test u')
             self.assertTrue(post(url, 'stop_test', {})['ok'])
             self.assertEqual(link.commands[-1], '@stop')
+            self.assertTrue(post(url, 'confirm', {'confirm':'INTERCOM_IDLE'})['ok'])
+            self.assertEqual(link.commands[-1], '@confirm')
             self.assertTrue(post(url, 'begin', {})['active'])
             before = list(link.commands)
             for origin, action, body, status in [
                 ('https://example.com', 'save', {}, 403),
+                ('https://example.com', 'confirm', {'confirm':'INTERCOM_IDLE'}, 403),
+                (url, 'confirm', {}, 400),
                 (url, 'preview', {'target': 'c', 'position': 'p', 'angle': 999}, 400),
             ]:
                 with self.assertRaises(urllib.error.HTTPError) as caught:

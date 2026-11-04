@@ -147,6 +147,24 @@ try:
     print("     loopback without I2S in QEMU:", match[1].strip(), flush=True)
     first.ask("u", r"\[DIAG\] usb ok=1")
     check("speaker and loopback report the missing audio, and the board keeps answering")
+
+    # These are the production USB management commands, using the same apply
+    # validation, journal and recovery interlock as network synchronization.
+    reply = first.cal("@pusher 1 1 1 1")
+    assert reply["pusher_revision"] == 1 and reply["enabled_mask"] == 1
+    assert reply["call_start_pusher"] == reply["call_end_pusher"] == 1
+    assert reply["pwm_active"] is False
+    first.cal("@pusher 1 1 1 1")  # Idempotent retry.
+    assert first.cal("@pusher 1 2 2 2", ok=False)["error"] == "revision_conflict"
+    first.cal("@pusher 2 3 1 1", ok=False)
+    first.cal("@pusher 2 1 1 1 trailing", ok=False)
+    assert first.cal("@test e", ok=False)["error"] == "pusher_disabled"
+    check("pusher assignment saves with no PWM, rejects invalid/replayed conflicts and unused output")
+    first.cal("@begin")
+    reply = first.cal("@set c p 45")
+    assert reply["pwm_active"] is True
+    # Terminating QEMU now models power loss while a shared operation is marked.
+    check("shared preview starts only after durable incomplete-operation marker")
 finally:
     first.stop()
 
@@ -158,6 +176,22 @@ try:
     assert reply["settings_source"] == "saved" and reply["call_press"] == 45 and reply["unlock_press"] == 60
     assert reply["pwm_active"] is False
     check("after power cycle: calibration restored, no PWM at boot")
+    assert reply["pusher_revision"] == 1 and reply["enabled_mask"] == 1
+    assert reply["manual_check_required"] is True
+    assert second.cal("@test c", ok=False)["error"] == "manual_check_required"
+    assert second.cal("@pusher 2 3 1 2", ok=False)["error"] == "manual_check_required"
+    reply = second.cal("@confirm")
+    assert reply["manual_check_required"] is False and reply["pwm_active"] is False
+    reply = second.cal("@pusher 2 2 2 2")
+    assert reply["enabled_mask"] == 2 and reply["call_start_pusher"] == reply["call_end_pusher"] == 2
+    second.cal("@test e")
+    second.expect(r"\[SERVO\] END released; PWM stopped", 15)
+    assert second.cal("@get")["manual_check_required"] is True
+    second.cal("@confirm")
+    reply = second.cal("@pusher 3 3 2 1")
+    assert reply["call_start_pusher"] == 2 and reply["call_end_pusher"] == 1
+    assert reply["unlock_press"] == 60 and reply["pwm_active"] is False
+    check("shared power-loss interlock survives boot; confirmation, physical-2 sharing and swapped mapping work")
     assert second.cal("@tune get")["speaker_volume"] == 55
     check("after power cycle: tuning restored")
 finally:

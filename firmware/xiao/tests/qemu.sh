@@ -42,7 +42,7 @@ work="$PWD/.host-build/qemu-work"
 mkdir -p "$work/xiao"
 for file in ./*.c ./*.h ./*.cpp ./*.ino ./partitions.csv; do
   case "$(basename "$file")" in
-    api_config.h|wifi_config.h|upload_config.h|servo_config.h) ;;
+    api_config.h|wifi_config.h|upload_config.h|servo_config.h|device_config.h) ;;
     *) cp "$file" "$work/xiao/" ;;
   esac
 done

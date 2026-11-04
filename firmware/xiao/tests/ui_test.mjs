@@ -20,6 +20,52 @@ function fixture(handler = () => ({ok: true})) {
 }
 const refused = code => { throw Object.assign(new Error(code), {code}); };
 
+// Shared mode follows the selected physical output, while the USB-only third stays available.
+{
+  const {pusherLayout} = context.MonbanLogic;
+  for (const [mask, start, end, target, hidden] of [[1, 1, 1, 'c', 'e'], [2, 2, 2, 'e', 'c']]) {
+    const layout = pusherLayout({pusher_schema_version: 1, enabled_mask: mask,
+      call_start_pusher: start, call_end_pusher: end, manual_check_required: true}, 'c');
+    assert.equal(layout.target, target);
+    assert.ok(layout.targets.includes(target));
+    assert.ok(layout.targets.includes('u'));
+    assert.ok(!layout.targets.includes(hidden));
+    assert.equal(layout.roles[target], '通話開始・終話');
+    assert.equal(layout.roles[hidden], '未使用');
+    assert.equal(layout.manualCheck, true);
+  }
+  const swapped = pusherLayout({pusher_schema_version: 1, enabled_mask: 3, call_start_pusher: 2, call_end_pusher: 1});
+  assert.equal(swapped.start, 'e');
+  assert.equal(swapped.roles.c, '終話');
+  assert.equal(swapped.roles.e, '通話開始');
+  assert.deepEqual(Array.from(pusherLayout().targets), ['c', 'e', 'u'], 'old firmware retains its physical ports');
+}
+
+// Neither an inactive output nor a manual-check condition sends a test. Only an explicit confirmation clears it.
+{
+  const {editor, requests} = fixture(action => state({manual_check_required: action !== 'confirm',
+    pusher_schema_version: 1, enabled_mask: 2, call_start_pusher: 2, call_end_pusher: 2}));
+  editor.apply(state({manual_check_required: true, pusher_schema_version: 1, enabled_mask: 2,
+    call_start_pusher: 2, call_end_pusher: 2, active: true}));
+  assert.equal(await editor.test('e'), false);
+  assert.equal(requests.length, 0);
+  assert.equal(await editor.confirmIdle(), true, 'idle confirmation is also allowed during calibration');
+  assert.deepEqual(requests.map(r => r.action), ['confirm']);
+  assert.equal(requests[0].body.confirm, 'INTERCOM_IDLE');
+  assert.equal(await editor.test('c'), false, 'unused physical port never reaches the server');
+  assert.equal(requests.length, 1);
+  assert.equal(await editor.test('e'), true);
+  assert.deepEqual(requests.map(r => r.action), ['confirm', 'test']);
+}
+{
+  const {editor, requests} = fixture(() => refused('recovery_confirmation_failed'));
+  editor.apply(state({manual_check_required: true}));
+  assert.equal(await editor.confirmIdle(), false);
+  assert.equal(await editor.test('c'), false);
+  assert.deepEqual(requests.map(r => r.action), ['confirm'], 'failed confirmation is never replaced by a test press');
+}
+console.log('Web UI: physical mapping, shared port visibility and explicit recovery confirmation passed');
+
 // A test press is never queued behind an edit or a moving servo.
 for (const target of ['c', 'e', 'u']) {
   for (const prepare of [

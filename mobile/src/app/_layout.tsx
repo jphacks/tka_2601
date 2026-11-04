@@ -101,6 +101,7 @@ function RootNavigator() {
           <Stack.Screen name="settings/provider" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="settings/instructions" />
+          <Stack.Screen name="settings/pusher-settings" />
           <Stack.Screen name="settings/group" />
           <Stack.Screen name="settings/invite" />
         </Stack.Protected>

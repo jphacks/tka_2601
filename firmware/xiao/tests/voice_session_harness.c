@@ -40,6 +40,9 @@ static char posted;
 static uint32_t audio_refusal; /* what the audio task answers to the command */
 bool audio_app_post_command(char c) { posted=c; mailbox.loopback_failed=audio_refusal; return post_ok; }
 void audio_app_loopback_release(void) { mailbox.loopback_samples=0; }
+bool servo_recovery_required(void) { return false; }
+bool servo_motion_busy(void) { return false; }
+bool servo_test_busy(void) { return false; }
 bool servo_call_open(void) { ++opens; return servo_open_ok; }
 bool servo_call_press(void) { ++call_presses; if (call_completes) servo_state=SERVO_CALL_STARTED; return true; }
 bool servo_end_press(void) { ++end_presses; if (end_completes) servo_state=SERVO_CALL_ENDED; return true; }
@@ -92,7 +95,7 @@ static void reset(void)
     tick = 1000u;
     network_ready = server_connects = auto_ack = servo_open_ok = post_ok = true;
     call_completes = end_completes = cancel_completes = true;
-    stop_on_start = busy = start_requested = stop_requested = recovery_required = false;
+    stop_on_start = busy = start_requested = stop_requested = recovery_required = recovery_confirm_requested = false;
     server_opened=false;
     failed_send_type = 0u;
     server_used = server_read = sent_count = 0u;

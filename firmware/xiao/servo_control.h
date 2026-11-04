@@ -11,7 +11,8 @@ void servo_poll(void);
 
 /* A call owns the servos between open and close. Press requests return at once;
  * servo_call_status reports the completed physical operation. */
-typedef enum { SERVO_CALL_PENDING, SERVO_CALL_STARTED, SERVO_CALL_ENDED, SERVO_CALL_FAILED } servo_call_status_t;
+typedef enum { SERVO_CALL_PENDING, SERVO_CALL_STARTED, SERVO_CALL_ENDED, SERVO_CALL_FAILED,
+               SERVO_CALL_MANUAL_CHECK_REQUIRED } servo_call_status_t;
 bool servo_call_open(void);
 bool servo_call_press(void);
 bool servo_end_press(void);
@@ -20,6 +21,31 @@ bool servo_end_press(void);
 void servo_call_cancel(void);
 servo_call_status_t servo_call_status(void);
 void servo_call_close(void);
+
+/* Physical IDs 1/2 are the two call pushers; ID 3 remains USB-only unlock.
+ * Revision zero describes the migrated local configuration. Cloud revisions
+ * start at one. All getters/apply calls serialize with call ownership. */
+#define SERVO_PUSHER_SCHEMA_VERSION 1u
+typedef struct {
+  uint32_t revision;
+  uint16_t schema_version;
+  uint8_t enabled_mask;
+  uint8_t call_start;
+  uint8_t call_end;
+} servo_pusher_config_t;
+typedef enum {
+  SERVO_CONFIG_APPLIED, SERVO_CONFIG_UNCHANGED, SERVO_CONFIG_BUSY,
+  SERVO_CONFIG_INVALID, SERVO_CONFIG_UNSUPPORTED_SCHEMA,
+  SERVO_CONFIG_STALE_REVISION, SERVO_CONFIG_REVISION_CONFLICT,
+  SERVO_CONFIG_STORAGE_FAILED, SERVO_CONFIG_RECOVERY_REQUIRED
+} servo_config_result_t;
+bool servo_pusher_get(servo_pusher_config_t *out);
+servo_config_result_t servo_pusher_apply(const servo_pusher_config_t *config);
+const char *servo_pusher_result_error(servo_config_result_t result);
+uint8_t servo_pusher_pin(uint8_t physical_id); /* UINT8_MAX for unknown ID */
+void servo_pusher_set_pending(bool pending);
+bool servo_recovery_required(void);
+bool servo_recovery_confirm(void); /* Operator has confirmed intercom is idle. */
 
 /* Local USB tests: one isolated press/return cycle, never a call action. */
 bool servo_test(char target); /* 'c', 'e' or 'u' */

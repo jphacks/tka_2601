@@ -138,6 +138,11 @@ export default function SettingsScreen() {
           <LinkRow label="通知" icon={SYMBOLS.bell} onPress={() => router.push('/settings/notifications')} />
         </Card>
 
+        <GroupHeader title="本体" />
+        <Card>
+          <LinkRow label="プッシャー設定" icon={SYMBOLS.service} onPress={() => router.push('/settings/pusher-settings')} />
+        </Card>
+
         <GroupHeader title="外出モード" />
         <Card>
           <View style={styles.switchRow}>

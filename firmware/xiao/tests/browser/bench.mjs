@@ -138,10 +138,10 @@ try {
   await button('聞こえた', row('スピーカー')).click();
   await row('スピーカー').getByText('OK').waitFor();
   await logged('[DIAG] speaker ok=1', 0);
-  await button('1 回押す', row('終了')).click();
+  await button('1 回押す', row('プッシャー2（終話）')).click();
   await logged('[SERVO] END press once', 0);
-  await button('動いた', row('終了')).click();
-  await row('終了').getByText('OK').waitFor();
+  await button('動いた', row('プッシャー2（終話）')).click();
+  await row('プッシャー2（終話）').getByText('OK').waitFor();
   step('check screen: connections, speaker and servo through the board');
 
   // Servo screen: reach from the real angles, a real press, editing and undo.
@@ -149,10 +149,10 @@ try {
   await page.getByText('角度どおりに回れば、ラックは 2.4 mm 動きます。', { exact: false }).waitFor();
   await page.getByText('実際の角度は実機で確かめてください', { exact: false }).waitFor();
   const presses = await count('[SERVO] CALL press once');
-  await button('通話を 1 回押す').click();
+  await button('プッシャー1を 1 回押す').click();
   for (let i = 0; i < 100 && await count('[SERVO] CALL press once') === presses; ++i) await page.waitForTimeout(100);
   assert.equal(await count('[SERVO] CALL press once'), presses + 1, 'one press, once');
-  await button('通話を 1 回押す').waitFor();
+  await button('プッシャー1を 1 回押す').waitFor();
   await button('押す位置を 1° 減らす').click();
   await visible('未保存');
   await button('元に戻す').click(); // before the step button's delayed commit
@@ -171,7 +171,7 @@ try {
   await go('仮想ボード');
   await page.getByText(paused).waitFor({ state: 'detached' });
   await go('サーボ');
-  await page.getByRole('tab', { name: '解錠（GPIO 9）' }).click();
+  await page.getByRole('tab', { name: 'プッシャー3（GPIO 9）' }).click();
   await visible('この構成に解錠を押す部品はありません');
   step('servo screen: rack reach, press, edit, undo');
 
