@@ -15,6 +15,11 @@
 #endif
 
 namespace {
+#if __has_include("device_config.h")
+constexpr bool kCloudProvisioned = true;
+#else
+constexpr bool kCloudProvisioned = false;
+#endif
 std::recursive_mutex servoLock;
 using Guard = std::lock_guard<std::recursive_mutex>;
 const char* status = "Servo idle";
@@ -460,7 +465,7 @@ bool requestServoTest(PusherId target, bool useCalibration) {
   motionError = "";
   servoTesting = true; servoTestCancelled = false;
   activePusher = target; servoAt = millis();
-  waitDelayMs = target == PusherId::P1 ? angles.callDelayMs : 0;
+  waitDelayMs = static_cast<uint8_t>(target) == pushers.call_start ? angles.callDelayMs : 0;
   if (waitDelayMs) {
     servoPhase = ServoPhase::Wait;
     setStatus("Servo test waiting before one call press");
@@ -492,7 +497,7 @@ bool cancelServoTest() {
 }
 bool parsePusherCommand(const char* input, servo_pusher_config_t& out) {
   uint32_t values[4] = {};
-  const uint32_t limits[] = {UINT32_MAX, 3, 2, 2};
+  const uint32_t limits[] = {0, 3, 2, 2};
   const char* p = input + 8;
   for (unsigned i = 0; i < 4; ++i) {
     while (*p == ' ' || *p == '\t') ++p;
@@ -506,7 +511,7 @@ bool parsePusherCommand(const char* input, servo_pusher_config_t& out) {
     if (i < 3 && *p != ' ' && *p != '\t') return false;
   }
   while (*p == ' ' || *p == '\t') ++p;
-  if (*p || !values[0]) return false;
+  if (*p || values[0]) return false;
   out = {values[0], SERVO_PUSHER_SCHEMA_VERSION, static_cast<uint8_t>(values[1]),
     static_cast<uint8_t>(values[2]), static_cast<uint8_t>(values[3])};
   return true;
@@ -619,6 +624,21 @@ servo_config_result_t servo_pusher_apply(const servo_pusher_config_t *config) {
   setStatus("Pusher assignments saved");
   return SERVO_CONFIG_APPLIED;
 }
+servo_config_result_t servo_pusher_apply_local(const servo_pusher_config_t *config) {
+  Guard guard(servoLock);
+  if (!config || config->revision || !validPushers(*config)) return SERVO_CONFIG_INVALID;
+  // Local wiring stays at revision zero so a future cloud revision one can
+  // replace it. A provisioned device's revision space is owned by the server.
+  if (kCloudProvisioned || pushers.revision) return SERVO_CONFIG_CLOUD_MANAGED;
+  if (manualRequired) return SERVO_CONFIG_RECOVERY_REQUIRED;
+  if (!storageReady) return SERVO_CONFIG_STORAGE_FAILED;
+  if (pusherPending || callOwned || calibrating || servoTesting || servoPhase != ServoPhase::Idle) return SERVO_CONFIG_BUSY;
+  if (samePushers(*config, pushers)) return SERVO_CONFIG_UNCHANGED;
+  if (!saveSettings(angles, *config)) return SERVO_CONFIG_STORAGE_FAILED;
+  pushers = *config; savedAngles = angles; calibrationStored = true;
+  setStatus("Local pusher wiring saved; cloud revision unchanged");
+  return SERVO_CONFIG_APPLIED;
+}
 const char *servo_pusher_result_error(servo_config_result_t result) {
   switch (result) {
     case SERVO_CONFIG_APPLIED: case SERVO_CONFIG_UNCHANGED: return "";
@@ -629,6 +649,7 @@ const char *servo_pusher_result_error(servo_config_result_t result) {
     case SERVO_CONFIG_REVISION_CONFLICT: return "revision_conflict";
     case SERVO_CONFIG_STORAGE_FAILED: return "storage_failed";
     case SERVO_CONFIG_RECOVERY_REQUIRED: return "manual_check_required";
+    case SERVO_CONFIG_CLOUD_MANAGED: return "cloud_managed";
   }
   return "invalid_result";
 }
@@ -673,7 +694,7 @@ void servo_calibration_command(const char* command) {
     if (!parsePusherCommand(command, c)) {
       calibrationReply("invalid_pusher_config"); return;
     }
-    const char* error = servo_pusher_result_error(servo_pusher_apply(&c));
+    const char* error = servo_pusher_result_error(servo_pusher_apply_local(&c));
     calibrationReply(error[0] ? error : nullptr); return;
   }
   if (!strcmp(command, "@stop")) {

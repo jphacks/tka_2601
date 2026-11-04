@@ -50,9 +50,31 @@ static std::string body(const std::string& request) {
   const size_t end = request.find("\r\n\r\n"); assert(end != std::string::npos);
   return request.substr(end + 4);
 }
-static void sync(const std::string& getResponse, const std::string& putResponse = http("{}"), bool report = true) {
+static void sync(const std::string& getResponse, const std::string& putResponse = http("{}"), bool report = true, uint32_t advance = 60001) {
   responses.push_back(getResponse); if (report) responses.push_back(putResponse);
-  fake::now += 60001; pusher_sync_step(true); assert(responses.empty());
+  fake::now += advance; pusher_sync_step(true); assert(responses.empty());
+}
+static void noPoll(uint32_t advance) {
+  const auto before = requests.size();
+  fake::now += advance; pusher_sync_step(true);
+  assert(requests.size() == before && responses.empty());
+}
+static void getOnly(unsigned revision, unsigned id, uint32_t advance) {
+  const auto before = requests.size();
+  sync(http(settings(revision, id)), "", false, advance);
+  assert(requests.size() == before + 1);
+}
+static void cadenceAndDedup() {
+  const auto writes = fake::storageWrites;
+  noPoll(4999);
+  getOnly(1, 1, 1); // Initial fast polling, but no repeated PUT.
+  for (unsigned i = 0; i < 5; ++i) getOnly(1, 1, 5000);
+  noPoll(29999); // After 30 seconds of stable content, GET slows to 30 seconds.
+  const auto before = requests.size();
+  sync(http(settings(1, 1)), http("{}"), true, 1);
+  assert(requests.size() == before + 2); // Exactly the 60-second heartbeat PUT.
+  noPoll(29999); getOnly(1, 1, 1);
+  assert(fake::storageWrites == writes);
 }
 static const std::string& report() {
   assert(requests.back().find("PUT /functions/v1/device/pusher-status HTTP/1.1") == 0);
@@ -64,6 +86,30 @@ static void reported(unsigned revision, const char* error = "null") {
   if (json.find(std::string("\"apply_error\":") + error) == std::string::npos)
     fprintf(stderr, "expected apply_error=%s in %s\n", error, json.c_str());
   assert(json.find(std::string("\"apply_error\":") + error) != std::string::npos);
+}
+static void conflictSync(const std::string& fallbackResponse, bool expectFallback = true, unsigned firstStatus = 409) {
+  static unsigned desiredRevision = 3;
+  const auto before = requests.size(), operations = fake::servoPins.size(), writes = fake::storageWrites;
+  responses.push_back(http(settings(desiredRevision++, 1)));
+  responses.push_back(http("{\"error\":\"pusher_report_config_conflict\"}", firstStatus));
+  if (expectFallback) responses.push_back(fallbackResponse);
+  fake::now += 60001; pusher_sync_step(true);
+  assert(responses.empty());
+  assert(requests.size() == before + (expectFallback ? 3 : 2));
+  const auto ack = body(requests[before + 1]);
+  assert(ack.find("\"applied_revision\":2") != std::string::npos);
+  assert(ack.find("\"runtime_status\":\"manual_check_required\"") != std::string::npos);
+  if (expectFallback) {
+    const auto fallback = body(report());
+    assert(fallback.find("\"applied_revision\":null") != std::string::npos);
+    assert(fallback.find("\"applied_config\":null") != std::string::npos);
+    assert(fallback.find("\"runtime_status\":\"manual_check_required\"") != std::string::npos);
+    assert(fallback.find("\"apply_error\":\"manual_check_required\"") != std::string::npos);
+    assert(fallback.find("\"id\":\"p2\",\"gpio\":8") != std::string::npos);
+  }
+  assert(actual().revision == 2 && servo_recovery_required());
+  assert(command("@get", "\"pusher_pending\":true"));
+  assert(fake::servoPins.size() == operations && fake::storageWrites == writes);
 }
 int main() {
   servo_begin();
@@ -83,10 +129,17 @@ int main() {
   }
   assert(requests.front().find("GET /functions/v1/device/pusher-settings HTTP/1.1") == 0);
   assert(fake::servoPins.size() == operations);
+  const auto usbWrites = fake::storageWrites;
+  assert(!command("@pusher 0 3 1 2", "cloud_managed"));
+  assert(!command("@pusher 2 3 1 2", "invalid_pusher_config"));
+  assert(actual().revision == 1 && actual().enabled_mask == 1 && fake::storageWrites == usbWrites);
+  cadenceAndDedup();
   // A dropped cloud ACK is retried from readback, without another NVS write.
   const auto writes = fake::storageWrites;
   sync(http(settings(1, 1)), ""); assert(actual().revision == 1);
-  sync(http(settings(1, 1))); reported(1); assert(fake::storageWrites == writes);
+  noPoll(59999); // Stable-mode HTTP failure backs off, capped at 60 seconds.
+  sync(http(settings(1, 1)), http("{}"), true, 1); reported(1); assert(fake::storageWrites == writes);
+  noPoll(29999); getOnly(1, 1, 1); // Only successful reports update heartbeat/cache.
   // Neither an HTTP failure nor an offline/busy guard changes the local mapping.
   const auto before = requests.size();
   sync(http("{}", 503), "", false);
@@ -101,6 +154,7 @@ int main() {
   servo_call_cancel(); servo_call_close(); assert(!servo_call_open());
   sync(http(settings(2, 2))); reported(2);
   assert(actual().call_start == 2 && command("@get", "\"pusher_pending\":false"));
+  noPoll(4999); getOnly(2, 2, 1); // A changed desired/applied mapping restores fast GET.
   // Bad/stale remote state cannot silently replace the active mapping.
   sync(http("{\"paired\":true,\"pusher_settings\":[]}")); reported(2, "\"invalid_settings_response\"");
   assert(!servo_call_open());
@@ -113,10 +167,48 @@ int main() {
   assert(servo_test('e')); tick(100); tick(100); assert(servo_recovery_required());
   sync(http(settings(2, 2))); reported(2);
   assert(body(report()).find("\"runtime_status\":\"manual_check_required\"") != std::string::npos);
+  // The app saved rev3 before rev2's ACK reached the cloud, while the local
+  // shared operation became uncertain. The rejected ACK must not hide recovery.
+  conflictSync(http("{}"));
+  const auto conflictWrites = fake::storageWrites;
+  getOnly(3, 1, 5000); // Successful status-only fallback is deduplicated too.
+  const auto beforeHeartbeat = requests.size();
+  sync(http(settings(3, 1)), http("{}"), true, 55000);
+  assert(requests.size() == beforeHeartbeat + 2); // Status-only heartbeat, no rejected ACK retry.
+  assert(body(report()).find("\"applied_revision\":null") != std::string::npos);
+  assert(command("@get", "\"pusher_pending\":true") && fake::storageWrites == conflictWrites);
+  conflictSync(http("{}", 409)); // Exactly one fallback even if it also conflicts.
+  conflictSync(""); // Transport/ACK loss during fallback does not loop.
+  conflictSync(http("{}", 503));
+  conflictSync("", false, 429); // Other statuses are not revision conflicts.
+  conflictSync("", false, 503);
   assert(command("@confirm"));
+  sync(http(settings(3, 1))); reported(3); // Cleared recovery/new context returns to a normal ACK.
+  assert(command("@get", "\"pusher_pending\":false"));
+  // A failed changed-body PUT must not enter the dedup cache. Retry it before
+  // the heartbeat deadline, then deduplicate only after a successful response.
+  const auto invalid = http("{\"paired\":true,\"pusher_settings\":[]}");
+  auto beforeRetry = requests.size();
+  sync(invalid, http("{}", 503), true, 5000);
+  assert(requests.size() == beforeRetry + 2);
+  noPoll(9999);
+  sync(invalid, http("{}"), true, 1); reported(3, "\"invalid_settings_response\"");
+  beforeRetry = requests.size();
+  sync(invalid, "", false, 5000); assert(requests.size() == beforeRetry + 1);
+  sync(http(settings(3, 1)), http("{}"), true, 5000); reported(3);
+  // GET failures back off without any PUT; the cap is one minute, never more.
+  sync(http("{}", 503), "", false, 5000);
+  for (uint32_t delay : {10000u, 20000u, 40000u, 60000u}) {
+    noPoll(delay - 1u);
+    const auto beforeFailure = requests.size();
+    sync(http("{}", 503), "", false, 1);
+    assert(requests.size() == beforeFailure + 1);
+  }
+  noPoll(59999);
+  sync(http(settings(3, 1)), http("{}"), true, 1); reported(3);
   // A lost report and a board restart retain the committed mapping.
   const auto count = fake::servoPins.size(); servo_begin();
-  sync(http(settings(2, 2))); reported(2);
+  sync(http(settings(3, 1))); reported(3);
   assert(fake::servoPins.size() == count && !servo_recovery_required());
   // Losing both saved slots makes the actual configuration unknowable. Still
   // report the fault/capabilities, without claiming any applied revision/config.
@@ -125,7 +217,7 @@ int main() {
   servo_begin();
   servo_pusher_config_t unknown{};
   assert(!servo_pusher_get(&unknown) && servo_recovery_required() && !servo_call_open());
-  sync(http(settings(2, 2)));
+  sync(http(settings(3, 1)));
   const auto fault = body(report());
   assert(fault.find("\"applied_revision\":null") != std::string::npos);
   assert(fault.find("\"applied_config\":null") != std::string::npos);
@@ -133,5 +225,5 @@ int main() {
   assert(fault.find("\"runtime_status\":\"manual_check_required\"") != std::string::npos);
   assert(fault.find("\"id\":\"p1\",\"gpio\":7") != std::string::npos);
   assert(fake::servoPins.size() == count);
-  puts("pusher sync: real apply/journal/readback/report, ACK loss, busy race, invalid/stale settings, unknown-storage fault and credential isolation passed");
+  puts("pusher sync: real apply/readback, dedup, heartbeat, adaptive polling/backoff, 409 recovery, cloud-only writes and storage faults passed");
 }

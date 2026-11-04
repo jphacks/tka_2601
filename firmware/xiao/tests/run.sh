@@ -13,7 +13,10 @@ for file in ./*.c ./*.h ./*.cpp; do
   esac
 done
 cp tests/*.c tests/*.cpp tests/*.h "$src/"
-cp tests/stubs/*.h "$src/"; mkdir "$src/mbedtls"; cp tests/stubs/mbedtls/*.h "$src/mbedtls/"
+for file in tests/stubs/*.h; do
+  case "$(basename "$file")" in device_config.h) ;; *) cp "$file" "$src/" ;; esac
+done
+mkdir "$src/mbedtls"; cp tests/stubs/mbedtls/*.h "$src/mbedtls/"
 C=(clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -I"$src")
 CXX=(clang++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined -I"$src" -Itests/fakes)
 run() { echo "--- $1"; "$work/$1" > "$work/$1.log" 2>&1 || { cat "$work/$1.log"; exit 1; }; tail -n 1 "$work/$1.log"; }
@@ -31,9 +34,11 @@ s() { for f in "$@"; do printf '%s/%s ' "$src" "$f"; done; }
 "${C[@]}" $(s audio_core.c audio_store.c door_server.c voice_protocol.c door_server_test.c xlog_host.c) -lm -o "$work/door_server"; run door_server
 "${C[@]}" $(s pusher_protocol.c pusher_protocol_test.c) -o "$work/pusher_protocol"; run pusher_protocol
 "${C[@]}" -c "$src/pusher_protocol.c" -o "$work/pusher_protocol.o"
+cp tests/stubs/device_config.h "$src/"
 "${C[@]}" -c "$src/pusher_sync.c" -o "$work/pusher_sync.o"
 "${CXX[@]}" "$src/servo_control.cpp" "$src/servo_pwm.cpp" "$src/pusher_sync_test.cpp" \
   "$work/pusher_protocol.o" "$work/pusher_sync.o" -o "$work/pusher_sync"; run pusher_sync
+rm "$src/device_config.h"
 for t in calibration_test exact_servo_test end_direction_test servo_call_test pusher_assignment_test; do
   "${CXX[@]}" "$src/servo_control.cpp" "$src/servo_pwm.cpp" "$src/$t.cpp" -o "$work/$t"; run "$t"
 done

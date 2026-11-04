@@ -18,6 +18,42 @@ static void apply(uint8_t mask, uint8_t start, uint8_t end) {
 static void finish(unsigned hold = 100, unsigned rest = 100) { tick(hold); tick(rest); }
 static void closed() { servo_call_close(); assert(!servo_motion_busy()); }
 
+static void localWiringBeforeProvisioning() {
+  servo_begin();
+  assert(servo_pusher_apply_local(nullptr) == SERVO_CONFIG_INVALID);
+  auto local = servo_pusher_config_t{0, 1, 2, 2, 2};
+  auto positive = local; positive.revision = 1;
+  assert(servo_pusher_apply_local(&positive) == SERVO_CONFIG_INVALID);
+  assert(!command("@pusher 1 2 2 2", "invalid_pusher_config"));
+  assert(command("@pusher 0 2 2 2"));
+  assert(current().revision == 0 && current().call_start == 2 && fake::servoPins.empty());
+  const auto writes = fake::storageWrites;
+  assert(command("@pusher 0 2 2 2") && fake::storageWrites == writes);
+  servo_begin();
+  assert(current().revision == 0 && current().enabled_mask == 2 && current().call_end == 2);
+  servo_pusher_set_pending(true);
+  assert(!command("@pusher 0 3 1 2", "busy"));
+  assert(command("@get", "\"pusher_pending\":true"));
+  assert(!servo_call_open());
+  servo_pusher_set_pending(false);
+  assert(servo_call_open());
+  assert(!command("@pusher 0 3 1 2", "busy"));
+  servo_call_cancel(); closed();
+  assert(command("@begin"));
+  assert(!command("@pusher 0 3 1 2", "busy"));
+  assert(command("@cancel"));
+  fake::failNextStorageWrite = true;
+  assert(!command("@pusher 0 3 1 2", "storage_failed"));
+  assert(current().enabled_mask == 2);
+  servo_begin(); assert(current().enabled_mask == 2 && current().revision == 0);
+  // The server's first revision replaces any local wiring; USB cannot overwrite it.
+  apply(3, 1, 2);
+  assert(current().revision == 1);
+  assert(!command("@pusher 0 2 2 2", "cloud_managed"));
+  assert(current().enabled_mask == 3 && fake::servoPins.empty());
+  fake::preferenceRecords.clear(); fake::storedCalibration.clear();
+}
+
 static void migrationAndValidation() {
   fake::readOnlyNamespaceMissing = true;
   servo_begin();
@@ -50,7 +86,7 @@ static void migrationAndValidation() {
   servo_begin(); assert(current().revision == 0 && current().call_start == 1);
   assert(command("@get", "\"unlock_press\":80"));
   fake::failWriteKey.clear();
-  assert(command("@pusher 1 3 2 1"));
+  assert(servo_pusher_apply(&c) == SERVO_CONFIG_APPLIED);
   const auto savedWrites = fake::storageWrites;
   c = current();
   assert(servo_pusher_apply(&c) == SERVO_CONFIG_UNCHANGED);
@@ -59,10 +95,12 @@ static void migrationAndValidation() {
   assert(servo_pusher_apply(&conflict) == SERVO_CONFIG_REVISION_CONFLICT);
   c.revision = 0;
   assert(servo_pusher_apply(&c) == SERVO_CONFIG_INVALID);
-  for (const char* bad : {"@pusher 4294967296 1 1 1", "@pusher -1 1 1 1", "@pusher 2 1 1 1 trailing",
-                          "@pusher 2 1 1", "@pusher 2 4 1 1", "@pusher 2 1 3 3", "@pusher 2 0 0 0",
+  for (const char* bad : {"@pusher 4294967296 1 1 1", "@pusher -1 1 1 1", "@pusher 0 1 1 1 trailing",
+                          "@pusher 0 1 1", "@pusher 0 4 1 1", "@pusher 0 1 3 3", "@pusher 0 0 0 0",
+                          "@pusher 1 1 1 1",
                           "@pusher 9999999999999999999999999999999999999 1 1 1"})
     assert(!command(bad, "invalid_pusher_config"));
+  assert(!command("@pusher 0 1 1 1", "cloud_managed"));
   const auto before = fake::servoPins.size();
   servo_begin();
   assert(current().revision == 1 && current().call_start == 2 && current().call_end == 1);
@@ -72,6 +110,15 @@ static void migrationAndValidation() {
 }
 
 static void reversedTwoAndSnapshot() {
+  // Diagnostics follow the assigned logical start, not the physical output ID.
+  auto tests = fake::servoPins.size();
+  assert(servo_test('e'));
+  tick(899); assert(fake::servoPins.size() == tests);
+  tick(1); assert(fake::attachedPin == kEnd && fake::servoPins.size() == tests + 1);
+  finish(); assert(!servo_test_busy());
+  assert(servo_test('c'));
+  assert(fake::attachedPin == kCall && fake::servoPins.size() == tests + 2);
+  finish(); assert(!servo_test_busy());
   assert(servo_call_open() && servo_call_press());
   // Starting on physical 2 still takes the logical start delay.
   const auto before = fake::servoPins.size();
@@ -247,7 +294,7 @@ static void durableFailuresAndLocalTests() {
 }
 
 int main() {
-  migrationAndValidation(); reversedTwoAndSnapshot(); sharedBothProfiles();
+  localWiringBeforeProvisioning(); migrationAndValidation(); reversedTwoAndSnapshot(); sharedBothProfiles();
   cancellationAndPowerLoss(); durableFailuresAndLocalTests();
   puts("pusher assignments: v1 migration, physical routing, snapshots, journal, replay, shared interlock and power loss passed");
 }

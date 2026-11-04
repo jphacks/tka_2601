@@ -7,6 +7,11 @@ import { createClient } from "@supabase/supabase-js";
 import { handleDeviceRequest } from "../functions/device/handler.ts";
 import type { PusherConfig } from "../functions/device/contract.ts";
 import { localStatus, sha256Hex } from "../scripts/local.ts";
+import {
+  PUSHER_SYNC_LABELS,
+  pusherSyncState,
+  readPusherSettings,
+} from "../../mobile/src/domain/pusher.ts";
 
 const status = await localStatus();
 if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(status.API_URL)) {
@@ -396,6 +401,111 @@ try {
     "second device can report its own actual applied mapping",
     (await device("/pusher-status", 1, report(1, shared))).status === 200 &&
       (await read(1)).applied_revision === 1,
+  );
+
+  // The device commits revision one locally but its ACK is lost. A resident
+  // saves revision two before the device can report a shared-button fault.
+  // The full old ACK must still be rejected; a status-only fallback must carry
+  // the safety interlock without fabricating an applied revision in the cloud.
+  const raceIndex = deviceIds.length;
+  deviceIds.push(crypto.randomUUID());
+  deviceKeys.push(crypto.randomUUID());
+  await required(
+    admin.from("devices").insert({
+      id: deviceIds[raceIndex],
+      household_id: householdIds[0],
+      name: "Pusher HTTP integration race fixture",
+      mode: "normal",
+    }),
+  );
+  const raceKeyHash = await sha256Hex(deviceKeys[raceIndex]);
+  await sql(
+    `insert into public.device_keys(key_hash,device_id) values ('${raceKeyHash}','${
+      deviceIds[raceIndex]
+    }');`,
+  );
+  const raceFirst = await residents[0].rpc("save_pusher_settings", {
+    p_device_id: deviceIds[raceIndex],
+    p_expected_revision: 0,
+    p_config: shared,
+  });
+  const fetchedFirst = await device("/pusher-settings", raceIndex);
+  check(
+    "race device fetches shared revision one before an unreported ACK",
+    !raceFirst.error &&
+      fetchedFirst.status === 200 &&
+      fetchedFirst.body.pusher_settings.desired_revision === 1 &&
+      same(fetchedFirst.body.pusher_settings.desired_config, shared),
+  );
+  const raceSecond = await residents[0].rpc("save_pusher_settings", {
+    p_device_id: deviceIds[raceIndex],
+    p_expected_revision: 1,
+    p_config: swapped,
+  });
+  check(
+    "new desired revision overtakes the missing applied ACK",
+    !raceSecond.error &&
+      raceSecond.data.desired_revision === 2 &&
+      raceSecond.data.applied_revision === null,
+  );
+  const oldManualReport = {
+    ...report(1, shared),
+    apply_error: "manual_check_required",
+    runtime_status: "manual_check_required",
+  };
+  const conflicted = await device("/pusher-status", raceIndex, oldManualReport);
+  const unchanged = await read(raceIndex);
+  check(
+    "raced full ACK returns 409 without updating runtime or applied history",
+    conflicted.status === 409 &&
+      unchanged.desired_revision === 2 && unchanged.applied_revision === null &&
+      unchanged.runtime_status === null,
+  );
+  const fallback = await device("/pusher-status", raceIndex, {
+    ...oldManualReport,
+    applied_revision: null,
+    applied_config: null,
+  });
+  const needsCheck = await read(raceIndex);
+  check(
+    "status-only fallback records manual recovery despite the newer desired revision",
+    fallback.status === 200 &&
+      needsCheck.desired_revision === 2 &&
+      same(needsCheck.desired_config, swapped) &&
+      needsCheck.applied_revision === null &&
+      needsCheck.applied_config === null &&
+      needsCheck.runtime_status === "manual_check_required" &&
+      needsCheck.apply_error === "manual_check_required",
+  );
+  const visible = await required(
+    residents[0].from("device_pusher_settings").select("*").eq(
+      "device_id",
+      deviceIds[raceIndex],
+    ).single(),
+  );
+  const manualState = pusherSyncState(readPusherSettings(visible));
+  check(
+    "real resident readback selects the mobile manual-check message instead of pending",
+    manualState === "manual_check_required" &&
+      PUSHER_SYNC_LABELS[manualState] === "親機の状態を確認してください",
+  );
+  const recoveredAck = await device(
+    "/pusher-status",
+    raceIndex,
+    report(2, swapped),
+  );
+  const recovered = await required(
+    residents[0].from("device_pusher_settings").select("*").eq(
+      "device_id",
+      deviceIds[raceIndex],
+    ).single(),
+  );
+  check(
+    "a subsequent confirmed mapping clears manual state and restores applied display",
+    recoveredAck.status === 200 &&
+      recovered.applied_revision === 2 &&
+      recovered.runtime_status === "normal" && recovered.apply_error === null &&
+      pusherSyncState(readPusherSettings(recovered)) === "applied",
   );
   check(
     "production HTTP handler completed without unexpected errors",

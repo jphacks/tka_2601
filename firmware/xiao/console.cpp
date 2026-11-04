@@ -20,7 +20,8 @@ bool overflow = false;
 void help() {
   xlog("[HELP] c=start call; q=end call; s=status; e=register chime; x=cancel registration/servo test; r=record 5s\n");
   xlog("[HELP] 1/2/3=physical pusher test 1/2/unlock; t=speaker tone; l=mic loopback; m=mic level; n=Wi-Fi; a=API HTTPS; w=API WSS; u=USB\n");
-  xlog("[HELP] @get @begin @set c|e|u r|p 0..180 @angles @time @save @cancel @test @stop @mirror e @net @tune @pusher revision mask start end @confirm\n");
+  xlog("[HELP] @get @begin @set c|e|u r|p 0..180 @angles @time @save @cancel @test @stop @mirror e @net @tune @pusher 0 mask start end @confirm\n");
+  xlog("[HELP] @pusher is local wiring setup only, before cloud provisioning; cloud revisions are server-owned.\n");
   xlog("[HELP] FORMAT_AUDIO_STORAGE erases the audio_store partition (registered chime and recordings).\n");
 }
 void micStatus() {

@@ -37,10 +37,13 @@ typedef enum {
   SERVO_CONFIG_APPLIED, SERVO_CONFIG_UNCHANGED, SERVO_CONFIG_BUSY,
   SERVO_CONFIG_INVALID, SERVO_CONFIG_UNSUPPORTED_SCHEMA,
   SERVO_CONFIG_STALE_REVISION, SERVO_CONFIG_REVISION_CONFLICT,
-  SERVO_CONFIG_STORAGE_FAILED, SERVO_CONFIG_RECOVERY_REQUIRED
+  SERVO_CONFIG_STORAGE_FAILED, SERVO_CONFIG_RECOVERY_REQUIRED, SERVO_CONFIG_CLOUD_MANAGED
 } servo_config_result_t;
 bool servo_pusher_get(servo_pusher_config_t *out);
 servo_config_result_t servo_pusher_apply(const servo_pusher_config_t *config);
+/* Unprovisioned local wiring only: revision must remain zero. Refused after
+ * cloud provisioning or any applied cloud revision; never clears pending state. */
+servo_config_result_t servo_pusher_apply_local(const servo_pusher_config_t *config);
 const char *servo_pusher_result_error(servo_config_result_t result);
 uint8_t servo_pusher_pin(uint8_t physical_id); /* UINT8_MAX for unknown ID */
 void servo_pusher_set_pending(bool pending);
