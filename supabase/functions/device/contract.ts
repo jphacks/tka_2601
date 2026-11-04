@@ -37,7 +37,7 @@ function shopFields(shop: unknown): unknown {
   };
 }
 
-export function settingsBody(device: DeviceSettings, shop: unknown) {
+export function settingsBody(device: DeviceSettings, shop: unknown, pusherSettings: unknown = null) {
   return {
     contract_version: CONTRACT_VERSION,
     paired: device.household_id !== null,
@@ -46,6 +46,66 @@ export function settingsBody(device: DeviceSettings, shop: unknown) {
     auto_away: device.auto_away,
     extra_instructions: device.extra_instructions,
     shop: shopFields(shop),
+    pusher_settings: pusherSettings,
+  };
+}
+
+export type PusherConfig = {
+  schema_version: 1;
+  enabled_pushers: ["p1"] | ["p2"] | ["p1", "p2"];
+  assignments: { call_start: "p1" | "p2"; call_end: "p1" | "p2" };
+};
+
+// Firmware reads only desired state. Shop data and reported device state can be
+// much larger than its bounded HTTP response buffer.
+export function pusherSettingsBody(device: DeviceSettings, settings: unknown) {
+  return {
+    contract_version: CONTRACT_VERSION,
+    paired: device.household_id !== null,
+    pusher_settings: isObject(settings) ? {
+      desired_revision: settings.desired_revision,
+      desired_config: settings.desired_config,
+    } : null,
+  };
+}
+
+export function isPusherConfig(value: unknown): value is PusherConfig {
+  if (!isObject(value) || value.schema_version !== 1 ||
+    Object.keys(value).some((key) => !["schema_version", "enabled_pushers", "assignments"].includes(key))) return false;
+  const enabled = value.enabled_pushers;
+  const assignments = value.assignments;
+  if (!Array.isArray(enabled) || !isObject(assignments) ||
+    Object.keys(assignments).some((key) => !["call_start", "call_end"].includes(key))) return false;
+  const start = assignments.call_start, end = assignments.call_end;
+  if (typeof start !== "string" || typeof end !== "string") return false;
+  return (enabled.length === 1 && ["p1", "p2"].includes(enabled[0]) && start === enabled[0] && end === enabled[0]) ||
+    (enabled.length === 2 && enabled[0] === "p1" && enabled[1] === "p2" &&
+      ["p1", "p2"].includes(start) && ["p1", "p2"].includes(end) && start !== end);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function parsePusherStatus(body: Record<string, unknown>) {
+  const revision = body.applied_revision;
+  const config = body.applied_config;
+  const error = body.apply_error;
+  const runtime = body.runtime_status;
+  const capabilities = body.capabilities;
+  if ((revision !== null && (!Number.isInteger(revision) || typeof revision !== "number" || revision < 0 || revision > 4294967295)) ||
+    (revision === null ? config !== null : !isPusherConfig(config)) ||
+    (error !== null && (typeof error !== "string" || error.length < 1 || error.length > 128)) ||
+    (runtime !== null && runtime !== "normal" && runtime !== "manual_check_required") ||
+    (capabilities !== null && (!isObject(capabilities) || new TextEncoder().encode(JSON.stringify(capabilities)).length > 4096))) {
+    throw new ProviderError(400, "プッシャー適用結果が正しくありません");
+  }
+  return {
+    p_applied_revision: revision as number | null,
+    p_applied_config: config as PusherConfig | null,
+    p_apply_error: error as string | null,
+    p_runtime_status: runtime as string | null,
+    p_capabilities: capabilities,
   };
 }
 

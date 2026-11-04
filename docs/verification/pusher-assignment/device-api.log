@@ -1,0 +1,43 @@
+Check supabase/functions/device/handler_test.ts
+Check supabase/functions/device/pusher_contract_test.ts
+running 23 tests from ./supabase/functions/device/handler_test.ts
+missing or rejected device credentials return 401 without calling later RPCs ... ok (17ms)
+device malformed bodies and invalid fields return existing 400 messages before mutation ... ok (4ms)
+visit SQL failures retain their exact public status and payload ... ok (2ms)
+unknown visit errors and all auth/state RPC errors preserve the original exception ... ok (720µs)
+transport rejection is not converted into an input error ... ok (878µs)
+unsupported methods and routes retain 405 and 404 after authentication ... ok (868µs)
+successful settings and visit requests retain response and RPC payload ... ok (990µs)
+settings keep the existing fields when the shop profile cannot be read ...
+------- output -------
+shop profile unavailable { code: "XX000", message: "database unavailable" }
+shop profile unavailable Error: shop transport failed
+    at Object.rpc (file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/supabase/functions/device/handler_test.ts:193:37)
+    at readShop (file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/supabase/functions/device/handler.ts:169:41)
+    at handleDeviceRequest (file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/supabase/functions/device/handler.ts:61:24)
+    at async file:///Users/atsushi/Desktop/projects/hackathon/JPHacks2026/tka_2601/.codex-worktrees/pusher-assignment/supabase/functions/device/handler_test.ts:197:22
+    at async innerWrapped (ext:cli/40_test.js:300:5)
+    at async exitSanitizer (ext:cli/40_test.js:201:27)
+    at async outerWrapped (ext:cli/40_test.js:239:22)
+----- output end -----
+settings keep the existing fields when the shop profile cannot be read ... ok (3ms)
+settings return the authenticated device snapshot and never hide its read failures ... ok (685µs)
+firmware pusher settings exclude large shop and reported fields without a shop query ... ok (2ms)
+pusher reports use the authenticated identity and retain device revision zero ... ok (593µs)
+status-only reports and pusher conflicts retain their contract ... ok (643µs)
+invalid pusher reports never reach mutation and require device credentials ... ok (2ms)
+unpaired devices read settings without a shop and cannot use reservations ... ok (531µs)
+heartbeat writes the device state ... ok (441µs)
+reservations are listed through the provider ... ok (3ms)
+the device can read at most 31 days at once ... ok (481µs)
+a malformed percent in the reservation id returns 400 ... ok (333µs)
+reservation times without an offset are rejected ... ok (690µs)
+AI reservations are always pending and notify the shop ... ok (909µs)
+AI reservations that overlap an existing one return 409 without writing ... ok (541µs)
+a visit from another shop is not linked but the reservation is still taken ... ok (495µs)
+arrival is recorded and notified ... ok (577µs)
+running 2 tests from ./supabase/functions/device/pusher_contract_test.ts
+pusher configuration admits both shared ports and both separate assignments ... ok (867µs)
+pusher configuration rejects missing, extra, ambiguous, and unlock assignments ... ok (310µs)
+
+ok | 25 passed | 0 failed (111ms)

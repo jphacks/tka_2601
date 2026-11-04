@@ -2,7 +2,7 @@ import { readJsonObject, reservationErrorResponse } from "../_shared/errors.ts";
 import type { NewNotification } from "../_shared/notify.ts";
 import type { ReservationProvider } from "../_shared/reservation.ts";
 import { reservationNotice } from "../_shared/reservation_notice.ts";
-import { parseAiReservation, parseDeviceRange, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
+import { parseAiReservation, parseDeviceRange, parsePusherStatus, pusherSettingsBody, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
 import { type DatabaseError, visitErrorResponse } from "./errors.ts";
 
 export type DeviceAdmin = {
@@ -51,9 +51,33 @@ export async function handleDeviceRequest(
 
   const path = new URL(req.url).pathname;
 
+  if (path.endsWith("/pusher-settings")) {
+    if (req.method !== "GET") return methodNotAllowed();
+    return Response.json(pusherSettingsBody(device, await readPushers(admin, device)));
+  }
+
   if (path.endsWith("/settings") || path.endsWith("/mode")) {
     if (req.method !== "GET") return methodNotAllowed();
-    return Response.json(settingsBody(device, await readShop(admin, device.household_id)));
+    const shop = await readShop(admin, device.household_id);
+    return Response.json(settingsBody(device, shop, await readPushers(admin, device)));
+  }
+
+  if (path.endsWith("/pusher-status")) {
+    if (req.method !== "PUT") return methodNotAllowed();
+    const body = await readObject(req);
+    if (body instanceof Response) return body;
+    let report;
+    try {
+      report = parsePusherStatus(body);
+    } catch (e) {
+      return reservationErrorResponse(e);
+    }
+    const { data, error } = await admin.rpc("device_report_pusher_status", {
+      p_device_id: device.device_id,
+      ...report,
+    });
+    if (error) return visitErrorResponse(error);
+    return Response.json(data);
   }
 
   if (path.endsWith("/heartbeat")) {
@@ -129,6 +153,13 @@ export async function handleDeviceRequest(
   }
 
   return Response.json({ error: "not found" }, { status: 404 });
+}
+
+async function readPushers(admin: DeviceAdmin, device: Device): Promise<unknown> {
+  if (!device.household_id) return null;
+  const { data, error } = await admin.rpc("device_get_pusher_settings", { p_device_id: device.device_id });
+  if (error) throw error;
+  return data ?? null;
 }
 
 // 店舗の設定。中継は設定を 1.5 秒で読むので Google は呼ばず、読めなければ shop だけを null にする

@@ -53,6 +53,7 @@ class SerialLink:
         self.stage = 'XIAOを接続しています'
         self.voice_active = False
         self.recovery_required = False
+        self.manual_check_required = False
         self.calibration_active = None
         self.replies = dict.fromkeys(REPLY_CHANNELS)
         self.reply_sequence = dict.fromkeys(REPLY_CHANNELS, 0)
@@ -83,7 +84,7 @@ class SerialLink:
             self.history.record(text)
             if any(marker in text for marker in ('Preparing streaming call', 'Listening:', 'Response ')):
                 self.voice_active = True
-            elif any(marker in text for marker in ('[BOOT] Network task running', 'Call ended;', 'Call stopped;')):
+            elif any(marker in text for marker in ('[BOOT] Network task running', 'Call ended;', 'Call stopped;', 'Operator confirmed idle;')):
                 self.voice_active = False
                 self.recovery_required = False
             if 'Playback/call state uncertain' in text:
@@ -151,6 +152,8 @@ class SerialLink:
         with self.lock:
             if type(reply.get('active')) is bool:
                 self.set_calibration_active(reply['active'])
+            if channel == '[CAL]' and type(reply.get('manual_check_required')) is bool:
+                self.manual_check_required = reply['manual_check_required']
             self.replies[channel] = reply
             self.reply_sequence[channel] += 1
             self.changed.notify_all()
@@ -160,7 +163,7 @@ class SerialLink:
             if after > self.sequence:
                 after = 0
             return {'ok': True, 'connected': self.connected, 'port': self.port,
-                    'voice_active': self.voice_active, 'recovery_required': self.recovery_required,
+                    'voice_active': self.voice_active, 'recovery_required': self.recovery_required or self.manual_check_required,
                     'calibration_active': self.calibration_active,
                     'epoch': self.epoch, 'stage': self.stage, 'next': self.sequence,
                     'lines': [line.copy() for line in self.lines if line['id'] > after]}
@@ -311,6 +314,10 @@ class SerialLink:
 
 
 def command_for(action, body):
+    if action == 'confirm':
+        if body.get('confirm') != 'INTERCOM_IDLE':
+            raise ValueError('親機が待機中であることを確認してください。')
+        return '@confirm'
     if action in ('begin', 'save', 'cancel'):
         return '@' + action
     if action == 'test':

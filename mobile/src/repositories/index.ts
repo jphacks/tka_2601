@@ -5,6 +5,7 @@ import type { PageCursor } from '../domain/collections';
 import type { Device, DevicePatch } from '../domain/device';
 import type { Household, InvitePreview, Member } from '../domain/group';
 import type { AppNotification, NotificationKind, NotificationPreference } from '../domain/notification';
+import type { PusherConfig, PusherSettings } from '../domain/pusher';
 import type { ReceptionCalendar, ReceptionEvent, ReceptionGoogle, ReceptionVisit } from '../domain/reception';
 import type {
   DateRange,
@@ -52,7 +53,13 @@ export interface VisitRepository {
 
 export interface DeviceRepository {
   get(householdId: string): Promise<Device | null>;
+  claim(code: string): Promise<string>;
   update(id: string, patch: DevicePatch): Promise<void>;
+}
+
+export interface PusherSettingsRepository {
+  get(deviceId: string): Promise<PusherSettings | null>;
+  save(deviceId: string, expectedRevision: number, config: PusherConfig): Promise<PusherSettings>;
 }
 
 export interface ShopRepository {
@@ -120,6 +127,7 @@ export type Repositories = {
   providers: ReservationProviderRepository;
   visits: VisitRepository;
   devices: DeviceRepository;
+  pusherSettings: PusherSettingsRepository;
   shop: ShopRepository;
   notifications: NotificationRepository;
   reception: ReceptionRepository;

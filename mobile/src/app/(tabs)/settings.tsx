@@ -36,6 +36,7 @@ export default function SettingsScreen() {
   const household = useHousehold();
   const insets = useSafeAreaInsets();
   const [device, setDevice] = useState<Device | null | undefined>(undefined);
+  const [deviceFailed, setDeviceFailed] = useState(false);
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [providers, setProviders] = useState<ProviderState | null>(null);
   const [serviceCount, setServiceCount] = useState<number | null>(null);
@@ -44,11 +45,15 @@ export default function SettingsScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
+      setDevice(undefined);
+      setDeviceFailed(false);
       repositories.devices
         .get(household.id)
-        .then(setDevice)
+        .then((current) => { if (active) setDevice(current); })
         .catch((e) => {
-          setDevice(null);
+          if (!active) return;
+          setDeviceFailed(true);
           Alert.alert('設定を読み込めませんでした', errorMessage(e) ?? '');
         });
       repositories.shop
@@ -67,6 +72,7 @@ export default function SettingsScreen() {
         .listMembers()
         .then((members) => setMemberCount(members.length))
         .catch(() => setMemberCount(null));
+      return () => { active = false; };
     }, [household.id]),
   );
 
@@ -100,6 +106,16 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
         <LargeTitle title="設定" />
 
+        <GroupHeader title="本体" />
+        <Card>
+          <LinkRow
+            label={device ? '登録済みの本体' : deviceFailed ? '本体情報を再確認' : '本体を登録'}
+            value={device?.name ?? undefined}
+            onPress={() => router.push('/settings/device-pairing')}
+          />
+          <LinkRow label="プッシャー設定" icon={SYMBOLS.service} onPress={() => router.push('/settings/pusher-settings')} />
+        </Card>
+
         <GroupHeader title="動作モード" />
         <Card>
           {device ? (
@@ -116,7 +132,7 @@ export default function SettingsScreen() {
             ))
           ) : (
             <View style={styles.modeRow}>
-              <Text style={styles.muted}>{device === null ? '本体が登録されていません' : '読み込み中'}</Text>
+              <Text style={styles.muted}>{deviceFailed ? '本体情報を読み込めませんでした' : device === null ? '本体が登録されていません' : '読み込み中'}</Text>
             </View>
           )}
         </Card>

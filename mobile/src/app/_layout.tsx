@@ -95,6 +95,7 @@ function RootNavigator() {
           <Stack.Screen name="reservations/edit" />
           <Stack.Screen name="assistant/index" />
           <Stack.Screen name="settings/shop" />
+          <Stack.Screen name="settings/device-pairing" />
           <Stack.Screen name="settings/services" />
           <Stack.Screen name="settings/service" />
           <Stack.Screen name="settings/responses" />
@@ -103,6 +104,7 @@ function RootNavigator() {
           <Stack.Screen name="settings/guidance" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="settings/instructions" />
+          <Stack.Screen name="settings/pusher-settings" />
           <Stack.Screen name="settings/group" />
           <Stack.Screen name="settings/invite" />
         </Stack.Protected>

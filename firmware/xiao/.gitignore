@@ -2,6 +2,9 @@ wifi_config.h
 api_config.h
 upload_config.h
 servo_config.h
+device_config.h
+!tests/stubs/device_config.h
+.device-config-*
 .wifi-config-*
 .api-config-*
 .upload-config-*

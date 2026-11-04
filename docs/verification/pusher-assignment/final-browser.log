@@ -1,0 +1,13 @@
+browser: page loads from the bench, 3D drawn
+browser: all seven screens open, 3D stays on every one
+browser: intercom and exterior menus, measured values, kept across a reload
+browser: check screen: connections, speaker and servo through the board
+browser: servo screen: rack reach, press, edit, undo
+browser: audio screen
+browser: chime registered by the firmware
+browser: another sound is not the chime
+browser: chime to call to end, with the model following
+browser: test call starts and stops
+browser: test screen runs and stops a suite
+browser: narrow window
+PASS: bench page in a real browser
