@@ -11,6 +11,7 @@ import { NotificationToast } from './NotificationToast.web';
 // 幅がこれ以上のときは左にナビを置き、狭いときは下に置く
 const WIDE = 760;
 const CONTENT_MAX = 720;
+const VISIT_DETAIL_MAX = 1040;
 const SIGNED_OUT_MAX = 480;
 
 type NavItem = {
@@ -36,6 +37,8 @@ export function WebShell({ show, children }: { show: boolean; children: ReactNod
   }
 
   const wide = width >= WIDE;
+  // 来客詳細だけ、概要と会話を並べるための幅を取る。
+  const contentMax = /^\/visits\/[^/]+\/?$/.test(pathname) ? VISIT_DETAIL_MAX : CONTENT_MAX;
   const items: NavItem[] = [
     { label: '予約', href: '/', symbol: SYMBOLS.calendar, paths: ['/', '/reservations', '/assistant'], badge: pending },
     { label: '来客', href: '/visits', symbol: SYMBOLS.people, paths: ['/visits'] },
@@ -75,7 +78,7 @@ export function WebShell({ show, children }: { show: boolean; children: ReactNod
     <View style={[styles.root, !wide && styles.rootNarrow]}>
       {wide ? nav : null}
       <View style={styles.contentOuter}>
-        <View style={[styles.content, wide && { maxWidth: CONTENT_MAX }]}>{children}</View>
+        <View style={[styles.content, wide && { maxWidth: contentMax }]}>{children}</View>
       </View>
       {wide ? null : nav}
       <NotificationToast />
