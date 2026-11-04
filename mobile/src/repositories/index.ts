@@ -52,6 +52,7 @@ export interface VisitRepository {
 
 export interface DeviceRepository {
   get(householdId: string): Promise<Device | null>;
+  claim(code: string): Promise<string>;
   update(id: string, patch: DevicePatch): Promise<void>;
 }
 

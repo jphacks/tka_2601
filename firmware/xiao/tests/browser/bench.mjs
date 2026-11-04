@@ -239,6 +239,7 @@ try {
   step('chime to call to end, with the model following');
 
   // Test call, stopped part way.
+  await logged('[VOICE] Call cooldown complete;', 0);
   await go('テスト通話');
   await button('通話を始める').click();
   await button('通話を止める').click();

@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MoreCircle } from '../../components/icons';
@@ -26,15 +26,31 @@ function callRange(visit: Visit): string {
 
 export default function VisitDetailScreen() {
   const { id, back: backTo } = useLocalSearchParams<{ id: string; back?: string }>();
+  // 別の来客を開いたら、その来客の読み込み状態から始める。
+  return <VisitDetailContent key={id} id={id} backTo={backTo} />;
+}
+
+function VisitDetailContent({ id, backTo }: { id: string; backTo?: string }) {
   const insets = useSafeAreaInsets();
   const [data, setData] = useState<{ visit: Visit; messages: VisitMessage[] } | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contentWidth, setContentWidth] = useState(0);
+  // サイドバーを除いた実際の本文幅で判断する。ネイティブは常に縦に並べる。
+  const columns = Platform.OS === 'web' && contentWidth >= 800;
 
   useEffect(() => {
+    let active = true;
     repositories.visits.get(id)
-      .then(setData)
-      .catch((e) => setError(errorMessage(e) ?? '読み込めませんでした'));
+      .then((result) => {
+        if (active) setData(result);
+      })
+      .catch((e) => {
+        if (active) setError(errorMessage(e) ?? '読み込めませんでした');
+      });
+    return () => {
+      active = false;
+    };
   }, [id]);
 
   async function remove() {
@@ -52,7 +68,7 @@ export default function VisitDetailScreen() {
   return (
     <Screen>
       <NavBar
-        title={visit ? visitTitle(visit) : undefined}
+        title={visit && !columns ? visitTitle(visit) : undefined}
         backLabel={backTo ?? '来客'}
         onBack={back}
         right={
@@ -73,33 +89,45 @@ export default function VisitDetailScreen() {
         <CenterMessage>{error ?? 'この来客の記録はありません'}</CenterMessage>
       ) : !visit || !data ? (
         <CenterMessage>
-          <ActivityIndicator color={colors.navy} />
+          <ActivityIndicator color={colors.navy} accessibilityLabel="来客の記録を読み込み中" />
         </CenterMessage>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}>
-          <View style={styles.summary}>
-            <View style={styles.summaryHead}>
-              <IntentBadge label={intentLabel(visit)} emphasis={visit.intent === 'emergency'} />
-              <Text style={styles.date}>
-                {`${monthDay(new Date(visit.chimed_at))}${hourMinute(new Date(visit.chimed_at))}`}
-              </Text>
+        <ScrollView
+          onLayout={Platform.OS === 'web' ? (event) => setContentWidth(event.nativeEvent.layout.width) : undefined}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+        >
+          {columns ? (
+            <Text accessibilityRole="header" style={styles.desktopTitle}>{visitTitle(visit)}</Text>
+          ) : null}
+          <View style={columns && styles.columns}>
+            <View style={[styles.summary, columns && styles.summaryWide]}>
+              <View style={styles.summaryHead}>
+                <IntentBadge label={intentLabel(visit)} emphasis={visit.intent === 'emergency'} />
+                <Text style={styles.date}>
+                  {`${monthDay(new Date(visit.chimed_at))}${hourMinute(new Date(visit.chimed_at))}`}
+                </Text>
+              </View>
+              <View style={styles.rule} />
+              <View style={styles.facts}>
+                <Fact label="対応" value={outcomeLabel(visit)} strong />
+                <Fact label="終話の理由" value={endReasonLabel(visit.end_reason)} />
+                <Fact label="モード" value={MODE_LABELS[visit.mode]} />
+                <Fact label="通話" value={callRange(visit)} />
+              </View>
             </View>
-            <View style={styles.rule} />
-            <View style={styles.facts}>
-              <Fact label="対応" value={outcomeLabel(visit)} strong />
-              <Fact label="終話の理由" value={endReasonLabel(visit.end_reason)} />
-              <Fact label="モード" value={MODE_LABELS[visit.mode]} />
-              <Fact label="通話" value={callRange(visit)} />
-            </View>
-          </View>
 
-          <Text style={styles.sectionTitle} accessibilityRole="header">
-            会話
-          </Text>
-          <View style={styles.chat}>
-            {data.messages.map((message) => (
-              <Bubble key={message.seq} message={message} />
-            ))}
+            <View style={columns && styles.conversationWide}>
+              <Text style={[styles.sectionTitle, columns && styles.sectionTitleWide]} accessibilityRole="header">
+                会話
+              </Text>
+              <View style={[styles.chat, columns && styles.chatWide]}>
+                {data.messages.length === 0 ? (
+                  <Text style={styles.emptyConversation}>会話の記録はありません</Text>
+                ) : data.messages.map((message) => (
+                  <Bubble key={message.seq} message={message} wide={columns} />
+                ))}
+              </View>
+            </View>
           </View>
         </ScrollView>
       )}
@@ -131,7 +159,7 @@ function Fact({ label, value, strong }: { label: string; value: string; strong?:
 }
 
 // 訪問者は左に白、AI は右に紺、定型音声は右に薄い紺
-function Bubble({ message }: { message: VisitMessage }) {
+function Bubble({ message, wide }: { message: VisitMessage; wide: boolean }) {
   const fromVisitor = message.speaker === 'visitor';
   const bubbleStyle =
     message.speaker === 'visitor' ? styles.visitor : message.speaker === 'ai' ? styles.ai : styles.canned;
@@ -140,7 +168,7 @@ function Bubble({ message }: { message: VisitMessage }) {
   return (
     <View style={[styles.bubbleRow, { alignItems: fromVisitor ? 'flex-start' : 'flex-end' }]}>
       <Text style={styles.speaker}>{SPEAKER_LABELS[message.speaker]}</Text>
-      <View style={[styles.bubble, bubbleStyle]}>
+      <View style={[styles.bubble, wide && styles.bubbleWide, bubbleStyle]}>
         <Text style={[styles.bubbleText, textStyle]}>{message.text}</Text>
       </View>
     </View>
@@ -150,6 +178,10 @@ function Bubble({ message }: { message: VisitMessage }) {
 const styles = StyleSheet.create({
   moreButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.5 },
+  desktopTitle: { marginHorizontal: 24, marginTop: 16, marginBottom: 24, fontSize: 34, fontWeight: '700', color: colors.text },
+  columns: { flexDirection: 'row', alignItems: 'flex-start', gap: 24, paddingHorizontal: 24 },
+  summaryWide: { width: '36%', marginTop: 0, marginHorizontal: 0 },
+  conversationWide: { flex: 1, minWidth: 0 },
   summary: {
     marginTop: 8,
     marginHorizontal: 16,
@@ -164,7 +196,7 @@ const styles = StyleSheet.create({
   facts: { gap: 10 },
   fact: { flexDirection: 'row', gap: 12 },
   factLabel: { width: 88, fontSize: 15, lineHeight: 22, color: colors.textSecondary },
-  factValue: { flex: 1, fontSize: 15, lineHeight: 22, color: colors.text, fontVariant: ['tabular-nums'] },
+  factValue: { flex: 1, minWidth: 0, fontSize: 15, lineHeight: 22, color: colors.text, fontVariant: ['tabular-nums'] },
   factStrong: { fontWeight: '600' },
   sectionTitle: {
     paddingTop: 24,
@@ -175,9 +207,13 @@ const styles = StyleSheet.create({
     color: colors.textTertiary,
   },
   chat: { paddingHorizontal: 16, gap: 14 },
+  sectionTitleWide: { paddingTop: 0, paddingHorizontal: 4 },
+  chatWide: { paddingHorizontal: 0 },
+  emptyConversation: { fontSize: 15, lineHeight: 22, color: colors.textSecondary },
   bubbleRow: { gap: 4 },
   speaker: { paddingHorizontal: 6, fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   bubble: { maxWidth: 280, paddingVertical: 10, paddingHorizontal: 14, borderRadius: radius.bubble },
+  bubbleWide: { maxWidth: '100%' },
   bubbleText: { fontSize: 16, lineHeight: 25 },
   visitor: {
     backgroundColor: colors.card,

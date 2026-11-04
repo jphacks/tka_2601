@@ -95,6 +95,7 @@ function RootNavigator() {
           <Stack.Screen name="reservations/edit" />
           <Stack.Screen name="assistant/index" />
           <Stack.Screen name="settings/shop" />
+          <Stack.Screen name="settings/device-pairing" />
           <Stack.Screen name="settings/services" />
           <Stack.Screen name="settings/service" />
           <Stack.Screen name="settings/responses" />
