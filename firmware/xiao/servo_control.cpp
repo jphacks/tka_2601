@@ -200,7 +200,9 @@ bool verifySettingsRecord() {
   Preferences prefs;
   if (!prefs.begin("monban-servo", true)) return false;
   uint8_t expected[kRecordBytes], stored[kRecordBytes];
-  encodeRecord(expected, angles, pushers, storageGeneration);
+  // Calibration previews may edit angles without saving. Verify the committed
+  // calibration snapshot and leave the user's in-progress edits untouched.
+  encodeRecord(expected, savedAngles, pushers, storageGeneration);
   const bool verified = prefs.getBytesLength(kSlotKeys[storageSlot]) == sizeof(stored) &&
     prefs.getBytes(kSlotKeys[storageSlot], stored, sizeof(stored)) == sizeof(stored) &&
     !memcmp(expected, stored, sizeof(stored));

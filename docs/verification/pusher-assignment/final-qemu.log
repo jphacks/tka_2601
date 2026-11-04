@@ -14,7 +14,7 @@ ok   no network: calls and API checks refuse cleanly
 ok   2 MiB partition erased sector by sector and formatted
 ok   registration starts and cancels
      mic status without I2S data in QEMU: 2
-     speaker without I2S in QEMU: ok=0 speake
+     speaker without I2S in QEMU: ok=0 spe
      loopback without I2S in QEMU: ok=0 microphone_failed
 ok   speaker and loopback report the missing audio, and the board keeps answering
 ok   local wiring saves at revision zero with no PWM; positive USB revisions and unused output are rejected

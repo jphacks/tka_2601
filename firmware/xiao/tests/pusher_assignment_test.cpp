@@ -207,6 +207,32 @@ static void durablePendingGate() {
   assert(fake::servoPins.size() == operations);
 }
 
+static void pendingDuringUnsavedCalibration() {
+  assert(servo_pusher_set_pending(true));
+  const auto journalA = fake::preferenceRecords["monban-servo/pusher-a"];
+  const auto journalB = fake::preferenceRecords["monban-servo/pusher-b"];
+  const auto writes = fake::storageWrites;
+  assert(command("@begin") && command("@set c p 40"));
+  finish();
+  assert(command("@time c 200"));
+  assert(servo_calibration_active() && !servo_call_open());
+  const auto same = current();
+  assert(servo_pusher_apply(&same) == SERVO_CONFIG_UNCHANGED);
+  assert(fake::storageWrites == writes); // Same desired verifies the saved record only.
+  assert(servo_pusher_set_pending(false) && !servo_pusher_pending());
+  assert(servo_calibration_active() && !servo_call_open());
+  assert(command("@get", "\"settings_source\":\"editing\""));
+  assert(command("@get", "\"call_press\":40"));
+  assert(command("@get", "\"call_hold_ms\":200"));
+  assert(command("@get", "\"saved\":{\"call_rest\":160,\"call_press\":35"));
+  assert(fake::preferenceRecords["monban-servo/pusher-a"] == journalA);
+  assert(fake::preferenceRecords["monban-servo/pusher-b"] == journalB);
+  assert(command("@cancel") && !servo_calibration_active());
+  assert(command("@get", "\"call_press\":35"));
+  assert(command("@get", "\"call_hold_ms\":100"));
+  assert(servo_call_open()); servo_call_cancel(); closed();
+}
+
 static void reversedTwoAndSnapshot() {
   // Diagnostics follow the assigned logical start, not the physical output ID.
   auto tests = fake::servoPins.size();
@@ -394,7 +420,7 @@ static void durableFailuresAndLocalTests() {
 }
 
 int main() {
-  localWiringBeforeProvisioning(); migrationAndValidation(); durablePendingGate(); reversedTwoAndSnapshot(); sharedBothProfiles();
+  localWiringBeforeProvisioning(); migrationAndValidation(); durablePendingGate(); pendingDuringUnsavedCalibration(); reversedTwoAndSnapshot(); sharedBothProfiles();
   cancellationAndPowerLoss(); durableFailuresAndLocalTests();
   puts("pusher assignments: v1 migration, physical routing, snapshots, journal, replay, durable pending/shared interlocks and power loss passed");
 }

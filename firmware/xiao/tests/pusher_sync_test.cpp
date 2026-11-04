@@ -87,6 +87,23 @@ static void reported(unsigned revision, const char* error = "null") {
     fprintf(stderr, "expected apply_error=%s in %s\n", error, json.c_str());
   assert(json.find(std::string("\"apply_error\":") + error) != std::string::npos);
 }
+static void initialPairingKeepsLocalWiring() {
+  const auto writes = fake::storageWrites, operations = fake::servoPins.size();
+  for (bool missing : {false, true}) {
+    // A provisioned device can authenticate before it belongs to a household.
+    // That initial diagnostic must not create a pending configuration update.
+    sync(http("{\"paired\":false,\"pusher_settings\":null}"));
+    reported(0, "\"device_unpaired\"");
+    assert(!servo_pusher_pending() && actual().enabled_mask == 3);
+    servo_begin();
+    assert(!servo_pusher_pending() && actual().revision == 0);
+    sync(http(missing ? "{\"paired\":true}" : "{\"paired\":true,\"pusher_settings\":null}"));
+    reported(0);
+    assert(!servo_pusher_pending() && actual().call_start == 1 && actual().call_end == 2);
+    assert(servo_call_open()); servo_call_cancel(); servo_call_close();
+    assert(fake::storageWrites == writes && fake::servoPins.size() == operations);
+  }
+}
 static void conflictSync(const std::string& fallbackResponse, bool expectFallback = true, unsigned firstStatus = 409) {
   static unsigned desiredRevision = 3;
   const auto before = requests.size(), operations = fake::servoPins.size(), writes = fake::storageWrites;
@@ -119,6 +136,7 @@ int main() {
   assert(command("@begin") && command("@time d 0") && command("@time c 100") &&
          command("@time e 100") && command("@time r 100") && command("@save"));
   const auto operations = fake::servoPins.size();
+  initialPairingKeepsLocalWiring();
   // The first response is applied through the real servo validator/journal.
   sync(http(settings(1, 1)));
   assert(actual().revision == 1 && actual().enabled_mask == 1 && actual().call_end == 1);
@@ -155,6 +173,9 @@ int main() {
   sync(http(settings(2, 2))); reported(1, "\"busy\"");
   assert(command("@get", "\"pusher_pending\":true"));
   servo_call_cancel(); servo_call_close(); assert(!servo_call_open());
+  const auto pendingWrites = fake::storageWrites;
+  sync(http("{\"paired\":false,\"pusher_settings\":null}")); reported(1, "\"device_unpaired\"");
+  assert(servo_pusher_pending() && !servo_call_open() && fake::storageWrites == pendingWrites);
   servo_begin(); // Pending new wiring survives power loss before apply.
   pusher_sync_step(false); assert(servo_pusher_pending() && !servo_call_open());
   sync(http("{\"paired\":true,\"pusher_settings\":null}")); reported(1, "\"settings_missing\"");

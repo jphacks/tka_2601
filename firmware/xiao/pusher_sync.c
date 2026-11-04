@@ -122,9 +122,12 @@ void pusher_sync_step(bool network_ready) {
         /* Absence is compatible with legacy devices, but cannot erase an
          * already observed update, including one preserved across restart. */
         if(servo_pusher_pending()) error="settings_missing";
+    } else if(parsed==PUSHER_SETTINGS_UNPAIRED) {
+        /* Provisioning precedes household pairing. No desired update has been
+         * observed here, so retain local wiring and any already durable gate. */
+        error="device_unpaired";
     } else {
-        error=servo_pusher_set_pending(true)?
-            (parsed==PUSHER_SETTINGS_UNPAIRED?"device_unpaired":"invalid_settings_response"):"storage_failed";
+        error=servo_pusher_set_pending(true)?"invalid_settings_response":"storage_failed";
     }
     servo_pusher_config_t actual;
     bool actual_ok=servo_pusher_get(&actual);
