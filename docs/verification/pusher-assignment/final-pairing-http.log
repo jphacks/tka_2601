@@ -1,0 +1,35 @@
+ok 1 - owner can create an invite
+ok 2 - ordinary member joins the first household
+ok 3 - anonymous claim is rejected without consuming the code
+ok 4 - service role cannot use the resident claim RPC
+ok 5 - authenticated user without household receives PT403
+ok 6 - invalid code 5 receives PT404
+ok 7 - invalid code 6 receives PT404
+ok 8 - invalid code 7 receives PT404
+ok 9 - invalid code 8 receives PT404
+ok 10 - unpaired device is invisible under resident RLS
+ok 11 - pairing code table is not readable through Data API
+ok 12 - pairing code table is not readable through Data API
+ok 13 - administrator registration is not exposed as a public RPC
+ok 14 - lowercase, spaces and hyphen claim succeeds
+ok 15 - claim persists the actual household association
+ok 16 - same-household member can read the paired device
+ok 17 - other household cannot read the paired device
+ok 18 - used code still returns PT404 for the already-paired household
+ok 19 - used code cannot be replayed by another household
+ok 20 - other household update affects no device
+ok 21 - resident cannot directly overwrite household ownership
+ok 22 - resident cannot read the device authentication key table
+ok 23 - simultaneous cross-household claims have exactly one winner
+ok 24 - concurrent claim persists the winner without later overwrite
+ok 25 - lingering code cannot transfer an already-owned device
+ok 26 - failed ownership transfer rolls back code consumption
+ok 27 - ordinary member cannot add a second device to an already-paired household
+ok 28 - second-device rejection preserves the existing paired device
+ok 29 - second-device rejection preserves the code for an empty household
+ok 30 - simultaneous distinct-code claims in one household have one success and one PT409
+ok 31 - same-household race pairs only its winner
+ok 32 - losing concurrent code remains usable by another empty household
+ok 33 - database contains exactly one device for the raced household
+PASS: 33 real local HTTP/Auth/RPC/RLS checks; cleanup follows
+Cleanup verified: no fixtures from this run remain

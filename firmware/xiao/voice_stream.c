@@ -26,6 +26,7 @@ typedef struct {
 } call_t;
 static call_t call;
 static volatile bool busy, start_requested, stop_requested, recovery_required;
+static volatile bool recovery_confirm_requested;
 /* Only the voice task advances the timer; console callers can read it. */
 static _Atomic bool cooldown_active;
 static _Atomic uint32_t cooldown_began;
@@ -33,12 +34,15 @@ static volatile uint8_t probe_requested;
 enum { PROBE_API=1, PROBE_SPEAKER, PROBE_LOOPBACK };
 
 bool voice_stream_busy(void) { return busy; }
-bool voice_stream_recovery_required(void) { return recovery_required; }
+bool voice_stream_recovery_required(void) { return recovery_required || servo_recovery_required(); }
+void voice_stream_confirm_recovery(void) {
+    if(!busy && !servo_recovery_required() && !servo_motion_busy() && !servo_test_busy()) recovery_confirm_requested=true;
+}
 void voice_stream_request_call(void) {
     if (cooldown_active && (uint32_t)(net_now_ms()-cooldown_began)<VOICE_CHIME_COOLDOWN_MS)
         xlog("[VOICE] Call ignored during post-call cooldown.\n");
-    else if (!recovery_required) start_requested=true;
-    else xlog("[VOICE] Recovery required; check intercom and reset the board before a new call.\n");
+    else if (!voice_stream_recovery_required()) start_requested=true;
+    else xlog("[VOICE] Recovery required; confirm the intercom is idle with @confirm before a new call.\n");
 }
 void voice_stream_request_stop(void) { stop_requested=true; }
 void voice_stream_request_api_probe(void) { probe_requested=PROBE_API; }
@@ -217,7 +221,7 @@ static bool await_call_started(void)
     uint32_t start=net_now_ms();
     while (!stop_requested && net_voice_ready() && !call_time_limit_reached() && net_now_ms()-start<65000u) {
         servo_call_status_t status=servo_call_status();
-        if (status==SERVO_CALL_FAILED) return false;
+        if (status==SERVO_CALL_FAILED || status==SERVO_CALL_MANUAL_CHECK_REQUIRED) return false;
         if (status==SERVO_CALL_STARTED) {
             phase(CONNECT_AGENT);
             xlog("[VOICE] Call button operation complete; now connecting voice agent.\n");
@@ -342,7 +346,7 @@ static bool end_on_error(void)
     while (net_now_ms()-start<65000u) {
         servo_call_status_t status=servo_call_status();
         if (status==SERVO_CALL_ENDED) return true;
-        if (status==SERVO_CALL_FAILED) return false;
+        if (status==SERVO_CALL_FAILED || status==SERVO_CALL_MANUAL_CHECK_REQUIRED) return false;
         net_sleep_ms(5);
     }
     return false;
@@ -383,7 +387,7 @@ static bool run_call(uint32_t session)
         if (call_time_limit_reached()) { reason="device_time_limit"; break; }
         if (call.state==ENDING) {
             servo_call_status_t status=servo_call_status();
-            if (status==SERVO_CALL_FAILED) { reason="end_button_failed"; break; }
+            if (status==SERVO_CALL_FAILED || status==SERVO_CALL_MANUAL_CHECK_REQUIRED) { reason="end_button_failed"; break; }
             if (status==SERVO_CALL_ENDED) {
                 voice_header_t h={.type=VOICE_CALL_ENDED,.session=call.session,.turn=call.turn};
                 /* A server disconnect after receiving its final ACK is harmless. */
@@ -438,10 +442,10 @@ cleanup:
         xlog("[VOICE] %s; chime detection rearmed.\n",success?"Call ended":"Call stopped");
         return true;
     }
-    /* Cannot prove the intercom call ended: hold capture muted until reset. */
+    /* Keep capture muted until an explicit idle confirmation succeeds. */
     recovery_required=true;
     busy=false; // Closed transports are free for diagnostics; new calls remain inhibited.
-    xlog("[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and reset the board. Diagnostics available.\n");
+    xlog("[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and confirm idle with @confirm. Diagnostics available.\n");
     return false;
 }
 /* Waits with backpressure; only false if the speaker failed. */
@@ -534,13 +538,21 @@ void voice_stream_task(void *argument)
         if (event!=observed) {
             observed=event; detected=event && available && available_before;
         }
+        if (recovery_confirm_requested && !busy && !servo_recovery_required() && !servo_motion_busy() && !servo_test_busy()) {
+            recovery_confirm_requested=false;
+            if(!recovery_required || pause_capture(false)) {
+                recovery_required=false; start_requested=false;
+                detected=false; observed=s->event_seq;
+                xlog("[VOICE] Operator confirmed idle; chime detection rearmed.\n");
+            }
+        }
         suppress_cooldown_requests(&detected);
-        if (recovery_required) detected=false;
-        bool manual=!recovery_required && start_requested; start_requested=false;
+        if (voice_stream_recovery_required()) detected=false;
+        bool manual=!voice_stream_recovery_required() && start_requested; start_requested=false;
         uint8_t diagnostic=probe_requested; probe_requested=0;
         if ((detected || manual || diagnostic) && !busy) {
             bool local=diagnostic==PROBE_SPEAKER || diagnostic==PROBE_LOOPBACK;
-            bool ready=local && !detected && !manual ? !recovery_required : available;
+            bool ready=local && !detected && !manual ? !voice_stream_recovery_required() : available;
             if (!ready) {
                 if (diagnostic==PROBE_API) xlog("[API WSS] network_not_ready\n");
                 else if (local) xlog(diagnostic==PROBE_SPEAKER?"[DIAG] speaker busy\n":"[DIAG] loopback busy\n");

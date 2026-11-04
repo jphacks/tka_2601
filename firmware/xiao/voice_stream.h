@@ -6,6 +6,8 @@ extern "C" {
 void voice_stream_task(void *argument);
 bool voice_stream_busy(void);
 bool voice_stream_recovery_required(void);
+/* Called only after the operator's USB confirmation succeeded in servo_control. */
+void voice_stream_confirm_recovery(void);
 void voice_stream_request_call(void);
 void voice_stream_request_stop(void);
 void voice_stream_request_api_probe(void);

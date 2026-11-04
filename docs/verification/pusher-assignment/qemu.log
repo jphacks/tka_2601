@@ -1,0 +1,26 @@
+Sketch uses 1079461 bytes (32%) of program storage space. Maximum is 3342336 bytes.
+Global variables use 198224 bytes (60%) of dynamic memory, leaving 129456 bytes for local variables. Maximum is 327680 bytes.
+ok   boots to setup(); flash mode, octal PSRAM and partition table accepted
+ok   audio_store partition found, and not erased without being asked
+ok   PDM driver accepts the pins and the 2.048 MHz clock configuration
+ok   all five tasks started
+ok   192 KB buffers allocated in PSRAM; I2S speaker driver accepts its configuration
+ok   serial console answers
+ok   LEDC accepts 14 bit, 50 Hz on GPIO 7
+ok   calibration saved to NVS
+ok   three servo pins move, return and stop
+ok   runtime tuning saved and range-checked
+ok   no network: calls and API checks refuse cleanly
+ok   2 MiB partition erased sector by sector and formatted
+ok   registration starts and cancels
+     mic status without I2S data in QEMU: 2
+     speaker without I2S in QEMU: ok=0
+     loopback without I2S in QEMU: ok=0 microphone_failed
+ok   speaker and loopback report the missing audio, and the board keeps answering
+ok   pusher assignment saves with no PWM, rejects invalid/replayed conflicts and unused output
+ok   shared preview starts only after durable incomplete-operation marker
+ok   after power cycle: formatted store still valid
+ok   after power cycle: calibration restored, no PWM at boot
+ok   shared power-loss interlock survives boot; confirmation, physical-2 sharing and swapped mapping work
+ok   after power cycle: tuning restored
+PASS: real ESP32-S3 binary in QEMU

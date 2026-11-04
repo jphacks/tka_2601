@@ -97,6 +97,7 @@ export default function SettingsScreen() {
             value={device?.name ?? undefined}
             onPress={() => router.push('/settings/device-pairing')}
           />
+          <LinkRow label="プッシャー設定" icon={SYMBOLS.service} onPress={() => router.push('/settings/pusher-settings')} />
         </Card>
 
         <GroupHeader title="動作モード" />

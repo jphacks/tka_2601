@@ -1,0 +1,10 @@
+test_chime_starts_the_call (__main__.WholeCall.test_chime_starts_the_call) ... ok
+test_manual_call_full_conversation (__main__.WholeCall.test_manual_call_full_conversation) ... ok
+test_rejected_api_key_is_a_failed_call (__main__.WholeCall.test_rejected_api_key_is_a_failed_call) ... ok
+test_stop_during_greeting_ends_the_intercom_call (__main__.WholeCall.test_stop_during_greeting_ends_the_intercom_call) ... ok
+test_unreachable_server_still_ends_the_intercom_call (__main__.WholeCall.test_unreachable_server_still_ends_the_intercom_call) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 24.171s
+
+OK
