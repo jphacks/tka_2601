@@ -201,20 +201,23 @@ export function RadioRow({
   icon,
   selected,
   onPress,
+  disabled = false,
 }: {
   label: string;
   value?: string;
   icon?: SymbolName;
   selected: boolean;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="radio"
       accessibilityLabel={value ? `${label}、${value}` : label}
-      accessibilityState={{ checked: selected }}
-      style={({ pressed }) => [styles.radioRow, icon && styles.iconRow, pressed && styles.rowPressed]}
+      accessibilityState={{ checked: selected, disabled }}
+      style={({ pressed }) => [styles.radioRow, icon && styles.iconRow, pressed && styles.rowPressed, disabled && styles.disabled]}
     >
       {icon ? <SettingIcon name={icon} /> : null}
       <Text style={[styles.radioLabel, selected && styles.radioSelected]}>{label}</Text>

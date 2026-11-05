@@ -35,7 +35,13 @@ FRAME_BYTES = 640
 MAX_INPUT_FRAMES = 1500
 MAX_OUTPUT_SAMPLES = 16000 * 60
 OUTPUT_WINDOW = 10
-CALL_START_SECONDS = 65
+# Backstop for the wait between `ready` and `call_started`. The deadline counts
+# from `ready`, but the E84 spends time before it even asks the M5 to press the
+# button, and then waits up to 65 s from CALL_START. Worst case from `ready`:
+# M5 TCP connect 10 s + HELLO/READY 10 s + PING/PONG 5 s + 65 s = 90 s. The
+# server must outlast that so the E84 times out first and reports its own
+# m5_* reason instead of this side's time_limit.
+CALL_START_SECONDS = 100
 RESPONSE_SECONDS = 90
 PLAYBACK_SECONDS = 75
 END_SECONDS = 65

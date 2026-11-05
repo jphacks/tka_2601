@@ -190,6 +190,20 @@ def test_unacknowledged_playback_done_is_rejected(backend):
         ws.send_json({'type': 'playback_done', 'turn_id': 0, 'output_id': 0, 'frames': 2, 'samples': 640})
         assert control(ws)['code'] == 'invalid_playback'
 
+def test_call_start_deadline_outlasts_the_device_side_wait():
+    # E84 after `ready`: M5 TCP connect 10 s + HELLO/READY 10 s + PING/PONG 5 s,
+    # then up to 65 s waiting for CALL_STARTED (voice_stream.c). The server is
+    # only a backstop, so it must outlast that total with some slack.
+    device_worst_case = 10 + 10 + 5 + 65
+    assert relay_v2.CALL_START_SECONDS >= device_worst_case + 5
+
+def test_ready_arms_the_call_start_deadline(monkeypatch):
+    monkeypatch.setattr(relay_v2, 'CALL_START_SECONDS', 0.05)
+    with TestClient(api.app) as client, connect(client) as ws:
+        ws.send_json({'type': 'start', 'protocol_version': 2, 'visit_id': str(uuid4()), 'mode': 'away', 'device_key': 'device-key'})
+        assert control(ws) == {'type': 'ready', 'protocol_version': 2}
+        assert control(ws)['code'] == 'time_limit'
+
 def test_input_start_waits_for_first_speech_before_recording_deadline():
     class Socket:
         async def send_json(self, payload): pass

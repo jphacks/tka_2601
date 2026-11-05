@@ -8,6 +8,7 @@ import { Icon } from '../../components/Icon';
 import { Screen } from '../../components/Screen';
 import { Card, GroupHeader, LargeTitle, LinkRow, RadioRow, RowSwitch, Separator, SettingIcon } from '../../components/ui';
 import type { Device, DevicePatch } from '../../domain/device';
+import type { ProviderState } from '../../domain/reservation';
 import type { ShopProfile } from '../../domain/shop';
 import { PRIVACY_POLICY_URL } from '../../lib/app';
 import { useHousehold } from '../../lib/auth';
@@ -15,36 +16,54 @@ import { deleteAccount } from '../../lib/authActions';
 import { confirmAction } from '../../lib/confirm';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
+import { features } from '../../lib/features';
+import { integrationRoute, integrationStatus, type Integration, visibleIntegrations } from '../../lib/integrations';
 import { logout } from '../../lib/logout';
 import { BUSINESS_TYPE_LABELS, MODE_LABELS, MODE_ORDER, PROVIDER_LABELS, TONE_LABELS } from '../../lib/labels';
-import { MODE_SYMBOLS, SYMBOLS } from '../../lib/symbols';
+import { MODE_SYMBOLS, SYMBOLS, type SymbolName } from '../../lib/symbols';
 import { colors } from '../../theme';
 
 // 左に札を置く行の区切り線の字下げ
 const ICON_INSET = 56;
 
+const INTEGRATION_SYMBOLS: Record<Integration, SymbolName> = {
+  google_calendar: SYMBOLS.calendar,
+  square: SYMBOLS.card,
+  hotpepper: SYMBOLS.scissors,
+};
+
 export default function SettingsScreen() {
   const household = useHousehold();
   const insets = useSafeAreaInsets();
   const [device, setDevice] = useState<Device | null | undefined>(undefined);
+  const [deviceFailed, setDeviceFailed] = useState(false);
   const [profile, setProfile] = useState<ShopProfile | null>(null);
+  const [providers, setProviders] = useState<ProviderState | null>(null);
   const [serviceCount, setServiceCount] = useState<number | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
+      setDevice(undefined);
+      setDeviceFailed(false);
       repositories.devices
         .get(household.id)
-        .then(setDevice)
+        .then((current) => { if (active) setDevice(current); })
         .catch((e) => {
-          setDevice(null);
+          if (!active) return;
+          setDeviceFailed(true);
           Alert.alert('設定を読み込めませんでした', errorMessage(e) ?? '');
         });
       repositories.shop
         .getProfile(household.id)
         .then(setProfile)
         .catch(() => setProfile(null));
+      repositories.providers
+        .getState()
+        .then(setProviders)
+        .catch(() => setProviders(null));
       repositories.shop
         .listServices(household.id)
         .then((services) => setServiceCount(services.length))
@@ -53,6 +72,7 @@ export default function SettingsScreen() {
         .listMembers()
         .then((members) => setMemberCount(members.length))
         .catch(() => setMemberCount(null));
+      return () => { active = false; };
     }, [household.id]),
   );
 
@@ -79,10 +99,22 @@ export default function SettingsScreen() {
     }
   }
 
+  const connections = visibleIntegrations(providers, features.externalProviders);
+
   return (
     <Screen waves={false}>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}>
         <LargeTitle title="設定" />
+
+        <GroupHeader title="本体" />
+        <Card>
+          <LinkRow
+            label={device ? '登録済みの本体' : deviceFailed ? '本体情報を再確認' : '本体を登録'}
+            value={device?.name ?? undefined}
+            onPress={() => router.push('/settings/device-pairing')}
+          />
+          <LinkRow label="プッシャー設定" icon={SYMBOLS.service} onPress={() => router.push('/settings/pusher-settings')} />
+        </Card>
 
         <GroupHeader title="動作モード" />
         <Card>
@@ -100,7 +132,7 @@ export default function SettingsScreen() {
             ))
           ) : (
             <View style={styles.modeRow}>
-              <Text style={styles.muted}>{device === null ? '本体が登録されていません' : '読み込み中'}</Text>
+              <Text style={styles.muted}>{deviceFailed ? '本体情報を読み込めませんでした' : device === null ? '本体が登録されていません' : '読み込み中'}</Text>
             </View>
           )}
         </Card>
@@ -128,15 +160,33 @@ export default function SettingsScreen() {
             onPress={() => router.push('/settings/responses')}
           />
           <Separator inset={ICON_INSET} />
-          <LinkRow
-            label="予約先"
-            icon={SYMBOLS.calendar}
-            value={profile ? PROVIDER_LABELS[profile.reservation_provider] : undefined}
-            onPress={() => router.push('/settings/provider')}
-          />
-          <Separator inset={ICON_INSET} />
+          {features.reception ? (
+            <>
+              <LinkRow label="受付" icon={SYMBOLS.door} onPress={() => router.push('/settings/reception')} />
+              <Separator inset={ICON_INSET} />
+            </>
+          ) : null}
           <LinkRow label="通知" icon={SYMBOLS.bell} onPress={() => router.push('/settings/notifications')} />
         </Card>
+
+        {connections.length > 0 ? (
+          <>
+            <GroupHeader title="連携" />
+            <Card>
+              {connections.map((integration, index) => (
+                <Fragment key={integration}>
+                  {index > 0 ? <Separator inset={ICON_INSET} /> : null}
+                  <LinkRow
+                    label={PROVIDER_LABELS[integration]}
+                    icon={INTEGRATION_SYMBOLS[integration]}
+                    value={providers ? integrationStatus(providers, integration) : undefined}
+                    onPress={() => router.push(integrationRoute(integration))}
+                  />
+                </Fragment>
+              ))}
+            </Card>
+          </>
+        ) : null}
 
         <GroupHeader title="外出モード" />
         <Card>

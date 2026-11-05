@@ -19,7 +19,10 @@
 #define VOICE_SETTLE_MS 500u
 #define VOICE_RESPONSE_TIMEOUT_MS 90000u
 #define VOICE_IDLE_TIMEOUT_MS 60000u
-#define VOICE_CALL_TIMEOUT_MS 600000u
+/* docs/spec.md 2.2 / 5.1: leave time to end the intercom before its own limit. */
+#define VOICE_CALL_TIMEOUT_MS 50000u
+#define VOICE_CHIME_COOLDOWN_MS 20000u
+
 /* Automatic recovery after an unproven intercom stop: retry delay doubles up to the cap. */
 #define VOICE_RECOVERY_RETRY_MIN_MS 10000u
 #define VOICE_RECOVERY_RETRY_MAX_MS 30000u

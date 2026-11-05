@@ -22,6 +22,7 @@ def load(name):
 wifi = load("configure_wifi")
 configure_api = load("configure_api")
 upload = load("configure_upload")
+device = load("configure_device")
 HAS_DOTENV = importlib.util.find_spec("dotenv") is not None
 
 
@@ -246,3 +247,20 @@ class UploadConfigurationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeviceConfigurationTests(unittest.TestCase):
+    def test_settings_origin_and_ca_are_explicit(self):
+        values = {"SUPABASE_URL": "https://example.supabase.co", "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_fixture", "DOOR_DEVICE_KEY": "fixture-device-key"}
+        ca = "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n"
+        text = device.configuration(values, ca)
+        self.assertIn("DEVICE_SETTINGS_HOST", text)
+        self.assertIn("DEVICE_SETTINGS_CA_PEM", text)
+        self.assertNotIn("DOOR_API_KEY", text)
+        for bad in ("http://example.com", "https://user:pass@example.com", "https://example.com/path", "https://example.com:444", "https://example.com?key=secret"):
+            with self.subTest(url=bad), self.assertRaises(ValueError):
+                device.configuration({**values, "SUPABASE_URL": bad}, ca)
+        with self.assertRaises(ValueError):
+            device.configuration({**values, "SUPABASE_PUBLISHABLE_KEY": "secret\r\ninjected"}, ca)
+        with self.assertRaises(ValueError):
+            device.configuration(values, "not a CA")

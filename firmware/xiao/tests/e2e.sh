@@ -20,7 +20,7 @@ trap 'rm -rf "${work:?}"' EXIT
 src="$work/src"; mkdir "$src"
 for file in ./*.c ./*.h ./*.cpp; do
   case "$(basename "$file")" in
-    api_config.h|wifi_config.h|upload_config.h|servo_config.h|net_stream.cpp|net_task.cpp|hw_audio.cpp|flash_store.cpp) ;;
+    api_config.h|wifi_config.h|upload_config.h|servo_config.h|device_config.h|net_stream.cpp|net_task.cpp|hw_audio.cpp|flash_store.cpp) ;;
     *) cp "$file" "$src/" ;;
   esac
 done

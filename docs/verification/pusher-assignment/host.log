@@ -1,0 +1,49 @@
+--- audio
+PASS: matching, noise rejection, ring/WAV, reboot recovery, power cuts, queue bounds, CRC
+--- capture
+PASS: voice 30 s limit, 1.2 s silence, pre-roll, gated playback, gaps and overflow
+--- relay
+relay v2 protocol: 1659 checks passed
+--- relay_legacy
+Legacy GitHub relay: greeting, PCM tail, playback gate, VAD retry, early reply and end passed
+--- transport
+voice transport: 11166 checks passed
+--- transport_unpaired
+voice transport: 11166 checks passed
+--- session
+PASS: playback gating, packet identity, final turn, capture errors, safe stop and local sound checks
+--- playback
+PASS: playback prebuffer, credit, backpressure, DMA drain, underrun and stall failure
+--- audio_app
+PASS: enrollment, detection, restore, recording opt-in, upload retry, call mailbox, loopback
+--- door_server
+PASS: authenticated status check, WAV upload, event-ID ACK, deadlines and call priority
+--- pusher_protocol
+PASS: bounded pusher JSON validation, shared/swapped routing and actual status encoding
+--- pusher_sync
+pusher sync: real apply/journal/readback/report, ACK loss, busy race, invalid/stale settings, unknown-storage fault and credential isolation passed
+--- calibration_test
+calibration: bounds, isolation, return, persistence, cancel and timeout passed
+--- exact_servo_test
+exact servo: saved readback, exact press/hold/rest, no deeper/repeated writes, no return extension passed
+--- end_direction_test
+END direction: opposite defaults, no-motion mirror, CALL/timing isolation, PWM, save/reload and busy rejection passed
+--- servo_call_test
+servo calls: delayed single press, one END, cancel, failure reporting and local test isolation passed
+--- pusher_assignment_test
+pusher assignments: v1 migration, physical routing, snapshots, journal, replay, shared interlock and power loss passed
+--- tune
+tune: bounds, persistence and storage failure passed
+--- Python and page tests
+OK
+OK
+OK (skipped=3)
+Web UI: physical mapping, shared port visibility and explicit recovery confirmation passed
+Web UI: no queued/retried test press behind a preview passed
+Web UI: edit, preview retry, mirror, save, undo and timeout passed
+Web UI: chime registration steps passed
+Web UI: call progress passed
+Web UI: 3D events and rack reach passed
+Web UI: intercom table and fit check passed
+Web UI: pins, removed link concepts and vendored files passed
+PASS: all host tests

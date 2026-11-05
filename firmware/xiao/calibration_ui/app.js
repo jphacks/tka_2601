@@ -8,7 +8,7 @@
   }
   const {createElement: h, Fragment, useEffect, useRef, useState, useSyncExternalStore} = React;
   const {Alert, App: AntApp, Button, Card, ConfigProvider, InputNumber, Menu, Modal, Select, Slider, Steps, Tabs, Tag} = antd;
-  const {ServoEditor, errorText, chimeProgress, callProgress, callCompleted, CALL_STEPS, sceneEvent, rackReach} = globalThis.MonbanLogic;
+  const {ServoEditor, pusherLayout, errorText, chimeProgress, callProgress, callCompleted, CALL_STEPS, sceneEvent, rackReach} = globalThis.MonbanLogic;
   const Scene = globalThis.MonbanScene;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
@@ -123,7 +123,7 @@
 
   globalThis.MonbanModel = model; // tests/browser/bench.mjs reads what is on screen from here
   const editor = new ServoEditor(api, sleep, changed);
-  const servoNames = {c: '通話', e: '終了', u: '解錠'};
+  const servoNames = {c: 'プッシャー1', e: 'プッシャー2', u: 'プッシャー3'};
   const servoPins = {c: 'GPIO 7', e: 'GPIO 8', u: 'GPIO 9'};
 
   // --- Small shared pieces
@@ -135,6 +135,13 @@
     style: current < 0 ? {opacity: 0.4} : undefined, items: names.map(title => ({title}))});
   // The firmware refuses calls during servo calibration, so a chime would seem to do nothing.
   const CalibrationNotice = () => h(Notice, {type: 'warning', text: store.device.calibrating ? 'サーボの調整中は通話が始まりません。サーボの画面で保存するか元に戻してください' : ''});
+  const RecoveryNotice = () => {
+    if (!store.device.recovery && !pusherLayout(editor.pusherState).manualCheck) return null;
+    return h(Card, {size: 'small', style: {marginBottom: 16}},
+      h('p', null, '通話状態の確認が必要です。親機を手動で終話し、待機中であることを確認してください。'),
+      h(Button, {disabled: !store.device.connected || store.device.voiceActive || editor.motionBusy || editor.testing || editor.requesting,
+        onClick: () => editor.confirmIdle()}, '親機が待機中であることを確認'));
+  };
   const Talk = () => {
     const messages = store.conversation?.messages || [];
     return messages.length
@@ -298,9 +305,9 @@
   }
   function servoRow(target) {
     const key = 'servo-' + target, running = runningServo === target, device = store.device;
-    return {name: servoNames[target], detail: running ? '動かしています' : servoPins[target], status: running ? 'idle' : answers.get(key) || 'idle',
+    return {name: `${servoNames[target]}（${pusherLayout(editor.pusherState).roles[target]}）`, detail: running ? '動かしています' : servoPins[target], status: running ? 'idle' : answers.get(key) || 'idle',
       action: '1 回押す', ask: moved, key, busy: running, run: () => runServoTest(target),
-      disabled: !!runningServo || !device.connected || device.voiceActive};
+      disabled: !!runningServo || !device.connected || device.voiceActive || pusherLayout(editor.pusherState).manualCheck};
   }
   function CheckRow({row}) {
     return h('div', {className: 'row'},
@@ -320,7 +327,7 @@
     const groups = [
       {title: 'つながり', rows: [diagnosticRow('usb', 'USB', '確認'), diagnosticRow('wifi', 'Wi-Fi', '確認'), diagnosticRow('api_https', 'サーバー', '確認'), diagnosticRow('api_wss', '音声の接続', '確認')]},
       {title: '音', rows: [micRow(), diagnosticRow('speaker', 'スピーカー', '鳴らす', heard), diagnosticRow('loopback', 'マイク → スピーカー', '録音して再生', heard)]},
-      {title: 'サーボ', rows: ['c', 'e', 'u'].map(servoRow)},
+      {title: 'サーボ', rows: pusherLayout(editor.pusherState).targets.map(servoRow)},
       {title: '通しの確認', rows: [
         {key: 'chime', name: 'チャイム', detail: mic?.model ? `登録済み / 検知 ${mic.detected} 回` : '未登録', status: mic?.detected ? 'ok' : 'idle', link: '#chime', action: '登録へ'},
         {key: 'call', name: 'テスト通話', detail: done ? '通話が最後まで終わった' : '未確認', status: done ? 'ok' : 'idle', link: '#call', action: '通話へ'},
@@ -333,14 +340,15 @@
         h(Button, {type: 'primary', size: 'large', disabled: !device.connected || !!store.diagnostics?.running,
           onClick: () => runAllConnections().catch(error => { checkMessage = error.message; changed(); })}, '通信をまとめて確認')),
       h('div', {style: {marginBottom: 16}}, h(Meter, {value: count * 100 / rows.length, label: `${count} / ${rows.length} 確認済み`})),
-      h(Notice, {text: device.recovery ? '通話の状態が不明です。本体が自動で復旧を試みています。続く場合はインターホンを確かめて本体をリセットしてください' : checkMessage}),
+      h(RecoveryNotice),
+      h(Notice, {text: checkMessage || editor.message}),
       h('div', {className: 'grid'}, groups.map(group => h(Card, {key: group.title, size: 'small', title: group.title},
         group.rows.map(row => h(CheckRow, {key: row.key, row}))))));
   }
 
   // --- Servo page
   const holdField = {c: 'call_hold_ms', e: 'end_hold_ms', u: 'unlock_hold_ms'};
-  function StepControl({label, value, min, max, step, text, write, commit, less, more}) {
+  function StepControl({label, value, min, max, step, text, write, commit, less, more, disabled}) {
     const timer = useRef(null);
     const nudge = sign => {
       write(clamp(value + sign * step, min, max));
@@ -349,8 +357,8 @@
     };
     return h('div', {className: 'step-control'},
       h('div', {className: 'top'}, h('label', null, label),
-        h(Button, {'aria-label': less, onClick: () => nudge(-1)}, '−'), h('output', null, text(value)), h(Button, {'aria-label': more, onClick: () => nudge(1)}, '＋')),
-      h(Slider, {min, max, step, value, tooltip: {open: false}, 'aria-label': label, onChange: write, onChangeComplete: commit}));
+        h(Button, {'aria-label': less, disabled, onClick: () => nudge(-1)}, '−'), h('output', null, text(value)), h(Button, {'aria-label': more, disabled, onClick: () => nudge(1)}, '＋')),
+      h(Slider, {min, max, step, value, disabled, tooltip: {open: false}, 'aria-label': label, onChange: write, onChangeComplete: commit}));
   }
   function Gauge({rest, press}) {
     const point = degrees => { const a = Math.PI * (1 - degrees / 180); return [Math.round(160 + 118 * Math.cos(a)), Math.round(160 - 118 * Math.sin(a))]; };
@@ -371,8 +379,9 @@
   }
   function ServoPage() {
     useStore();
-    const [target, setTarget] = useState('c');
+    const [requestedTarget, setTarget] = useState('c');
     const device = store.device;
+    const layout = pusherLayout(editor.pusherState, requestedTarget), target = layout.target;
     if (!editor.values) return h(Fragment, null, h('div', {className: 'head'}, h('h1', null, 'サーボ調整')), h('div', {className: 'sub'}, device.connected ? '本体の設定を読んでいます' : 'XIAO の接続を待っています'));
     const {rest, press} = editor.values[target];
     const angle = (key, label) => ({label, min: 0, max: 180, step: 1, value: editor.values[target][key], text: v => v + '°', less: label + 'を 1° 減らす', more: label + 'を 1° 増やす',
@@ -381,7 +390,7 @@
     const time = (field, label, min, max) => ({label, min, max, step: 100, value: editor.values[field], text: v => (v / 1000).toFixed(1) + ' 秒', less: label + 'を短く', more: label + 'を長く',
       write: v => editor.setTimingLocal(field, v), commit: () => editor.commitTiming(field)});
     const controls = [angle('rest', '待機位置'), angle('press', '押す位置'), time(holdField[target], '押す時間', 100, 2000), time('return_ms', '戻す時間', 100, 3000)];
-    if (target === 'c') controls.push(time('call_delay_ms', '押す前の待ち時間', 0, 30000));
+    if (target === layout.start) controls.push(time('call_delay_ms', '通話開始前の待ち時間', 0, 30000));
     const reach = reachText(target, Math.abs(press - rest));
     return h(Fragment, null,
       h('div', {className: 'head'}, h('h1', null, 'サーボ調整'),
@@ -389,8 +398,11 @@
         h(Button, {size: 'large', disabled: !editor.dirty, onClick: () => editor.undo()}, '元に戻す'),
         h(Button, {size: 'large', type: 'primary', disabled: !editor.dirty || !device.connected, onClick: () => editor.save()}, '本体に保存')),
       h(Notice, {text: editor.message || (editor.motionError ? errorText(editor.motionError) : '')}),
+      h(RecoveryNotice),
+      h('p', {className: 'sub'}, `現在の役割：${servoNames[target]}は${layout.roles[target]}。設定の割り当てはスマホアプリで変更します。`),
+      layout.pending ? h(Notice, {type: 'warning', text: 'プッシャー設定の反映を待っています。操作が終わってから本体が切り替えます。'}) : null,
       h(Tabs, {activeKey: target, type: 'card', onChange: key => { setTarget(key); if (model.scene) model.scene.look({c: 'call', e: 'end', u: 'unlock'}[key]); },
-        items: ['c', 'e', 'u'].map(key => ({key, label: `${servoNames[key]}（${servoPins[key]}）`}))}),
+        items: layout.targets.map(key => ({key, label: `${servoNames[key]}（${servoPins[key]}）`}))}),
       h('div', {className: 'grid'},
         h(Card, {size: 'small'},
           h(Gauge, {rest, press}),
@@ -400,7 +412,8 @@
           h(Button, {type: 'primary', size: 'large', block: true, disabled: !device.connected || device.voiceActive || (!editor.testing && !editor.canTest()),
             onClick: () => editor.testing ? editor.stopTest() : editor.test(target)}, editor.testing ? 'テストを止める' : servoNames[target] + 'を 1 回押す'),
           h(Button, {type: 'link', block: true, style: {marginTop: 4}, disabled: !device.connected || device.voiceActive || !editor.canTest(), onClick: () => editor.mirror(target)}, '向きを反転')),
-        h(Card, {size: 'small'}, controls.map(control => h(StepControl, {key: target + control.label, ...control})))));
+        h(Card, {size: 'small'}, controls.map(control => h(StepControl, {key: target + control.label, ...control,
+          disabled: !device.connected || device.voiceActive || editor.testing || editor.requesting || layout.manualCheck})))));
   }
 
   // --- Audio page
@@ -517,9 +530,10 @@
         device.voiceActive ? '通話を止める' : '通話を始める')),
       h(Notice, {text: callError}),
       h(CalibrationNotice),
+      h(RecoveryNotice),
       h(Card, {style: {marginBottom: 16}},
         h('div', {role: 'status', 'aria-live': 'polite', style: {fontSize: 22, fontWeight: 700, marginBottom: 16}},
-          device.recovery ? '通話の状態が不明です。本体が自動で復旧を試みています。続く場合はインターホンを確かめて本体をリセットしてください' : device.voiceActive ? device.stage : '待機中'),
+          device.recovery ? '親機を手動で終話し、待機状態を確認してください' : device.voiceActive ? device.stage : '待機中'),
         h(StepBar, {names: CALL_STEPS, current: at})),
       h('div', {className: 'grid'},
         h(Card, {size: 'small', title: '会話', style: {minHeight: 320}}, h(Talk)),
@@ -535,11 +549,13 @@
     const {limit, score, text} = chimeVerdict();
     const fail = error => { virtualError = errorText(error.code || error.message); changed(); };
     const press = letter => { virtualError = ''; api('test', {target: letter}).catch(fail); };
-    const canPress = device.connected && !device.voiceActive;
+    const layout = pusherLayout(editor.pusherState);
+    const canPress = device.connected && !device.voiceActive && !device.recovery && !layout.manualCheck;
     return h(Fragment, null,
       h('div', {className: 'head'}, h('h1', {role: 'status', 'aria-live': 'polite'}, device.voiceActive ? device.stage : '待機中')),
       h(Notice, {text: virtualError}),
       h(CalibrationNotice),
+      h(RecoveryNotice),
       target === 'qemu' ? h(Notice, {type: 'info', text: 'QEMU に音声と Wi-Fi はありません。サーボの動きを試せます'}) : null,
       simulated && mic && !mic.model ? h(Notice, {type: 'warning', text: 'チャイムが未登録です。先にチャイムの画面で登録すると、鳴らしたときに通話が始まります'}) : null,
       h(Card, {size: 'small', style: {marginBottom: 16}}, h(StepBar, {names: CALL_STEPS, current: at})),
@@ -547,8 +563,7 @@
         h(Button, {type: 'primary', size: 'large', block: true, disabled: !simulated || !canPress, onClick: () => { virtualError = ''; simulate('chime').catch(fail); }}, 'チャイムを鳴らす'),
         h('div', {style: {display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8, marginTop: 8}},
           h(Button, {disabled: !simulated || !canPress, onClick: () => { virtualError = ''; simulate('other').catch(fail); }}, '違う音を鳴らす'),
-          h(Button, {disabled: !canPress, onClick: () => press('c')}, '通話キーを押す'),
-          h(Button, {disabled: !canPress, onClick: () => press('e')}, '終了キーを押す'),
+          layout.targets.filter(key => key !== 'u').map(key => h(Button, {key, disabled: !canPress, onClick: () => press(key)}, servoNames[key] + 'を押す')),
           h(Button, {disabled: !device.voiceActive, onClick: () => consoleCommand('q').catch(fail)}, '通話を止める'))),
       h('div', {className: 'grid'},
         h(Card, {size: 'small', title: '音'},
@@ -671,7 +686,7 @@
     changed();
   });
   every(1000, async () => {
-    if (!store.device.connected || (store.page !== 'servo' && editor.values)) return;
+    if (!store.device.connected || (!['servo', 'check', 'call', 'virtual'].includes(store.page) && editor.values)) return;
     editor.apply(await getJson('/api/state'));
   });
   every(1000, async () => {

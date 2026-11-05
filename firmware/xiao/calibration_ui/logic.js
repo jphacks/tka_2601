@@ -12,9 +12,27 @@
     servo_return_failed: 'サーボを戻せませんでした',
     servo_release_failed: 'サーボの信号を止められませんでした',
     test_not_running: 'テストは終わっています',
+    manual_check_required: '親機が待機中であることを確認してください',
+    recovery_confirmation_failed: '動作が終わってから、親機の待機状態をもう一度確認してください',
+    shared_marker_save_failed: '本体に操作状態を保存できないため、押下を止めました',
+    inactive_pusher: 'このプッシャーは使用しない設定です',
+    pusher_disabled: 'このプッシャーは使用しない設定です',
   };
   const errorText = code => ERROR_TEXT[code] || code;
   const RETRY = new Set(['servo_busy', 'returning_previous_servo']);
+
+  function pusherLayout(state = {}, requested = 'c') {
+    const supported = state.pusher_schema_version === 1;
+    const mask = supported && [1, 2, 3].includes(state.enabled_mask) ? state.enabled_mask : 3;
+    const targets = mask === 1 ? ['c', 'u'] : mask === 2 ? ['e', 'u'] : ['c', 'e', 'u'];
+    const start = supported && state.call_start_pusher === 2 ? 'e' : 'c';
+    const end = supported && state.call_end_pusher === 1 ? 'c' : 'e';
+    const roles = {c: [], e: [], u: ['解錠・USB操作のみ']};
+    roles[start].push('通話開始'); roles[end].push('終話');
+    return {targets, target: targets.includes(requested) ? requested : targets[0], start, end,
+      roles: Object.fromEntries(Object.entries(roles).map(([key, values]) => [key, values.join('・') || '未使用'])),
+      manualCheck: state.manual_check_required === true, pending: state.pusher_pending === true};
+  }
 
   function pickValues(s) {
     return {
@@ -36,6 +54,7 @@
       this.uncommitted = new Map(); // moved on screen, not yet sent to the board
       this.testing = false; this.motionBusy = false; this.requesting = false;
       this.motionError = ''; this.message = ''; this.undoing = false;
+      this.pusherState = {};
     }
     changed() { this.onChange(); }
     apply(state) {
@@ -47,6 +66,7 @@
       this.motionBusy = state.motion_busy;
       this.testing = state.test_busy;
       this.motionError = state.motion_error || '';
+      this.pusherState = state;
       if (!this.dirty) {
         this.values = pickValues(state);
         // After a page reload the board may still hold edits from before it.
@@ -127,9 +147,9 @@
       return true;
     }
     // An edit still on its way would make the press use an angle other than the one on screen.
-    canTest() { return !this.testing && !this.motionBusy && !this.pumping && !this.pending.size && !this.uncommitted.size && !this.requesting; }
+    canTest() { return !pusherLayout(this.pusherState).manualCheck && !this.testing && !this.motionBusy && !this.pumping && !this.pending.size && !this.uncommitted.size && !this.requesting; }
     async test(target) {
-      if (!this.canTest()) return false;
+      if (!this.canTest() || !pusherLayout(this.pusherState).targets.includes(target)) return false;
       this.requesting = true; this.message = '';
       this.changed();
       try {
@@ -148,6 +168,19 @@
     async stopTest() {
       try { await this.api('stop_test'); } catch (error) { this.message = errorText(error.code || error.message); }
       this.changed();
+    }
+    async confirmIdle() {
+      if (this.motionBusy || this.testing || this.pumping || this.requesting) return false;
+      this.requesting = true; this.message = ''; this.changed();
+      try {
+        const state = await this.api('confirm', {confirm: 'INTERCOM_IDLE'});
+        this.apply(state);
+        this.message = '親機の待機状態の確認を記録しました';
+        return true;
+      } catch (error) {
+        this.message = errorText(error.code || error.message);
+        return false;
+      } finally { this.requesting = false; this.changed(); }
     }
     async save() {
       if (this.requesting) return false;
@@ -264,5 +297,5 @@
     return {mm, stroke, gap, needed, over: mm > stroke, short: gap !== null && mm <= needed, depth: gap === null ? 0 : mm - needed};
   }
 
-  globalThis.MonbanLogic = {ServoEditor, pickValues, errorText, chimeProgress, callProgress, callCompleted, CALL_STEPS, sceneEvent, rackReach};
+  globalThis.MonbanLogic = {ServoEditor, pickValues, pusherLayout, errorText, chimeProgress, callProgress, callCompleted, CALL_STEPS, sceneEvent, rackReach};
 })();

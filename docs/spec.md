@@ -60,7 +60,7 @@ MONBAN は、インターホンに後付けして来客に AI が応答するサ
 | FR-7 | 来客時と対応後にスマホアプリへ通知する（[history.md](history.md)） | Must |
 | FR-8 | 住人がアプリで「AI への追加の指示」と「外出時の置き配の許可」を設定し、会話に反映する（[5.6](#56-house_rules)） | Must |
 | FR-9 | 店や家族でグループを作り、招待で参加し、本体をペアリングで結び付ける（[history.md](history.md)。グループと招待は実装済み。ペアリングは Supabase だけで、アプリにコードを入れる画面はない） | － |
-| FR-10 | 店が予約先（MONBAN の予約帳、Google カレンダー、ホットペッパービューティー）を選び、アプリで予約の一覧とカレンダーを見る（[reservations.md](reservations.md)） | Must |
+| FR-10 | 店が予約先（MONBAN の予約帳、Google カレンダー、Square 予約（読み取りのみ）、ホットペッパービューティー）を選び、アプリで予約の一覧とカレンダーを見る（[reservations.md](reservations.md)） | Must |
 | FR-11 | AI がインターホンで受けた予約は仮予約とし、店がアプリの予約一覧で確定する（[reservations.md 2.2](reservations.md#22-仮予約の承認)） | Must |
 | FR-12 | 予約の追加、変更、キャンセル、予約客の到着、本体や予約先の異常をアプリへ通知し、種類ごとにオンオフできる（[reservations.md 4章](reservations.md#4-通知)） | Must |
 | FR-13 | 店がアプリで口調、あいさつ、営業時間、メニュー、予約なしの来客への対応を設定し、会話に反映する（[reservations.md 5章](reservations.md#5-受け答えの設定)。アプリと Supabase まで実装。会話への反映は会話サーバー側が未実装） | Must |
@@ -363,11 +363,12 @@ FastAPI（`backend/voice-agent`）に、PSoC 6 用の WebSocket の受け口 `/a
 | 方向 | 内容 |
 |---|---|
 | PSoC 6 → 中継 | 最初に開始の JSON（`{"type":"start","visit_id":…,"mode":…,"device_key":…}`）を 5 秒以内に送る。続けて 16 kHz・16bit・モノラルの PCM をバイナリで 20 ms（640 B）ずつ |
-| 中継 → PSoC 6 | `{"type":"ready"}`。設定を読み、部屋に入り、エージェントを呼んだ後に送る。PSoC 6 の「2 秒以内につながる」の計測はここまでとする |
+| 中継 → PSoC 6 | `{"type":"ready"}`。設定を読み、部屋に入り、エージェントを呼び、エージェントが部屋に入る（最大 10 秒待つ）のを確かめた後に送る。PSoC 6 の「2 秒以内につながる」の計測は `ready` までとするが、エージェントの参加待ちのため `ready` は最大 10 秒遅れることがある。2 秒を超えた分が参加待ちによるものかを見分けられるよう、`ready` までの所要時間は参加待ちの時間と分けて記録する |
 | 中継 → PSoC 6 | エージェントの声を 16 kHz・16bit・モノラルの PCM にしてバイナリで 20 ms（640 B）ずつ送る |
 | 中継 → PSoC 6 | JSON のイベント。確定した文字起こし（`{"type":"transcript","speaker":"visitor"\|"ai","text":…}`）、エージェントの状態（`{"type":"agent_state","state":"speaking"\|"listening"\|"thinking"}`）、エラー（`{"type":"error","code":…,"message":…}` の後に閉じる） |
 | PSoC 6 → 中継 | 終了の JSON（`{"type":"end"}`）。中継は部屋から抜けて閉じる |
 
+- エラーコードのうち `agent_unavailable`（1011 で閉じる）は、LiveKit に入れない、エージェントを呼べない、エージェントが 10 秒以内に部屋に入らない（`ready` の前）、通話中に最後のエージェントが部屋を抜けた、のいずれかを表す。ほかのコードと上限値は `backend/voice-agent/README.md` にある。
 - 中継は LiveKit の Python SDK で部屋に参加し、PSoC 6 の音を音声トラックとして流し、エージェントの音声トラックを受けて 16 kHz に変換する。エージェントが話していない間の無音は送らない。
 - 文字起こしは、エージェントが流す `lk.transcription` のうち確定したものを JSON にして渡す。`speaker` の値は Supabase の `visit_messages.speaker` と同じにした。
 - 認証は今の API キー（`Authorization: Bearer`）を使う。デバイス鍵は、家の設定を読むことと会話の文字を書くことに使う。どちらも Supabase に届かなくても会話はできる。
