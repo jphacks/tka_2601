@@ -29,6 +29,15 @@ export function dayKey(date: Date): string {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
 }
 
+// 今日 10:42、昨日 17:03、11月2日 17:03。読めない日時はそのまま返す
+export function relativeDateTime(value: string, now: Date = new Date()): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
+  const day = days === 0 ? '今日' : days === 1 ? '昨日' : `${date.getMonth() + 1}月${date.getDate()}日`;
+  return `${day} ${hourMinute(date)}`;
+}
+
 // 14:32、9:02
 export function hourMinute(date: Date): string {
   return `${date.getHours()}:${pad(date.getMinutes())}`;

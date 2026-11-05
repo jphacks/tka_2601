@@ -35,6 +35,9 @@ export const SYMBOLS = {
   privacy: { ios: 'hand.raised', android: 'privacy_tip' },
   logout: { ios: 'rectangle.portrait.and.arrow.right', android: 'logout' },
   trash: { ios: 'trash', android: 'delete' },
+  door: { ios: 'door.left.hand.closed', android: 'door_front' },
+  card: { ios: 'creditcard', android: 'credit_card' },
+  scissors: { ios: 'scissors', android: 'content_cut' },
 } satisfies Record<string, SymbolName>;
 
 const INTENT_SYMBOLS: Record<Intent, SymbolName> = {

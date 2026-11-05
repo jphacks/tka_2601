@@ -99,7 +99,9 @@ function RootNavigator() {
           <Stack.Screen name="settings/services" />
           <Stack.Screen name="settings/service" />
           <Stack.Screen name="settings/responses" />
-          <Stack.Screen name="settings/provider" />
+          <Stack.Screen name="settings/integrations/[provider]" />
+          <Stack.Screen name="settings/reception" />
+          <Stack.Screen name="settings/guidance" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="settings/instructions" />
           <Stack.Screen name="settings/pusher-settings" />

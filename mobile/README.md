@@ -130,7 +130,8 @@ App Store Connect のアプリの ID は `eas.json` の `submit.production.ios.a
 | 環境変数 | 機能 | 有効にする前に要ること |
 |---|---|---|
 | `EXPO_PUBLIC_FEATURE_ASSISTANT` | 自然言語の入力 | Edge Function「assistant」から Ollama に届く経路 |
-| `EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS` | 予約先の Google カレンダーと Square | OAuth のクライアントとシークレット |
+| `EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS` | 連携の Google カレンダーと Square | OAuth のクライアントとシークレット |
+| `EXPO_PUBLIC_FEATURE_RECEPTION` | 受付の案内文と、受付での Google カレンダーの照合 | Edge Function「door」のシークレット（`DOOR_API_BASE_URL`、`DOOR_API_KEY`、`DOOR_ALLOWED_HOUSEHOLD_IDS`） |
 | `EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN` | Apple と Google のログイン | Supabase の Auth の設定と、削除時の Apple のトークンの失効 |
 
 審査で見られる点は次のとおり実装している。

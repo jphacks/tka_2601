@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { type AppNotification, notificationTarget } from '../domain/notification';
 import { useAuth } from '../lib/auth';
 import { useBadges } from '../lib/badges';
+import { INTEGRATION_ERROR_ROUTE } from '../lib/integrations';
 import { repositories } from '../lib/container';
 import { emitNotificationReceived } from '../lib/notificationEvents.web';
 import { colors, radius } from '../theme';
@@ -90,7 +91,7 @@ export function NotificationToast() {
     const target = notificationTarget(notification.data, notification.kind);
     if (target?.type === 'reservation') router.push({ pathname: '/reservations/[id]', params: { id: target.id } });
     else if (target?.type === 'visit') router.push({ pathname: '/visits/[id]', params: { id: target.id } });
-    else if (target?.type === 'provider') router.push('/settings/provider');
+    else if (target?.type === 'provider') router.push(INTEGRATION_ERROR_ROUTE);
     else router.push('/notifications');
   }
 

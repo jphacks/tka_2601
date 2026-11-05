@@ -23,6 +23,7 @@
 | `functions/calendar-sync/` | pg_cron が1分ごとに呼び、Google カレンダーの差分を読んで通知する Edge Function |
 | `functions/assistant/` | 自然言語の入力を変更の案にする Edge Function。書き込みはしない |
 | `functions/account/` | アカウントを削除する Edge Function（`docs/reservations.md` 3.3） |
+| `functions/door/` | ボイスバックエンド（v1.1.0）の受付設定・来店履歴・Google カレンダー連携を中継する Edge Function。シークレットは `DOOR_API_BASE_URL`、`DOOR_API_KEY`、`DOOR_ALLOWED_HOUSEHOLD_IDS` |
 | `functions/device/contract.ts` | 本体と中継（ボイスエージェント）に渡す形。仕様が変わったらここを直す |
 | `functions/_shared/assistant/` | 解析器の入口（`IntentParser`）、Ollama の実装、解析結果を案に変換する処理 |
 | `functions/_shared/` | 予約先の共通の入口と実装（予約帳、Google カレンダー、Square）、通知の配信、Expo への送信、更新トークンの暗号化 |

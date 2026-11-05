@@ -35,6 +35,9 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   square_not_connected: 'Square の接続が済んでいません。',
   square_reauth_required: 'Square にログインし直してください。',
   square_unavailable: 'Square に接続できません。',
+  door_not_configured: '受付の接続先が設定されていません。',
+  door_unavailable: '受付に接続できません。',
+  door_unauthorized: '受付に接続できません。',
 };
 
 const KNOWN_ERRORS: readonly (readonly [RegExp, string])[] = [

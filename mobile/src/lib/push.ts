@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 
 import { notificationTarget } from '../domain/notification';
 import { repositories } from './container';
+import { INTEGRATION_ERROR_ROUTE } from './integrations';
 
 // アプリを開いているあいだに届いた通知も、バナーで出す
 Notifications.setNotificationHandler({
@@ -69,7 +70,7 @@ export function usePushNotifications(userId: string | null) {
     } else if (target?.type === 'visit') {
       router.push({ pathname: '/visits/[id]', params: { id: target.id } });
     } else if (target?.type === 'provider') {
-      router.push('/settings/provider');
+      router.push(INTEGRATION_ERROR_ROUTE);
     } else {
       router.push('/notifications');
     }

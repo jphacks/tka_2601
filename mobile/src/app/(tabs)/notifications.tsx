@@ -19,6 +19,7 @@ import { useLiveRefresh } from '../../lib/liveRefresh';
 import { repositories } from '../../lib/container';
 import { errorMessage } from '../../lib/errors';
 import { dayKey, hourMinute, sectionTitle } from '../../lib/format';
+import { INTEGRATION_ERROR_ROUTE } from '../../lib/integrations';
 import { notificationSymbol } from '../../lib/symbols';
 import { colors, radius } from '../../theme';
 
@@ -44,7 +45,7 @@ function open(notification: AppNotification) {
   } else if (target?.type === 'visit') {
     router.push({ pathname: '/visits/[id]', params: { id: target.id, back: '通知' } });
   } else if (target?.type === 'provider') {
-    router.push('/settings/provider');
+    router.push(INTEGRATION_ERROR_ROUTE);
   }
 }
 

@@ -6,6 +6,7 @@ import type { Device, DevicePatch } from '../domain/device';
 import type { Household, InvitePreview, Member } from '../domain/group';
 import type { AppNotification, NotificationKind, NotificationPreference } from '../domain/notification';
 import type { PusherConfig, PusherSettings } from '../domain/pusher';
+import type { ReceptionCalendar, ReceptionEvent, ReceptionGoogle, ReceptionVisit } from '../domain/reception';
 import type {
   DateRange,
   GoogleCalendar,
@@ -71,6 +72,22 @@ export interface ShopRepository {
   removeService(id: string): Promise<void>;
 }
 
+export interface ReceptionRepository {
+  // ボイスバックエンドが通話を受けられるか
+  isReady(): Promise<boolean>;
+  // 来店した人への案内文（1〜300 字）
+  getGuidance(): Promise<string>;
+  saveGuidance(text: string): Promise<void>;
+  listVisits(): Promise<ReceptionVisit[]>;
+  getGoogle(): Promise<ReceptionGoogle>;
+  // Google の同意画面の URL を返す。開いたあと、getGoogle で接続できたか確かめる
+  startGoogleLogin(): Promise<string>;
+  logoutGoogle(): Promise<void>;
+  listGoogleCalendars(): Promise<ReceptionCalendar[]>;
+  selectGoogleCalendar(calendarId: string): Promise<void>;
+  listGoogleEvents(): Promise<ReceptionEvent[]>;
+}
+
 export interface NotificationRepository {
   list(householdId: string, after?: PageCursor): Promise<AppNotification[]>;
   getReadThrough(userId: string): Promise<string | null>;
@@ -113,6 +130,7 @@ export type Repositories = {
   pusherSettings: PusherSettingsRepository;
   shop: ShopRepository;
   notifications: NotificationRepository;
+  reception: ReceptionRepository;
   assistant: AssistantRepository;
   groups: GroupRepository;
   pushTokens: PushTokenRepository;
