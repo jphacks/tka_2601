@@ -45,10 +45,10 @@ class WholeCall(unittest.TestCase):
             self.assertNotIn("sanitizer", log.lower(), log)
             assert_order(self, log,
                          "[VOICE] Preparing streaming call.",
+                         "[VOICE] Server ready: /api/relay protocol 2.",  # the API is proven before the button
                          "[SERVO] CALL press once:",
                          "[SERVO] CALL released;",
                          "[VOICE] Call button operation complete",
-                         "[VOICE] Server ready: /api/relay protocol 2.",
                          "[VOICE] Response 0:",
                          "[VOICE] Output ended: 121 frames",
                          "[VOICE] Playback complete: turn 0.",
@@ -94,16 +94,17 @@ class WholeCall(unittest.TestCase):
             self.assertLess(samples, 120 * 320)
             self.assertEqual(starts, stops)  # the amplifier is off again
 
-    def test_unreachable_server_still_ends_the_intercom_call(self):
+    def test_unreachable_server_never_presses_the_intercom_button(self):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         code, log = firmware(port, "manual")
         self.assertEqual(code, 0, log)
-        assert_order(self, log, "[SERVO] CALL released;", "[VOICE] TLS connection failed.",
-                     "[VOICE] Call ending: reason=server_connect_failed", "[SERVO] END press once:",
-                     "[VOICE] Call stopped; chime detection rearmed.")
-        self.assertEqual(counters(log)[:3], [1, 1, 0])
+        assert_order(self, log, "[VOICE] TLS connection failed.", "[VOICE] API unreachable (server_connect_failed)",
+                     "[VOICE] Call ending: reason=server_connect_failed", "[VOICE] Call stopped; chime detection rearmed.")
+        self.assertNotIn("[SERVO] CALL press", log)
+        self.assertNotIn("[SERVO] END press", log)
+        self.assertEqual(counters(log)[:3], [0, 0, 0])
 
     def test_rejected_api_key_is_a_failed_call(self):
         saved = api.settings.api_key
@@ -114,7 +115,10 @@ class WholeCall(unittest.TestCase):
         finally:
             object.__setattr__(api.settings, "api_key", saved)
         self.assertEqual(code, 0, log)
-        assert_order(self, log, "[VOICE] Call ending: reason=server_connect_failed", "[SERVO] END press once:")
+        assert_order(self, log, "[VOICE] API unreachable", "[VOICE] Call ending: reason=server_connect_failed",
+                     "[VOICE] Call stopped; chime detection rearmed.")
+        self.assertNotIn("[SERVO] CALL press", log)
+        self.assertEqual(counters(log)[:3], [0, 0, 0])
 
 
 if __name__ == "__main__":

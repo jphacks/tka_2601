@@ -22,3 +22,11 @@
 /* docs/spec.md 2.2 / 5.1: leave time to end the intercom before its own limit. */
 #define VOICE_CALL_TIMEOUT_MS 50000u
 #define VOICE_CHIME_COOLDOWN_MS 20000u
+
+/* Automatic recovery after an unproven intercom stop: retry delay doubles up to the cap. */
+#define VOICE_RECOVERY_RETRY_MIN_MS 10000u
+#define VOICE_RECOVERY_RETRY_MAX_MS 30000u
+/* One END press takes at most 2 s hold + 3 s return; this bounds a stalled servo. */
+#define VOICE_RECOVERY_CONFIRM_MS 15000u
+/* Failed attempts are logged at most this often (the first one always is). */
+#define VOICE_RECOVERY_LOG_MS 60000u

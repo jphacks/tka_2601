@@ -31,6 +31,12 @@ static volatile bool recovery_confirm_requested;
 static _Atomic bool cooldown_active;
 static _Atomic uint32_t cooldown_began;
 static volatile uint8_t probe_requested;
+/* Only the voice task owns recovery timers. An uncertain shared button always
+ * remains locked for operator confirmation; distinct END may be retried. */
+static uint32_t recovery_began, recovery_logged, recovery_delay_ms, recovery_attempts;
+static bool recovery_log_seen, recovery_end_pending;
+/* Legacy v1 starts greeting at READY, so keep its button-first order. */
+#define VOICE_SERVER_FIRST (VOICE_RELAY_PROTOCOL!=1)
 enum { PROBE_API=1, PROBE_SPEAKER, PROBE_LOOPBACK };
 
 bool voice_stream_busy(void) { return busy; }
@@ -218,7 +224,7 @@ static bool await_call_started(void)
 {
     /* Up to 30 s before the single press, 2 s holding and 3 s returning.
      * No agent session exists until the button has been released. */
-    uint32_t start=net_now_ms();
+    uint32_t start=net_now_ms(), last_ping=start;
     while (!stop_requested && net_voice_ready() && !call_time_limit_reached() && net_now_ms()-start<65000u) {
         servo_call_status_t status=servo_call_status();
         if (status==SERVO_CALL_FAILED || status==SERVO_CALL_MANUAL_CHECK_REQUIRED) return false;
@@ -226,6 +232,17 @@ static bool await_call_started(void)
             phase(CONNECT_AGENT);
             xlog("[VOICE] Call button operation complete; now connecting voice agent.\n");
             return true;
+        }
+        if (VOICE_SERVER_FIRST) {
+            /* The API session already exists: keep it alive and notice its loss. */
+            voice_packet_t p;
+            int r=voice_transport_poll(&call.server,&p);
+            if (r<0) { call.io_failure="server_connection_lost"; return false; }
+            if (r>0 && !server_packet(&p)) { call.io_failure="server_protocol_error"; return false; }
+            if (net_now_ms()-last_ping>=5000u) {
+                if (!control(VOICE_PING,0,0)) { call.io_failure="server_send_failed"; return false; }
+                last_ping=net_now_ms();
+            }
         }
         net_sleep_ms(1);
     }
@@ -351,6 +368,22 @@ static bool end_on_error(void)
     }
     return false;
 }
+static bool connect_server(const char **reason)
+{
+    *reason="server_connect_failed";
+    if (!voice_transport_server(&call.server)) return false;
+    *reason="server_ready_failed";
+    if (!control(VOICE_HELLO,0,0) || !await_ready()) return false;
+    xlog("[VOICE] Server ready: /api/relay protocol %u.\n",voice_transport_legacy(&call.server)?1u:2u);
+    return true;
+}
+static void enter_recovery(bool end_pending)
+{
+    recovery_began=net_now_ms(); recovery_delay_ms=VOICE_RECOVERY_RETRY_MIN_MS;
+    recovery_attempts=0; recovery_log_seen=false;
+    recovery_end_pending=end_pending;
+    recovery_required=true;
+}
 static bool run_call(uint32_t session)
 {
     memset(&call,0,sizeof(call)); call.session=session; voice_transport_init(&call.server);
@@ -369,15 +402,23 @@ static bool run_call(uint32_t session)
     if (!servo_call_open()) goto cleanup;
     opened=true;
     if (stop_requested) goto cleanup;
+    if (VOICE_SERVER_FIRST) {
+        if (!connect_server(&reason)) {
+            if (!stop_requested) xlog("[VOICE] API unreachable (%s); intercom button not pressed.\n",reason);
+            goto cleanup;
+        }
+        if (stop_requested || !net_voice_ready()) goto cleanup;
+    }
     phase(STARTING); call.began=call.last_server=call.last_ping=net_now_ms();
     call.may_have_answered=button_attempted=true;
     reason="call_button_failed";
     if (!servo_call_press()) goto cleanup;
     xlog("[VOICE] Waiting for one call-button press and release; voice agent not started.\n");
-    if (!await_call_started() || stop_requested) goto cleanup;
-    reason="server_connect_failed";
-    if (!voice_transport_server(&call.server) || !control(VOICE_HELLO,0,0) || !await_ready()) goto cleanup;
-    xlog("[VOICE] Server ready: /api/relay protocol %u.\n",voice_transport_legacy(&call.server)?1u:2u);
+    if (!await_call_started() || stop_requested) {
+        if (call.io_failure) reason=call.io_failure;
+        goto cleanup;
+    }
+    if (!VOICE_SERVER_FIRST && !connect_server(&reason)) goto cleanup;
     reason="agent_start_failed";
     if (stop_requested || call_time_limit_reached() || !control(VOICE_CALL_START,0,0)) goto cleanup;
     phase(WAIT_REPLY);
@@ -442,11 +483,80 @@ cleanup:
         xlog("[VOICE] %s; chime detection rearmed.\n",success?"Call ended":"Call stopped");
         return true;
     }
-    /* Keep capture muted until an explicit idle confirmation succeeds. */
-    recovery_required=true;
+    /* Retry only a distinct END output. The servo's shared-button interlock
+     * remains stronger and can only be cleared by an operator's @confirm. */
+    enter_recovery(!release);
     busy=false; // Closed transports are free for diagnostics; new calls remain inhibited.
-    xlog("[VOICE] Playback/call state uncertain. Recording remains paused. Check intercom and confirm idle with @confirm. Diagnostics available.\n");
+    xlog("[VOICE] Playback/call state uncertain. Recording remains paused. Separate END recovery retries automatically; shared buttons require idle confirmation with @confirm. Diagnostics available.\n");
     return false;
+}
+/* A fresh servo ownership that presses END only, and only while the earlier END is
+ * unconfirmed and the owned configuration has a distinct END. servo_call_open
+ * refuses while a servo is moving or held by a test, so a busy servo means "try later". It never presses CALL and never starts an
+ * agent; with nothing owed it only retries re-arming the microphone. */
+static bool run_recovery(const char **reason)
+{
+    bool ok=true, opened=false;
+    *reason="manual_check_required";
+    if (servo_recovery_required() || servo_motion_busy() || servo_test_busy()) return false;
+    if (recovery_end_pending) {
+        ok=false;
+        *reason="servo_busy";
+        if (!servo_call_open()) goto done;
+        opened=true;
+        /* Ownership prevents mapping changes between this check and END. A
+         * shared toggle cannot prove whether another press would start a call. */
+        servo_pusher_config_t pushers;
+        *reason="manual_check_required";
+        if (!servo_pusher_get(&pushers) || pushers.call_start==pushers.call_end) goto done;
+        *reason="end_button_failed";
+        if (!servo_end_press()) goto done;
+        *reason="end_unconfirmed";
+        uint32_t start=net_now_ms();
+        while (!stop_requested && net_now_ms()-start<VOICE_RECOVERY_CONFIRM_MS) {
+            servo_call_status_t status=servo_call_status();
+            if (status==SERVO_CALL_ENDED) { ok=true; recovery_end_pending=false; break; }
+            if (status==SERVO_CALL_FAILED || status==SERVO_CALL_MANUAL_CHECK_REQUIRED) break;
+            net_sleep_ms(5);
+        }
+        if (stop_requested) *reason="manual_stop";
+    }
+done:
+    if (opened) servo_call_close();
+    if (ok) {
+        *reason="capture_rearm_failed";
+        ok=pause_capture(false);
+    }
+    return ok;
+}
+/* Called by the voice task only when idle. Never overlaps a call or diagnostic. */
+static void recovery_step(void)
+{
+    if (!recovery_required || busy) return;
+    uint32_t now=net_now_ms();
+    if (now-recovery_began<recovery_delay_ms) return;
+    stop_requested=false; busy=true;
+    ++recovery_attempts;
+    const char *reason="";
+    bool cleared=run_recovery(&reason);
+    busy=false;
+    now=net_now_ms();
+    if (cleared) {
+        recovery_required=false;
+        xlog("[VOICE] Call stopped; chime detection rearmed (END operation confirmed after %lu recovery attempt(s)).\n",
+            (unsigned long)recovery_attempts);
+        return;
+    }
+    recovery_began=now;
+    if (recovery_delay_ms<VOICE_RECOVERY_RETRY_MAX_MS) {
+        recovery_delay_ms*=2u;
+        if (recovery_delay_ms>VOICE_RECOVERY_RETRY_MAX_MS) recovery_delay_ms=VOICE_RECOVERY_RETRY_MAX_MS;
+    }
+    if (!recovery_log_seen || now-recovery_logged>=VOICE_RECOVERY_LOG_MS) {
+        recovery_log_seen=true; recovery_logged=now;
+        xlog("[VOICE] Intercom state still uncertain (attempt %lu: %s). Recording remains paused; retry in %lu s.\n",
+            (unsigned long)recovery_attempts,reason,(unsigned long)(recovery_delay_ms/1000u));
+    }
 }
 /* Waits with backpressure; only false if the speaker failed. */
 static bool push_frame(const int16_t *pcm, uint32_t samples, uint32_t start)
@@ -541,7 +651,7 @@ void voice_stream_task(void *argument)
         if (recovery_confirm_requested && !busy && !servo_recovery_required() && !servo_motion_busy() && !servo_test_busy()) {
             recovery_confirm_requested=false;
             if(!recovery_required || pause_capture(false)) {
-                recovery_required=false; start_requested=false;
+                recovery_required=false; recovery_end_pending=false; start_requested=false;
                 detected=false; observed=s->event_seq;
                 xlog("[VOICE] Operator confirmed idle; chime detection rearmed.\n");
             }
@@ -573,7 +683,7 @@ void voice_stream_task(void *argument)
             }
         } else if (diagnostic && busy) {
             xlog(diagnostic==PROBE_API?"[API WSS] busy\n":diagnostic==PROBE_SPEAKER?"[DIAG] speaker busy\n":"[DIAG] loopback busy\n");
-        }
+        } else if (recovery_required) recovery_step();
         available_before=available;
         net_sleep_ms(50);
     }
