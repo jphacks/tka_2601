@@ -2,6 +2,7 @@ export type DatabaseError = { code: string; message: string };
 
 const VISIT_ERROR_STATUS = new Map<string, number>([
   ["42501", 403],
+  ["PT404", 404],
   ["PT409", 409],
   ["22023", 400],
   ["22P02", 400],

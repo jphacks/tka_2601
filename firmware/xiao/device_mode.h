@@ -36,7 +36,8 @@ bool device_mode_apply(device_mode_t mode);
 bool device_mode_store_read(uint8_t *value);
 bool device_mode_store_write(uint8_t value);
 
-/* Periodic mode fetch and PUT /heartbeat. Called by the network task only. */
+/* Periodic mode fetch, PUT /mode-status (the mode actually running, sent only
+ * after a successful fetch) and PUT /heartbeat. Called by the network task only. */
 void device_mode_sync_step(bool network_ready);
 #ifdef __cplusplus
 }

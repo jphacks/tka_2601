@@ -61,6 +61,20 @@ export function modeSettingsBody(device: DeviceSettings) {
   };
 }
 
+export const DEVICE_MODES = ["normal", "omakase", "away", "off"] as const;
+
+// 本体が実際に適用しているモードの報告。本文は {"mode": "..."} だけを受ける。
+// 他の項目や綴りの違いは、報告を取り違えないよう 400 にする
+export function parseModeStatus(body: Record<string, unknown>) {
+  const keys = Object.keys(body);
+  const mode = body.mode;
+  if (keys.length !== 1 || keys[0] !== "mode" || typeof mode !== "string" ||
+    !(DEVICE_MODES as readonly string[]).includes(mode)) {
+    throw new ProviderError(400, "mode は normal・omakase・away・off のどれかだけを送ってください");
+  }
+  return { p_mode: mode };
+}
+
 export type PusherConfig = {
   schema_version: 1;
   enabled_pushers: ["p1"] | ["p2"] | ["p1", "p2"];

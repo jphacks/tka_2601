@@ -2,7 +2,7 @@ import { readJsonObject, reservationErrorResponse } from "../_shared/errors.ts";
 import type { NewNotification } from "../_shared/notify.ts";
 import type { ReservationProvider } from "../_shared/reservation.ts";
 import { reservationNotice } from "../_shared/reservation_notice.ts";
-import { modeSettingsBody, parseAiReservation, parseDeviceRange, parsePusherStatus, pusherSettingsBody, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
+import { modeSettingsBody, parseAiReservation, parseModeStatus, parseDeviceRange, parsePusherStatus, pusherSettingsBody, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
 import { type DatabaseError, visitErrorResponse } from "./errors.ts";
 
 export type DeviceAdmin = {
@@ -54,6 +54,24 @@ export async function handleDeviceRequest(
   if (path.endsWith("/mode-settings")) {
     if (req.method !== "GET") return methodNotAllowed();
     return Response.json(modeSettingsBody(device));
+  }
+
+  if (path.endsWith("/mode-status")) {
+    if (req.method !== "PUT") return methodNotAllowed();
+    const body = await readObject(req);
+    if (body instanceof Response) return body;
+    let report;
+    try {
+      report = parseModeStatus(body);
+    } catch (e) {
+      return reservationErrorResponse(e);
+    }
+    const { data, error } = await admin.rpc("device_report_mode", {
+      p_device_id: device.device_id,
+      ...report,
+    });
+    if (error) return visitErrorResponse(error);
+    return Response.json(data);
   }
 
   if (path.endsWith("/pusher-settings")) {

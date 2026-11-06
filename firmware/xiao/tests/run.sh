@@ -42,6 +42,8 @@ cp tests/stubs/device_config.h "$src/"
   "$work/pusher_protocol.o" "$work/device_http.o" "$work/pusher_sync.o" -o "$work/pusher_sync"; run pusher_sync
 "${C[@]}" $(s device_mode.c device_mode_sync.c device_mode_store_fake.c device_mode_test.c xlog_host.c) \
   "$work/device_http.o" -o "$work/device_mode"; run device_mode
+"${C[@]}" $(s device_mode.c device_mode_sync.c device_mode_store_fake.c device_mode_report_test.c xlog_host.c) \
+  "$work/device_http.o" -o "$work/device_mode_report"; run device_mode_report
 "${C[@]}" $(s visit_report.c visit_report_test.c xlog_host.c) \
   "$work/device_http.o" -o "$work/visit_report"; run visit_report
 rm "$src/device_config.h"

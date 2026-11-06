@@ -17,9 +17,9 @@ static void check(bool condition) { ++checks; assert(condition); }
 
 /* --- Fakes for the network and the voice task. */
 struct net_stream { const char *response; size_t offset; };
-static const char *script[16];
+static const char *script[48];
 static size_t script_count, script_next;
-static char requests[16][512];
+static char requests[48][512];
 static unsigned request_count;
 static bool voice_busy;
 static unsigned opens;
@@ -54,7 +54,7 @@ int net_stream_read(net_stream_t *stream, void *data, size_t capacity)
 }
 void net_stream_close(net_stream_t *stream) { free(stream); }
 
-static char responses[16][512];
+static char responses[48][512];
 static size_t response_count;
 static const char *http(unsigned status, const char *body)
 {
@@ -62,7 +62,7 @@ static const char *http(unsigned status, const char *body)
     snprintf(out,512,"HTTP/1.1 %u X\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",status,strlen(body),body);
     return out;
 }
-static void queue(const char *response) { check(script_count<16); script[script_count++]=response; }
+static void queue(const char *response) { check(script_count<48); script[script_count++]=response; }
 static void forget(void) { script_count=script_next=request_count=response_count=0; }
 static const char *mode_json(const char *mode)
 {
@@ -168,6 +168,16 @@ static unsigned step(uint32_t advance, bool ready)
 {
     unsigned before=opens; fake_now+=advance; device_mode_sync_step(ready); return opens-before;
 }
+/* A fetch that changes the running mode is followed by one PUT /mode-status
+ * (covered in device_mode_report_test.c); acknowledge it without moving the clock. */
+static void settle_report(const char *mode)
+{
+    unsigned before=request_count;
+    queue(http(200,"{\"applied_mode\":\"x\",\"applied_mode_at\":\"2026-11-06T00:00:00Z\"}"));
+    check(step(0,true)==1 && request_is(before,"PUT /functions/v1/device/mode-status HTTP/1.1"));
+    char body[32]; snprintf(body,sizeof(body),"{\"mode\":\"%s\"}",mode);
+    check(strstr(requests[before],body)!=NULL);
+}
 static void sync_cadence_and_last_good(void)
 {
     check(device_http_retry_interval(0)==10000 && device_http_retry_interval(10000)==20000 &&
@@ -182,16 +192,19 @@ static void sync_cadence_and_last_good(void)
     queue(http(200,mode_json(quoted("off"))));
     check(step(1,true)==1 && request_is(0,"GET /functions/v1/device/mode-settings HTTP/1.1"));
     check(device_mode_current()==DEVICE_MODE_OFF && fake_mode_stored && fake_mode_value==DEVICE_MODE_OFF);
+    settle_report("off");
     /* Next step is the first heartbeat; an acknowledged one waits a full minute. */
     queue(http(200,"{\"last_heartbeat_at\":\"2026-11-06T00:00:00Z\"}"));
-    check(step(1,true)==1 && request_is(1,"PUT /functions/v1/device/heartbeat HTTP/1.1"));
-    check(strstr(requests[1],"Content-Length: 0\r\n")!=NULL);
+    check(step(1,true)==1 && request_is(2,"PUT /functions/v1/device/heartbeat HTTP/1.1"));
+    check(strstr(requests[2],"Content-Length: 0\r\n")!=NULL);
     check(step(14000,true)==0);
     /* The app changes the mode: followed at the next 15 s poll. */
     queue(http(200,mode_json(quoted("normal"))));
     check(step(1000,true)==1 && device_mode_current()==DEVICE_MODE_NORMAL && fake_mode_value==DEVICE_MODE_NORMAL);
+    settle_report("normal");
     queue(http(200,mode_json(quoted("away"))));
     check(step(15000,true)==1 && device_mode_current()==DEVICE_MODE_AWAY);
+    settle_report("away");
     /* A malformed value keeps the last good mode (never off), and the poll retries after 10 s. */
     queue(http(200,mode_json(quoted("OFF"))));
     check(step(15000,true)==1 && device_mode_current()==DEVICE_MODE_AWAY && fake_mode_value==DEVICE_MODE_AWAY);
@@ -213,8 +226,10 @@ static void sync_cadence_and_last_good(void)
     /* Recovery: the next successful fetch is followed and polling returns to 15 s. */
     queue(http(200,mode_json(quoted("normal"))));
     check(step(24999,true)==1 && device_mode_current()==DEVICE_MODE_NORMAL && fake_mode_value==DEVICE_MODE_NORMAL);
+    settle_report("normal");
     queue(http(200,mode_json(quoted("away"))));
     check(step(14999,true)==0 && step(1,true)==1 && device_mode_current()==DEVICE_MODE_AWAY);
+    settle_report("away");
 }
 static void unpaired_keeps_last_good(void)
 {

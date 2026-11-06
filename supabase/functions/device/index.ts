@@ -16,6 +16,10 @@
 //     XIAO向け。contract_version、paired、希望設定だけを返し、店舗・適用報告は含めない。
 //   GET /functions/v1/device/mode-settings
 //     XIAO向け。contract_version、paired、mode（normal / omakase / away / off）だけを返す。未ペアは mode が null。
+//   PUT /functions/v1/device/mode-status
+//     XIAO向け。本体が実際に適用しているモードの報告。本文: {"mode": "normal|omakase|away|off"}（他の項目は 400）
+//     → {"applied_mode": "...", "applied_mode_at": "..."}。devices.applied_mode / applied_mode_at だけを書き、
+//       アプリが保存した devices.mode は変えない。未ペアは 409
 //   GET /functions/v1/device/reservations?from=&to=（31 日まで）
 //     → {"provider": "monban", "reservations": [...]}。電話番号とメモは返さない
 //   POST /functions/v1/device/reservations
