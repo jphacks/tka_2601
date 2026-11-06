@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   toAssistantProposal,
+  toDevice,
   toNotification,
   toProviderState,
   toReceptionCalendar,
@@ -154,4 +155,71 @@ test('reception rows from the door backend tolerate missing and wrongly typed fi
   assert.deepEqual(toReceptionCalendar({ id: 'a@example.com' }), { id: 'a@example.com', summary: '' });
   assert.deepEqual(toReceptionEvent({ start: null, eligible: false, name: '休憩' }), { start: null, eligible: false, name: '休憩' });
   assert.equal(toReceptionEvent({ eligible: 1 }).eligible, false);
+});
+
+const deviceRow = {
+  id: 'd1',
+  household_id: 'h1',
+  name: '玄関',
+  mode: 'away',
+  applied_mode: 'off',
+  applied_mode_at: '2026-11-06T01:02:03.456Z',
+  last_heartbeat_at: '2026-11-06T01:05:00Z',
+  away_leave_at_door: true,
+  auto_away: false,
+  extra_instructions: '置き配は不可',
+};
+
+test('device keeps the saved mode, the applied mode and the heartbeat time apart', () => {
+  const device = toDevice(deviceRow);
+  assert.equal(device.mode, 'away');
+  assert.equal(device.applied_mode, 'off');
+  assert.equal(device.applied_mode_at, '2026-11-06T01:02:03.456Z');
+  assert.equal(device.last_heartbeat_at, '2026-11-06T01:05:00Z');
+  assert.equal(device.away_leave_at_door, true);
+  assert.equal(device.auto_away, false);
+  assert.equal(device.extra_instructions, '置き配は不可');
+  assert.equal(device.name, '玄関');
+});
+
+test('a device that never reported has null applied mode and times, not the saved mode', () => {
+  for (const row of [
+    { ...deviceRow, applied_mode: null, applied_mode_at: null, last_heartbeat_at: null },
+    { ...deviceRow, applied_mode: undefined, applied_mode_at: undefined, last_heartbeat_at: undefined },
+  ]) {
+    const device = toDevice(row);
+    assert.equal(device.mode, 'away');
+    assert.equal(device.applied_mode, null);
+    assert.equal(device.applied_mode_at, null);
+    assert.equal(device.last_heartbeat_at, null);
+  }
+});
+
+test('an unknown applied mode becomes unknown with no time, and an applied time without a mode is dropped', () => {
+  const unknown = toDevice({ ...deviceRow, applied_mode: 'stop' });
+  assert.equal(unknown.applied_mode, null);
+  assert.equal(unknown.applied_mode_at, null);
+  assert.equal(unknown.mode, 'away');
+  const timeOnly = toDevice({ ...deviceRow, applied_mode: null });
+  assert.equal(timeOnly.applied_mode, null);
+  assert.equal(timeOnly.applied_mode_at, null);
+  // 知らない保存モードは、他の変換と同じく通常に寄せるが、適用モードは混ぜない
+  const future = toDevice({ ...deviceRow, mode: 'future_mode', applied_mode: 'omakase' });
+  assert.equal(future.mode, 'normal');
+  assert.equal(future.applied_mode, 'omakase');
+});
+
+test('every applied mode passes through unchanged', () => {
+  for (const mode of ['normal', 'omakase', 'away', 'off']) {
+    assert.equal(toDevice({ ...deviceRow, applied_mode: mode }).applied_mode, mode);
+  }
+});
+
+test('device flags and text fall back safely', () => {
+  const device = toDevice({ id: 'd1' });
+  assert.equal(device.away_leave_at_door, false);
+  assert.equal(device.auto_away, false);
+  assert.equal(device.extra_instructions, '');
+  assert.equal(device.name, null);
+  assert.equal(device.last_heartbeat_at, null);
 });

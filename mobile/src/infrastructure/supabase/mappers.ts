@@ -1,6 +1,7 @@
 // 通信の形からドメインへの変換。ボイスエージェントや Edge Function が知らない値を返しても、
 // ここで丸めて画面を落とさない。形が変わったらここを直す
 import type { AssistantProposal, DayHours, TimeSpan } from '../../domain/assistant';
+import type { Device } from '../../domain/device';
 import type { AppNotification } from '../../domain/notification';
 import type { ReceptionCalendar, ReceptionEvent, ReceptionGoogle, ReceptionVisit } from '../../domain/reception';
 import type { ProviderState, Reservation, ReservationProvider, ReservationSource, ReservationStatus } from '../../domain/reservation';
@@ -76,6 +77,24 @@ export function toVisit(row: Row): Visit {
     company: nullableText(row.company),
     outcome: nullableOneOf(OUTCOMES, row.outcome, 'none'),
     end_reason: nullableOneOf(END_REASONS, row.end_reason, null),
+  };
+}
+
+// 保存したモード（mode）と、本体が報告した適用モード（applied_mode）は別の値として渡す。
+// 知らない適用モードは、実際と違うモードを見せないよう null（不明）にし、時刻も落とす
+export function toDevice(row: Row): Device {
+  const appliedMode = nullableOneOf(MODES, row.applied_mode, null);
+  return {
+    id: text(row.id),
+    household_id: text(row.household_id),
+    name: nullableText(row.name),
+    mode: oneOf(MODES, row.mode, 'normal'),
+    applied_mode: appliedMode,
+    applied_mode_at: appliedMode === null ? null : nullableText(row.applied_mode_at),
+    last_heartbeat_at: nullableText(row.last_heartbeat_at),
+    away_leave_at_door: row.away_leave_at_door === true,
+    auto_away: row.auto_away === true,
+    extra_instructions: text(row.extra_instructions),
   };
 }
 
