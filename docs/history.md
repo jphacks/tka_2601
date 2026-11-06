@@ -71,6 +71,7 @@ Edge Function「device」に、`Authorization: Bearer <デバイス鍵>` を付�
 | 要求 | 呼ぶ側 | 内容 |
 |---|---|---|
 | `GET /functions/v1/device/settings`（`/mode` も同じ） | 本体、中継 | `paired`、`mode`、`away_leave_at_door`、`auto_away`、`extra_instructions` を返す |
+| `GET /functions/v1/device/mode-settings` | 本体 | `paired` と `mode`（`normal`、`omakase`、`away`、`off`）だけを返す。本体の受信バッファが小さいため、`settings` の代わりに使う |
 | `PUT /functions/v1/device/visits/<来客 id>` | 本体、中継 | 来客の作成と更新。会話の発話（`messages`）も同じ要求でまとめて送れる。中継で会話した来客の発話は、中継が会話の終了後に1回で送る |
 | `PUT /functions/v1/device/state` | 本体 | `auto_away_active`（本体が自動で外出にしたか）を書く |
 

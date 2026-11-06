@@ -192,6 +192,7 @@ POST /functions/v1/assistant/parse
 | 要求 | 本文 | 返事 |
 |---|---|---|
 | `GET /functions/v1/device/settings`（`/mode` も同じ） | なし | `{"contract_version": 1, "paired": true, "mode": "normal", "away_leave_at_door": false, "auto_away": false, "extra_instructions": "", "shop": {...}}` |
+| `GET /functions/v1/device/mode-settings` | なし | `{"contract_version": 1, "paired": true, "mode": "normal"}`。`mode` は `normal`、`omakase`、`away`、`off`（停止）。グループに結び付く前は `paired` が `false` で `mode` は `null`。本体が小さな受信バッファで読むための最小の形 |
 | `PUT /functions/v1/device/state` | `{"auto_away_active": true}` | `{"auto_away_active": true}` |
 | `PUT /functions/v1/device/visits/<来客 id>` | `chimed_at`、`mode`、`status`、`answered_at`、`ended_at`、`end_reason`、`intent`、`company`、`outcome`、`messages`（任意） | `{"id": "...", "status": "ended", "applied": true}` |
 
