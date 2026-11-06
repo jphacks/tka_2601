@@ -14,6 +14,8 @@
 //     本体保存値の版・内容と実行状態を報告する。希望設定は GET /settings の pusher_settings に含む。
 //   GET /functions/v1/device/pusher-settings
 //     XIAO向け。contract_version、paired、希望設定だけを返し、店舗・適用報告は含めない。
+//   GET /functions/v1/device/mode-settings
+//     XIAO向け。contract_version、paired、mode（normal / omakase / away / off）だけを返す。未ペアは mode が null。
 //   GET /functions/v1/device/reservations?from=&to=（31 日まで）
 //     → {"provider": "monban", "reservations": [...]}。電話番号とメモは返さない
 //   POST /functions/v1/device/reservations
