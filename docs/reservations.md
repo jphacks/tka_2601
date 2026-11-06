@@ -175,7 +175,7 @@ Square の Webhook（`booking.created`、`booking.updated`）で知る。差分�
 
 ### 4.3 本体の接続切れ
 
-本体のファームは今のところ定期的に Supabase を呼ばない。`PUT /device/heartbeat` を一度も呼んでいない本体は判定の対象にせず、通知しない。ファームが死活通信を送るまで、この通知は届かない。
+XIAOのファームは、通信できる間 60 秒ごとに `PUT /device/heartbeat` を送る（実機では未確認）。一度も呼んでいない本体は判定の対象にせず、通知しない。
 
 ## 5. 受け答えの設定
 
