@@ -193,6 +193,7 @@ POST /functions/v1/assistant/parse
 |---|---|---|
 | `GET /functions/v1/device/settings`（`/mode` も同じ） | なし | `{"contract_version": 1, "paired": true, "mode": "normal", "away_leave_at_door": false, "auto_away": false, "extra_instructions": "", "shop": {...}}` |
 | `GET /functions/v1/device/mode-settings` | なし | `{"contract_version": 1, "paired": true, "mode": "normal"}`。`mode` は `normal`、`omakase`、`away`、`off`（停止）。グループに結び付く前は `paired` が `false` で `mode` は `null`。本体が小さな受信バッファで読むための最小の形 |
+| `PUT /functions/v1/device/mode-status` | `{"mode": "normal"}`。`mode` は `normal`、`omakase`、`away`、`off` のどれか1つだけ。他の項目や綴りの違いは 400 | `{"applied_mode": "normal", "applied_mode_at": "..."}`。未ペアは 409 |
 | `PUT /functions/v1/device/state` | `{"auto_away_active": true}` | `{"auto_away_active": true}` |
 | `PUT /functions/v1/device/visits/<来客 id>` | `chimed_at`、`mode`、`status`、`answered_at`、`ended_at`、`end_reason`、`intent`、`company`、`outcome`、`messages`（任意） | `{"id": "...", "status": "ended", "applied": true}` |
 
@@ -204,6 +205,7 @@ POST /functions/v1/assistant/parse
 - `paired` が `false` の本体は、まだグループに結び付いていない。この間の来客の PUT と予約の要求は 409 を返す。
 - `shop` は店名、業種、口調、あいさつ、営業時間、メニュー、予約なしの来客への対応、予約先を持つ。読めなければ `null` で、他の項目はそのまま返す。Google は呼ばない。
 - AI が作る予約は、送った内容によらず必ず仮予約になる。仮予約を含む既存の予約と時間が重なれば 409（`reservation_overlap`）を返す。`visit_id` がこの店の来客でなければ結び付けず、予約は受ける。
+- `devices.mode` はアプリが保存した値、`devices.applied_mode` は本体が `mode-status` で報告した「実際に動かしているモード」で、別の列に置く（`applied_mode_at` はその報告をクラウドが受けた時刻）。一度も報告がなければ2つとも `null`。報告は `mode` と `last_heartbeat_at` を変えない。本体の通信時刻は `last_heartbeat_at`（`heartbeat` のたびに更新）を使う。アプリ（住人）は3列とも `devices` の読み取りで読めるが、書けるのは `device_report_mode`（service_role 専用）だけ。
 - 接続切れの通知（15 分）は、`heartbeat` を一度でも送った本体だけが対象になる。
 - 来客 id は本体が作る uuid。同じ id で何度送っても、同時に送っても、来客は1件になる。
 - 来客を作るときは `chimed_at`、`mode`、`status` が要る。更新では `status` だけが要り、送らなかった項目は今の値が残る。
@@ -257,7 +259,7 @@ App Store の審査用のアカウントは `supabase/scripts/create_review_acco
 
 | 試験 | 実行 | 内容 |
 |---|---|---|
-| pgTAP（213 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送、店舗の設定とメニューの権限、予約帳と接続（Square を含む）を直接読めないこと、通知のオンオフと操作した本人の除外、接続切れ、差分を読む呼び出し |
+| pgTAP（304 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送、店舗の設定とメニューの権限、予約帳と接続（Square を含む）を直接読めないこと、通知のオンオフと操作した本人の除外、接続切れ、差分を読む呼び出し、本体が適用しているモードの報告（`device_applied_mode.test.sql`） |
 | 結合（154 件） | `deno run --allow-read --allow-run --allow-net --allow-env supabase/tests/e2e_local.ts` | Data API での H1 と H3b、device での H2 と H4（同時の作成を含む）、グループの作成から招待での参加まで、ペアリング、設定、Webhook から Expo までと通知の文面、pg_cron の再送、予約帳の操作と通知、AI の仮予約と重なりの拒否、予約先の切り替え、Square の未設定と未接続、assistant の認証と入力の検証と「書き込まない」こと |
 | Edge Function（210 件） | `deno test --allow-env supabase/functions/` | 通知の条件と文面、Expo の試し直し、予定と予約の変換、差分の分類とまとめ通知、410 の扱い、自分の書き込みの除外、OAuth、更新トークンの暗号化、予約先の振り分け、device の経路、Square（状態の対応、ページングと期間の分割、顧客とメニュー、読み取り専用、合流、署名、Webhook、トークンの更新）、自然言語の入力（案への変換、文との突き合わせ、Ollama の成功と失敗、未設定の 503） |
 

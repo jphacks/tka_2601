@@ -307,6 +307,57 @@ Deno.test("mode settings return only the mode and contract version, and no mode 
   assertEquals((await handleDeviceRequest(request("/mode-settings", "{}", "PUT"), fakeAdmin([authenticated()]).admin)).status, 405);
 });
 
+Deno.test("mode status reports use the authenticated identity and accept only the four modes", async () => {
+  for (const mode of ["normal", "omakase", "away", "off"]) {
+    const result = { applied_mode: mode, applied_mode_at: "2026-11-06T00:00:00Z" };
+    const { admin, calls } = fakeAdmin([authenticated(), { data: result, error: null }]);
+    const response = await handleDeviceRequest(request("/mode-status", JSON.stringify({ mode })), admin);
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), result);
+    assertEquals(calls[1], { name: "device_report_mode", args: { p_device_id: "device-1", p_mode: mode } });
+  }
+});
+
+Deno.test("invalid mode status reports never reach mutation and require device credentials", async () => {
+  const invalid: unknown[] = [
+    {}, { mode: null }, { mode: "stop" }, { mode: "OFF" }, { mode: "normal " }, { mode: "" }, { mode: 1 },
+    { mode: true }, { mode: ["off"] }, { mode: "off", extra: 1 }, { mode: "off", device_id: "other-device" },
+    { Mode: "off" }, { applied_mode: "off" },
+  ];
+  for (const body of invalid) {
+    const { admin, calls } = fakeAdmin([authenticated()]);
+    const response = await handleDeviceRequest(request("/mode-status", JSON.stringify(body)), admin);
+    assertEquals(response.status, 400);
+    assertEquals(calls.map((call) => call.name), ["device_authenticate"]);
+  }
+  for (const [raw, message] of [["{", "本文が JSON ではありません"], ["[]", "本文はオブジェクトにしてください"]]) {
+    const { admin, calls } = fakeAdmin([authenticated()]);
+    const response = await handleDeviceRequest(request("/mode-status", raw), admin);
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), { error: message });
+    assertEquals(calls.length, 1);
+  }
+  const anonymous = fakeAdmin([]);
+  assertEquals((await handleDeviceRequest(request("/mode-status", '{"mode":"off"}', "PUT", false), anonymous.admin)).status, 401);
+  assertEquals(anonymous.calls.length, 0);
+  for (const method of ["GET", "POST"]) {
+    const wrongMethod = fakeAdmin([authenticated()]);
+    assertEquals((await handleDeviceRequest(request("/mode-status", '{"mode":"off"}', method), wrongMethod.admin)).status, 405);
+    assertEquals(wrongMethod.calls.length, 1);
+  }
+});
+
+Deno.test("mode status database rejections keep their public status and unexpected failures surface", async () => {
+  for (const [code, expected] of [["PT409", 409], ["PT404", 404], ["22023", 400]] as const) {
+    const failed = fakeAdmin([authenticated(), { data: null, error: { code, message: "mode_report_rejected" } }]);
+    const response = await handleDeviceRequest(request("/mode-status", '{"mode":"off"}'), failed.admin);
+    assertEquals(response.status, expected);
+    assertEquals(await response.json(), { error: "mode_report_rejected" });
+  }
+  const broken = fakeAdmin([authenticated(), { data: null, error: failure }]);
+  await assertRejects(() => handleDeviceRequest(request("/mode-status", '{"mode":"off"}'), broken.admin));
+});
+
 Deno.test("pusher reports use the authenticated identity and retain device revision zero", async () => {
   const result = { desired_revision: 0, desired_config: null, ...pusherReport };
   const { admin, calls } = fakeAdmin([authenticated(), { data: result, error: null }]);
