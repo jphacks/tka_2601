@@ -138,7 +138,7 @@ static response_state_t chunked_body(response_t *response, size_t position, bool
 }
 
 /* Parse only bounded bytes; incomplete TCP fragments are not protocol errors. */
-static response_state_t parse_response(response_t *response, bool eof)
+static inline response_state_t parse_response(response_t *response, bool eof)
 {
     size_t end = line_end(response->wire, 0, response->used);
     if (end == SIZE_MAX)
