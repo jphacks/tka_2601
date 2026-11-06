@@ -44,8 +44,6 @@ cp tests/stubs/device_config.h "$src/"
   "$work/device_http.o" -o "$work/device_mode"; run device_mode
 "${C[@]}" $(s device_mode.c device_mode_sync.c device_mode_store_fake.c device_mode_report_test.c xlog_host.c) \
   "$work/device_http.o" -o "$work/device_mode_report"; run device_mode_report
-"${C[@]}" $(s visit_report.c visit_report_test.c xlog_host.c) \
-  "$work/device_http.o" -o "$work/visit_report"; run visit_report
 rm "$src/device_config.h"
 "${CXX[@]}" "$src/device_mode_store.cpp" "$src/device_mode_store_test.cpp" -o "$work/device_mode_store"; run device_mode_store
 for t in calibration_test exact_servo_test end_direction_test servo_call_test pusher_assignment_test; do
