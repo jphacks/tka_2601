@@ -184,6 +184,43 @@ Deno.test("successful settings and visit requests retain response and RPC payloa
   });
 });
 
+Deno.test("a stop-mode visit from the XIAO reaches device_put_visit with exactly its fields", async () => {
+  // firmware/xiao/tests/visit_report_test.c asserts this same body byte for byte.
+  const firmwareBody = '{"status":"missed","end_reason":"mode_off","mode":"off","chimed_at":"2026-11-06T00:42:03Z"}';
+  const result = { id: "12345678-1234-1234-1234-123456789abc", status: "missed", applied: true };
+  const visit = fakeAdmin([authenticated(), { data: result, error: null }]);
+  const response = await handleDeviceRequest(request(visitPath, firmwareBody), visit.admin);
+  assertEquals([response.status, await response.json()], [200, result]);
+  assertEquals(visit.calls[1], {
+    name: "device_put_visit",
+    args: {
+      p_device_id: "device-1",
+      p_visit_id: "12345678-1234-1234-1234-123456789abc",
+      p_visit: {
+        chimed_at: "2026-11-06T00:42:03Z",
+        mode: "off",
+        status: "missed",
+        end_reason: "mode_off",
+      },
+      p_messages: [],
+    },
+  });
+  // The device sends no messages and no answered_at/ended_at for a visit nobody answered.
+  const sent = visit.calls[1].args.p_visit as Record<string, unknown>;
+  assertEquals(Object.keys(sent).sort(), ["chimed_at", "end_reason", "mode", "status"]);
+});
+
+Deno.test("an unpaired device is told 409 and a bad time is told 400, which the XIAO treats as permanent", async () => {
+  for (const [code, status] of [["PT409", 409], ["22007", 400], ["23514", 400]] as const) {
+    const visit = fakeAdmin([authenticated(), { data: null, error: { code, message: "rejected" } }]);
+    const response = await handleDeviceRequest(
+      request(visitPath, '{"status":"missed","end_reason":"mode_off","mode":"off","chimed_at":"x"}'),
+      visit.admin,
+    );
+    assertEquals(response.status, status);
+  }
+});
+
 Deno.test("settings keep the existing fields when the shop profile cannot be read", async () => {
   for (const transportFailure of [false, true]) {
     const { admin: inner } = fakeAdmin([authenticated(), { data: null, error: null }]);

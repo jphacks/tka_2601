@@ -6,6 +6,7 @@
 #include "playback.h"
 #include "servo_control.h"
 #include "tune.h"
+#include "visit_report.h"
 #include "voice_settings.h"
 #include "voice_transport.h"
 #include "xlog.h"
@@ -661,8 +662,11 @@ void voice_stream_task(void *argument)
         if (voice_stream_recovery_required()) detected=false;
         bool manual=!voice_stream_recovery_required() && start_requested; start_requested=false;
         /* Stop mode answers nothing: chimes and manual requests are dropped, not queued. */
+        bool requested=detected || manual;
         detected=device_mode_gate_call(detected);
         manual=device_mode_gate_call(manual);
+        /* The visitor still came: tell the app, without waiting for the network. */
+        if(requested && !detected && !manual) visit_report_record_mode_off();
         uint8_t diagnostic=probe_requested; probe_requested=0;
         if ((detected || manual || diagnostic) && !busy) {
             bool local=diagnostic==PROBE_SPEAKER || diagnostic==PROBE_LOOPBACK;
