@@ -15,6 +15,7 @@ import { useHousehold } from '../../lib/auth';
 import { deleteAccount } from '../../lib/authActions';
 import { confirmAction } from '../../lib/confirm';
 import { repositories } from '../../lib/container';
+import { deviceStatusRow } from '../../lib/deviceStatus';
 import { errorMessage } from '../../lib/errors';
 import { features } from '../../lib/features';
 import { integrationRoute, integrationStatus, type Integration, visibleIntegrations } from '../../lib/integrations';
@@ -99,6 +100,11 @@ export default function SettingsScreen() {
     }
   }
 
+  const status = device ? deviceStatusRow(device, new Date()) : null;
+  const appliedLabel = status ? (status.applied ? MODE_LABELS[status.applied] : '未報告') : '';
+  const statusText = status
+    ? `本体の適用 ${appliedLabel}${status.pending ? ' 反映待ち' : ''}、${status.communication}`
+    : undefined;
   const connections = visibleIntegrations(providers, features.externalProviders);
 
   return (
@@ -119,17 +125,30 @@ export default function SettingsScreen() {
         <GroupHeader title="動作モード" />
         <Card>
           {device ? (
-            MODE_ORDER.map((mode, index) => (
-              <Fragment key={mode}>
-                {index > 0 ? <Separator inset={ICON_INSET} /> : null}
-                <RadioRow
-                  label={MODE_LABELS[mode]}
-                  icon={MODE_SYMBOLS[mode]}
-                  selected={device.mode === mode}
-                  onPress={() => change({ mode })}
-                />
-              </Fragment>
-            ))
+            <>
+              {MODE_ORDER.map((mode, index) => (
+                <Fragment key={mode}>
+                  {index > 0 ? <Separator inset={ICON_INSET} /> : null}
+                  <RadioRow
+                    label={MODE_LABELS[mode]}
+                    icon={MODE_SYMBOLS[mode]}
+                    selected={device.mode === mode}
+                    onPress={() => change({ mode })}
+                  />
+                </Fragment>
+              ))}
+              {status ? (
+                <>
+                  <Separator inset={0} />
+                  <View style={styles.statusRow} accessible accessibilityLabel={statusText}>
+                    <Text style={styles.statusText}>
+                      {'本体の適用  '}{appliedLabel}{status.pending ? '  反映待ち' : ''}{'  ・  '}
+                      <Text style={status.stale ? styles.statusStale : undefined}>{status.communication}</Text>
+                    </Text>
+                  </View>
+                </>
+              ) : null}
+            </>
           ) : (
             <View style={styles.modeRow}>
               <Text style={styles.muted}>{deviceFailed ? '本体情報を読み込めませんでした' : device === null ? '本体が登録されていません' : '読み込み中'}</Text>
@@ -250,6 +269,9 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   modeRow: { minHeight: 52, justifyContent: 'center', paddingHorizontal: 16 },
+  statusRow: { minHeight: 44, justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 16 },
+  statusText: { fontSize: 15, lineHeight: 22, color: colors.textSecondary },
+  statusStale: { fontWeight: '600', color: colors.text },
   rowPressed: { backgroundColor: colors.separator },
   muted: { fontSize: 17, color: colors.textSecondary },
   switchRow: {
