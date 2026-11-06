@@ -1,6 +1,7 @@
 #include "voice_transport.h"
 #include "voice_settings.h"
 #include "api_settings.h"
+#include "device_mode.h"
 #include "door_root_ca.h"
 #include "xlog.h"
 #include "mbedtls/base64.h"
@@ -75,8 +76,8 @@ bool voice_transport_configured(void)
 }
 bool voice_transport_server(voice_transport_t *l)
 {
-    if (!voice_relay_settings_valid(DOOR_RELAY_MODE,device_key(l))) {
-        xlog("[VOICE] Relay settings missing/invalid: set DOOR_DEVICE_KEY and DOOR_RELAY_MODE in .env, run python3 configure_api.py, then rebuild.\n");
+    if (!voice_relay_settings_valid(device_mode_relay_name(),device_key(l))) {
+        xlog("[VOICE] Relay settings missing/invalid: set DOOR_DEVICE_KEY in .env (mode comes from the app, DOOR_RELAY_MODE is only the default), run python3 configure_api.py, then rebuild.\n");
         return false;
     }
     if (l->diagnostic || !DOOR_DEVICE_KEY[0])
@@ -150,7 +151,7 @@ bool voice_transport_send(voice_transport_t *l, const voice_header_t *h, const v
             random[8],random[9],random[10],random[11],random[12],random[13],random[14],random[15]);
     }
     size_t length; uint8_t opcode;
-    if (!voice_relay_encode(&l->relay,h,payload,uuid,DOOR_RELAY_MODE,
+    if (!voice_relay_encode(&l->relay,h,payload,uuid,device_mode_relay_name(),
             device_key(l),
             wire,sizeof(wire),&length,&opcode)) return false;
     bool sent=!length || websocket_send(l,opcode,wire,length);

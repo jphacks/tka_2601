@@ -50,6 +50,17 @@ export function settingsBody(device: DeviceSettings, shop: unknown, pusherSettin
   };
 }
 
+// The firmware polls this often and reads it into a small buffer, so it gets
+// the household mode only. An unpaired device has no household mode to follow.
+export function modeSettingsBody(device: DeviceSettings) {
+  const paired = device.household_id !== null;
+  return {
+    contract_version: CONTRACT_VERSION,
+    paired,
+    mode: paired ? device.mode : null,
+  };
+}
+
 export type PusherConfig = {
   schema_version: 1;
   enabled_pushers: ["p1"] | ["p2"] | ["p1", "p2"];

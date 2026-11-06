@@ -3,6 +3,7 @@
 #include "net_state.h"
 #include "voice_stream.h"
 #include "pusher_sync.h"
+#include "device_mode.h"
 #include "xlog.h"
 #include <Arduino.h>
 #include <WiFi.h>
@@ -96,6 +97,7 @@ void net_task(void*) {
       apiProbeRequested = false;
     }
     pusher_sync_step(net_voice_ready());
+    device_mode_sync_step(net_voice_ready());
     delay(200);
   }
 }

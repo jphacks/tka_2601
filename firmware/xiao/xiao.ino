@@ -12,6 +12,7 @@ extern "C" {
 #include "audio_app.h"
 #include "audio_link.h"
 #include "audio_upload.h"
+#include "device_mode.h"
 }
 #include <esp_heap_caps.h>
 #include <freertos/queue.h>
@@ -70,6 +71,7 @@ void setup() {
   Serial.setTxTimeoutMs(20);
   xlog("[BOOT] MONBAN XIAO ESP32S3\n");
   servo_begin();
+  device_mode_init(); // Last good mode from NVS, before any task can see a chime.
   tune_begin();
   audioCommands = xQueueCreate(4, sizeof(char));
   auto* ring = static_cast<audio_ring_t*>(heap_caps_malloc(sizeof(audio_ring_t), MALLOC_CAP_SPIRAM));

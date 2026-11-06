@@ -2,7 +2,7 @@ import { readJsonObject, reservationErrorResponse } from "../_shared/errors.ts";
 import type { NewNotification } from "../_shared/notify.ts";
 import type { ReservationProvider } from "../_shared/reservation.ts";
 import { reservationNotice } from "../_shared/reservation_notice.ts";
-import { parseAiReservation, parseDeviceRange, parsePusherStatus, pusherSettingsBody, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
+import { modeSettingsBody, parseAiReservation, parseDeviceRange, parsePusherStatus, pusherSettingsBody, reservationBody, reservationListBody, settingsBody, visitFields } from "./contract.ts";
 import { type DatabaseError, visitErrorResponse } from "./errors.ts";
 
 export type DeviceAdmin = {
@@ -50,6 +50,11 @@ export async function handleDeviceRequest(
   if (!device) return Response.json({ error: "unauthorized" }, { status: 401 });
 
   const path = new URL(req.url).pathname;
+
+  if (path.endsWith("/mode-settings")) {
+    if (req.method !== "GET") return methodNotAllowed();
+    return Response.json(modeSettingsBody(device));
+  }
 
   if (path.endsWith("/pusher-settings")) {
     if (req.method !== "GET") return methodNotAllowed();

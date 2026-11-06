@@ -252,6 +252,24 @@ Deno.test("firmware pusher settings exclude large shop and reported fields witho
   assertEquals((await handleDeviceRequest(request("/pusher-settings", "{}", "PUT"), method.admin)).status, 405);
 });
 
+Deno.test("mode settings return only the mode and contract version, and no mode for an unpaired device", async () => {
+  for (const mode of ["normal", "omakase", "away", "off"]) {
+    const { admin, calls } = fakeAdmin([{ data: [{ ...device, mode, extra_instructions: "x".repeat(500) }], error: null }]);
+    const response = await handleDeviceRequest(request("/mode-settings", "", "GET"), admin);
+    const text = await response.text();
+    assertEquals(JSON.parse(text), { contract_version: 1, paired: true, mode });
+    assertEquals(calls.map((call) => call.name), ["device_authenticate"]);
+  }
+  const unpaired = fakeAdmin([{ data: [{ ...device, household_id: null }], error: null }]);
+  assertEquals(await (await handleDeviceRequest(request("/mode-settings", "", "GET"), unpaired.admin)).json(), {
+    contract_version: 1,
+    paired: false,
+    mode: null,
+  });
+  assertEquals((await handleDeviceRequest(request("/mode-settings", "", "GET", false), fakeAdmin([]).admin)).status, 401);
+  assertEquals((await handleDeviceRequest(request("/mode-settings", "{}", "PUT"), fakeAdmin([authenticated()]).admin)).status, 405);
+});
+
 Deno.test("pusher reports use the authenticated identity and retain device revision zero", async () => {
   const result = { desired_revision: 0, desired_config: null, ...pusherReport };
   const { admin, calls } = fakeAdmin([authenticated(), { data: result, error: null }]);

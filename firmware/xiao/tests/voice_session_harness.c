@@ -31,7 +31,8 @@ static unsigned order_count;
 static void note(char what) { if (order_count+1u<sizeof(order)) { order[order_count++]=what; order[order_count]=0; } }
 /* Stop the real infinite task only at its outer poll boundary. */
 static jmp_buf task_poll_boundary;
-static bool stop_after_task_poll;
+static bool stop_after_task_poll, chime_on_next_task_sleep;
+static unsigned task_sleeps_to_skip;
 /* Fake speaker: playback.c itself is covered by playback_test. */
 static uint32_t fake_credit, pushed_frames;
 static bool fake_done, fake_open_ok, fake_full, fake_idle, push_ok;
@@ -48,8 +49,12 @@ void net_sleep_ms(uint32_t ms)
     if (stop_in_sleep) stop_requested=true;
     if (auto_ack) mailbox.voice_call_ack = mailbox.voice_call_active;
     if (stop_after_task_poll && ms == 50u) {
-        stop_after_task_poll = false;
-        longjmp(task_poll_boundary, 1);
+        if (chime_on_next_task_sleep) { chime_on_next_task_sleep = false; ++mailbox.event_seq; }
+        if (task_sleeps_to_skip) --task_sleeps_to_skip;
+        else {
+            stop_after_task_poll = false;
+            longjmp(task_poll_boundary, 1);
+        }
     }
 }
 void net_random(void *out, size_t length) { memset(out, 0x11, length); }
@@ -134,6 +139,7 @@ static void reset(void)
     call_completes = end_completes = cancel_completes = true;
     stop_on_start = busy = start_requested = stop_requested = recovery_required = recovery_confirm_requested = false;
     servo_needs_recovery = servo_is_moving = servo_is_testing = stop_after_task_poll = false;
+    chime_on_next_task_sleep = false; task_sleeps_to_skip = 0u;
     probe_requested = 0u;
     cooldown_active=server_keepalives=false;
     cooldown_began=server_ping_at=0;
@@ -793,6 +799,36 @@ static void test_recovery_respects_current_mapping_and_locks(void)
     tick+=30000u; recovery_step();
     assert(!recovery_required && end_presses==1u && call_presses==1u);
 }
+static void test_stop_mode_answers_nothing(void)
+{
+    /* The real task: a chime (second poll sees the new event) or a manual request. */
+    for (unsigned manual = 0; manual < 2; ++manual) {
+        fresh_call(); network_ready = true;
+        assert(device_mode_apply(DEVICE_MODE_NORMAL));
+        if (manual) { voice_stream_request_call(); assert(start_requested); }
+        else { chime_on_next_task_sleep = true; task_sleeps_to_skip = 1u; }
+        poll_task_once();
+        assert(server_opened); /* an accepted mode starts the call, as before */
+        /* Stop mode: nothing is opened, pressed, queued, or put in cooldown. */
+        fresh_call(); network_ready = true;
+        assert(device_mode_apply(DEVICE_MODE_OFF));
+        if (manual) { voice_stream_request_call(); assert(start_requested); }
+        else { chime_on_next_task_sleep = true; task_sleeps_to_skip = 1u; }
+        poll_task_once();
+        assert(!server_opened && !busy && !start_requested && !cooldown_active);
+        assert(call_presses == 0u && end_presses == 0u && opens == 0u && mailbox.voice_call_active == 0u);
+        /* Back to an accepted mode: the dropped request does not replay. */
+        assert(device_mode_apply(DEVICE_MODE_AWAY));
+        poll_task_once();
+        assert(!server_opened && call_presses == 0u);
+    }
+    /* Diagnostics are not calls: the API probe still works in stop mode. */
+    fresh_call(); network_ready = true; assert(device_mode_apply(DEVICE_MODE_OFF));
+    server_in[server_used++]=packet(VOICE_READY,0,0); server_in[server_used++]=packet(VOICE_PONG,0,1);
+    probe_requested = PROBE_API; poll_task_once();
+    assert(server_opened && count_sent(VOICE_CALL_START) == 0);
+    assert(device_mode_apply(DEVICE_MODE_OMAKASE));
+}
 int main(void)
 {
     test_api_is_proven_before_the_button();
@@ -812,6 +848,7 @@ int main(void)
     test_agent_only_after_button_released();
     test_whole_call();
     test_local_sound_checks();
+    test_stop_mode_answers_nothing();
     puts("PASS: API/button order, separate-END recovery, shared locks, 50s deadline, 20s cooldown and safe stop");
     return 0;
 }
