@@ -1,6 +1,7 @@
 #include "voice_stream.h"
 #include "audio_app.h"
 #include "audio_link.h"
+#include "device_mode.h"
 #include "net_state.h"
 #include "playback.h"
 #include "servo_control.h"
@@ -659,6 +660,9 @@ void voice_stream_task(void *argument)
         suppress_cooldown_requests(&detected);
         if (voice_stream_recovery_required()) detected=false;
         bool manual=!voice_stream_recovery_required() && start_requested; start_requested=false;
+        /* Stop mode answers nothing: chimes and manual requests are dropped, not queued. */
+        detected=device_mode_gate_call(detected);
+        manual=device_mode_gate_call(manual);
         uint8_t diagnostic=probe_requested; probe_requested=0;
         if ((detected || manual || diagnostic) && !busy) {
             bool local=diagnostic==PROBE_SPEAKER || diagnostic==PROBE_LOOPBACK;

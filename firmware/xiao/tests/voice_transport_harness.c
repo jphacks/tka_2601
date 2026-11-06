@@ -1,4 +1,5 @@
 #include "voice_transport.h"
+#include "device_mode.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -187,6 +188,7 @@ static void upgrade_and_connections(void)
     check(strstr(decoded,"\"device_key\":\"test-device-key\"")!=NULL);
 #endif
     check(strstr(decoded,"\"visit_id\":\"01020304-0506-4708-890a-0b0c0d0e0f10\"")!=NULL);
+    check(strstr(decoded,"\"mode\":\"omakase\"")!=NULL); /* build-time default until the app's mode is fetched */
     check(poll_until(&link,&got,10)==1 && got.header.type==VOICE_READY);
     reset(&link,false); link.socket=NULL; link.diagnostic=true;
     append(response,strlen(response)); check(voice_transport_server(&link)); output_size=0;
@@ -217,9 +219,30 @@ static void legacy_silence_keeps_vad_clock(void)
     link.relay.speaking=true; now+=20;
     check(voice_transport_poll(&link,&got)==0 && output_size==1944);
 }
+static void relay_follows_runtime_mode(void)
+{
+    voice_transport_t link; voice_header_t hello={.type=VOICE_HELLO,.session=1};
+    char decoded[VOICE_PACKET];
+    const char response[]="HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+      "Connection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+    check(device_mode_apply(DEVICE_MODE_AWAY));
+    reset(&link,false); link.socket=NULL; append(response,strlen(response));
+    check(voice_transport_server(&link)); output_size=0;
+    check(voice_transport_send(&link,&hello,NULL));
+    size_t prefix=(output[1]&127)==126?4:2, length=output_size-prefix-4;
+    for(size_t i=0;i<length;++i) decoded[i]=(char)(output[prefix+4+i]^output[prefix+i%4]);
+    decoded[length]=0;
+    check(strstr(decoded,"\"mode\":\"away\"")!=NULL && strstr(decoded,"omakase")==NULL);
+    /* Stop mode is not a relay mode: no connection is opened and nothing is sent. */
+    check(device_mode_apply(DEVICE_MODE_OFF));
+    reset(&link,false); link.socket=NULL; append(response,strlen(response));
+    check(!voice_transport_server(&link) && opened==0 && output_size==0);
+    reset(&link,true); output_size=0;
+    check(!voice_transport_send(&link,&hello,NULL) && output_size==0);
+}
 int main(void)
 {
     ws_fragmentation_and_ping(); sends_are_bounded(); read_results(); upgrade_and_connections();
-    legacy_silence_keeps_vad_clock();
+    legacy_silence_keeps_vad_clock(); relay_follows_runtime_mode();
     printf("voice transport: %u checks passed\n",checks); return 0;
 }
