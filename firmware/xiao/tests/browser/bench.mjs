@@ -186,12 +186,9 @@ try {
   await button('保存領域を初期化').click();
   await button('初期化').click();
   await button('登録を始める').click();
-  await visible('チャイムを鳴らしてください');
-  for (const next of ['2 回目', '3 回目', '確認', '次に鳴らすと検知します']) {
-    await page.waitForTimeout(800);
-    await button('チャイムを鳴らす').click();
-    await page.locator('.ant-card .sub').getByText(next, { exact: true }).waitFor(); // the step bar has the same words
-  }
+  await visible('チャイムを鳴らしてください'); // after 2 s of background
+  await button('チャイムを鳴らす').click(); // once: no second ring and no verification
+  await page.locator('.ant-card .sub').getByText('次に鳴らすと検知します', { exact: true }).waitFor({ timeout: 15000 });
   await visible('登録しました');
   step('chime registered by the firmware');
 

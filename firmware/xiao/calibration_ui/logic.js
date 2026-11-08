@@ -227,26 +227,25 @@
     }
   }
 
-  // Registration progress as the board reports it. -1 idle, 0-4 running, 5 finished.
+  // Registration progress as the board reports it: one ring after 2 s of
+  // quiet. -1 idle, 0 quiet, 1 ring, 2 checking and saving, 3 finished.
   function chimeProgress(lines) {
     let step = -1, message = '';
     for (const text of lines) {
       if (text.includes('[BOOT] Network task running')) { step = -1; message = ''; }
       else if (text.includes('[SETUP] Keep quiet')) { step = 0; message = ''; }
-      else if (text.includes('(1/3)')) { step = 1; message = ''; }
-      else if (text.includes('(2/3)')) { step = 2; message = ''; }
-      else if (text.includes('(3/3)')) { step = 3; message = ''; }
-      else if (text.includes('[SETUP] Three recordings agree')) { step = 4; message = ''; }
-      else if (text.includes('[SETUP] Verification passed') || text.includes('[SETUP] Model persistence verified')) { step = 5; message = ''; }
+      else if (text.includes('[SETUP] Ring the intercom once')) { step = 1; message = ''; }
+      else if (text.includes('[SETUP] Sound too short or clipped') && step === 1) { message = '短すぎるか、音が割れています。もう一度鳴らしてください'; }
+      else if (text.includes('[SETUP] Sound recorded')) { step = 2; message = ''; }
+      else if (text.includes('[SETUP] Registered') || text.includes('[SETUP] Model persistence verified')) { step = 3; message = ''; }
       else if (text.includes('[SETUP] Model persistence FAILED')) { step = -1; message = '本体に保存できませんでした'; }
       else if (text.includes('[SETUP] Registration cancelled')) { step = -1; message = ''; }
       else if (text.includes('[SETUP] Too noisy')) { step = -1; message = '周りの音が大きすぎます'; }
-      else if (text.includes('[SETUP] Recordings differ')) { step = -1; message = '3 回の音が違いすぎます'; }
-      else if (text.includes('[SETUP] Verification did not match')) { message = '登録した音と違います。もう一度鳴らしてください'; }
+      else if (text.includes('[SETUP] Recording did not hold up')) { step = -1; message = '録った音が安定しませんでした。もう一度登録してください'; }
+      else if (text.includes('[SETUP] Background sounds like the chime')) { step = -1; message = '周りの音がチャイムと区別できません。静かなところでやり直してください'; }
       else if (text.includes('[SETUP] Capture gap')) { step = -1; message = '音が途切れたので中止しました'; }
       else if (text.includes('[SETUP] Call started')) { step = -1; message = '通話が始まったので中止しました'; }
-      else if (text.includes('[AUDIO] Candidate too short or clipped') && step >= 1 && step <= 4) { message = '短すぎるか、音が割れています。もう一度鳴らしてください'; }
-      else if (text.includes('[AUDIO] Candidate longer than') && step >= 1 && step <= 4) { message = '4 秒より長い音は登録できません'; }
+      else if (text.includes('[SETUP] Manual recording') || text.includes('[SETUP] Storage format')) { step = -1; message = ''; }
       else if (text.includes('[AUDIO] Command unavailable')) { message = '今は登録を始められません'; }
     }
     return {step, message};

@@ -252,8 +252,8 @@ class CalibrationUITests(unittest.TestCase):
                 link.record(line)
                 self.assertEqual(link.snapshot()['stage'], stage)
             self.assertFalse(link.snapshot()['voice_active'])
-            link.record('[SETUP] Ring the intercom once (1/3). Gate=120.')
-            self.assertEqual(link.snapshot()['stage'], 'Ring the intercom once (1/3). Gate=120.')
+            link.record('[SETUP] Ring the intercom once. Gate=120.')
+            self.assertEqual(link.snapshot()['stage'], 'Ring the intercom once. Gate=120.')
         finally:
             link.close()
 

@@ -262,27 +262,34 @@ for (const finish of ['undo', 'save']) {
 }
 console.log('Web UI: edit, preview retry, mirror, save, undo and timeout passed');
 
-// Registration follows what the board actually reported.
+// Registration follows what the board actually reported: quiet, one ring, check and save.
 const chime = (...lines) => chimeProgress(lines);
 assert.equal(chime().step, -1);
-assert.equal(chime('[SETUP] Keep quiet for 5 seconds. Measuring background noise.').step, 0);
-assert.equal(chime('[SETUP] Ring the intercom once (1/3). Gate=80.').step, 1);
-assert.equal(chime('[SETUP] Recorded. Ring once again (2/3).').step, 2);
-assert.equal(chime('[SETUP] Recorded. Ring once again (3/3).').step, 3);
-assert.equal(chime('[SETUP] Three recordings agree. Ring once more to verify.').step, 4);
-assert.equal(chime('[SETUP] Verification passed. Saving registered features.').step, 5);
-assert.equal(chime('[SETUP] Ring the intercom once (1/3). Gate=80.', '[SETUP] Registration cancelled; active model is unchanged.').step, -1);
-assert.equal(chime('[SETUP] Ring the intercom once (1/3). Gate=80.', '[BOOT] Network task running.').step, -1);
-const differ = chime('[SETUP] Recorded. Ring once again (3/3).', '[SETUP] Recordings differ too much. Enter e to start again.');
-assert.equal(differ.step, -1);
-assert.ok(differ.message.length > 0);
-const retry = chime('[SETUP] Three recordings agree. Ring once more to verify.', '[SETUP] Verification did not match. Retry, or e to register again.');
-assert.equal(retry.step, 4);
+assert.equal(chime('[SETUP] Keep quiet for 2 seconds. Measuring background noise.').step, 0);
+assert.equal(chime('[SETUP] Ring the intercom once. Gate=80.').step, 1);
+assert.equal(chime('[SETUP] Ring the intercom once. Gate=80.', '[SETUP] Sound recorded (1.9 s). Checking it.').step, 2);
+assert.equal(chime('[SETUP] Sound recorded (1.9 s). Checking it.', '[SETUP] Registered (1.9 s, threshold=0.224). Saving registered features.').step, 3);
+assert.equal(chime('[SETUP] Registered (1.9 s, threshold=0.224). Saving registered features.', '[SETUP] Model persistence verified.').step, 3);
+const unsaved = chime('[SETUP] Registered (1.9 s, threshold=0.224). Saving registered features.', '[SETUP] Model persistence FAILED; current model is RAM-only');
+assert.equal(unsaved.step, -1);
+assert.ok(unsaved.message.length > 0);
+assert.equal(chime('[SETUP] Ring the intercom once. Gate=80.', '[SETUP] Registration cancelled; active model is unchanged.').step, -1);
+assert.equal(chime('[SETUP] Ring the intercom once. Gate=80.', '[BOOT] Network task running.').step, -1);
+const retry = chime('[SETUP] Ring the intercom once. Gate=80.', '[SETUP] Sound too short or clipped; ring once again.');
+assert.equal(retry.step, 1, 'a click or a clipped ring keeps listening');
 assert.ok(retry.message.length > 0);
-assert.equal(chime('[SETUP] Keep quiet for 5 seconds.', '[SETUP] Too noisy; retry in a quieter setting.').step, -1);
-assert.equal(chime('[SETUP] Ring the intercom once (1/3).', '[SETUP] Capture gap; registration cancelled.').step, -1);
-assert.equal(chime('[AUDIO] Candidate too short or clipped; ignored.').message, '', 'ordinary sounds outside registration say nothing');
-assert.ok(chime('[SETUP] Ring the intercom once (1/3).', '[AUDIO] Candidate too short or clipped; ignored.').message.length > 0);
+assert.equal(chime('[SETUP] Ring the intercom once. Gate=80.', '[SETUP] Sound too short or clipped; ring once again.', '[SETUP] Sound recorded (1.9 s). Checking it.').message, '');
+for (const failure of ['[SETUP] Recording did not hold up; enter e to start again.',
+  '[SETUP] Background sounds like the chime; retry in a quieter setting.']) {
+  const failed = chime('[SETUP] Sound recorded (1.9 s). Checking it.', failure);
+  assert.equal(failed.step, -1);
+  assert.ok(failed.message.length > 0, failure);
+}
+assert.equal(chime('[SETUP] Keep quiet for 2 seconds.', '[SETUP] Too noisy; retry in a quieter setting.').step, -1);
+assert.equal(chime('[SETUP] Ring the intercom once.', '[SETUP] Capture gap; registration cancelled.').step, -1);
+assert.equal(chime('[SETUP] Ring the intercom once.', '[SETUP] Call started; registration cancelled.').step, -1);
+assert.equal(chime('[SETUP] Ring the intercom once.', '[SETUP] Manual recording; registration cancelled.').step, -1);
+assert.equal(chime('[SETUP] Sound too short or clipped; ring once again.').message, '', 'nothing to say outside registration');
 console.log('Web UI: chime registration steps passed');
 
 // Call progress restarts with each call.

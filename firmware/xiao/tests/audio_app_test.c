@@ -30,6 +30,8 @@ void net_sleep_ms(uint32_t ms) { clock_ms+=ms; }
 void net_random(void *out, size_t n) { memset(out,0x5a,n); }
 bool audio_upload_configured(void) { return upload_configured; }
 bool audio_upload(audio_store_t *store, unsigned slot) { (void)store; (void)slot; ++uploads; return upload_ok; }
+static char posted[4]; static unsigned posted_count;
+bool audio_app_post_command(char command) { if (posted_count==4u) return false; posted[posted_count++]=command; return true; }
 static bool flash_read(uint32_t off, void *out, size_t n)
 { if (off>sizeof(flash)||n>sizeof(flash)-off) return false; memcpy(out,flash+off,n); return true; }
 static bool flash_write(uint32_t off, const void *data, size_t n)
@@ -81,20 +83,24 @@ static void start(bool record_clips)
     clock_ms=1000; call_busy=false; network_ready=false; uploads=0; margin=100;
     silence(50); /* warm-up is ignored */
 }
+#define GAP 160u /* more than the 3 s refractory time between rings */
 static void enroll(void)
 {
     assert(audio_storage_ready());
     audio_app_command('e');
-    silence(250);
-    ring_bell(50,8000,false);
-    ring_bell(52,4000,false);
-    ring_bell(48,12000,false);
-    assert(!audio_app_model_valid()); /* not active until a separate verification */
-    ring_bell(50,6000,false);
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_NOISE);
+    silence(100); /* 2 s of background */
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_LISTEN);
+    ring_bell(50,8000,false); /* once: no second ring, no verification */
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_ANALYZE);
+    assert(!audio_app_model_valid()); /* not active until the variants are checked */
+    assert(audio_jobs.clip_busy && !audio_jobs.clip_saving); /* the ring's copy, not a recording */
+    silence(100);
     assert(audio_app_model_valid());
-    assert(audio_jobs.model_busy);
+    assert(!audio_jobs.clip_busy);
+    assert(audio_jobs.model_busy && audio_app_enroll_status().phase == AUDIO_ENROLL_SAVING);
     storage_worker_step();
-    assert(!audio_jobs.model_busy);
+    assert(!audio_jobs.model_busy && audio_app_enroll_status().phase == AUDIO_ENROLL_DONE);
 }
 static void test_enroll_detect_and_restore(void)
 {
@@ -103,54 +109,93 @@ static void test_enroll_detect_and_restore(void)
     assert(!audio_storage_ready());
     audio_app_command('e');
     silence(300);
-    assert(!audio_app_model_valid());
+    assert(!audio_app_model_valid() && audio_app_enroll_status().phase == AUDIO_ENROLL_IDLE);
     audio_app_command('F');
     assert(audio_jobs.formatting);
     storage_worker_step();
     assert(!audio_jobs.formatting && audio_storage_ready());
     enroll();
     volatile audio_link_t *link=audio_link();
-    silence(60);
+    silence(GAP);
     uint32_t events=link->event_seq;
     ring_bell(50,5000,false);
     assert(link->event_seq==events+1u && link->detected_count==1u);
-    silence(60);
-    /* A different sound is not the chime. */
+    assert(link->last_score<=audio_app_threshold());
+    silence(GAP);
+    /* A different sound is not the chime; its best score is reported when it ends. */
     ring_bell(50,8000,true);
     assert(link->event_seq==events+1u);
     float reversed=link->last_score;
     assert(reversed>audio_app_threshold());
-    silence(60);
+    silence(GAP);
     /* margin scales the enrolled threshold at runtime, in both directions. */
     margin=50u;
     ring_bell(50,5000,false);
     float own=link->last_score;
     assert(link->event_seq==events+1u+(own<=audio_app_threshold()*0.5f?1u:0u));
-    silence(60);
+    silence(GAP);
     events=link->event_seq;
     margin=(unsigned)ceilf(100.0f*own/audio_app_threshold())+1u;
     assert(margin<=200u);
     ring_bell(50,5000,false);
     assert(link->event_seq==events+1u);
-    silence(60);
+    silence(GAP);
     margin=100u;
-    /* Too short, too long, and clipped candidates are ignored. */
+    /* Too short is not the chime. Ringing on past 4 s is still detected, once,
+     * without waiting for the end of the sound. */
     events=link->event_seq;
     ring_bell(5,8000,false); assert(link->event_seq==events);
-    silence(60);
-    ring_bell(AUDIO_MAX_FRAMES+5,8000,false); assert(link->event_seq==events);
-    silence(60);
-    ring_bell(50,80000,false); assert(link->event_seq==events);
-    silence(60);
+    silence(GAP);
+    {
+        uint32_t seed=12345;
+        for (unsigned f=0;f<AUDIO_MAX_FRAMES+5;++f) { tone(f,AUDIO_MAX_FRAMES+5,8000,false,&seed); step(false); }
+        assert(link->event_seq==events+1u); /* detected while still sounding */
+        silence(30);
+    }
+    silence(GAP);
     /* Power cycle: the model comes back from flash. */
     float threshold=audio_app_threshold();
     audio_app_init(&ring,pending,false);
     assert(!audio_app_model_valid());
     storage_worker_begin(driver,true);
     assert(audio_app_model_valid() && audio_app_threshold()==threshold);
+    silence(50); /* warm-up */
+    events=link->event_seq;
+    ring_bell(50,5000,false);
+    assert(link->event_seq==events+1u); /* the loaded model detects */
+    silence(GAP);
     /* Registration and cancel leave the old model alone. */
     audio_app_command('e'); silence(100); audio_app_command('x');
     assert(audio_app_model_valid() && audio_app_threshold()==threshold);
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_CANCELLED);
+    /* Cancel while the ring is being checked releases the copy of the ring. */
+    audio_app_command('e'); silence(100); ring_bell(50,8000,false);
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_ANALYZE && audio_jobs.clip_busy);
+    audio_app_command('x');
+    assert(!audio_jobs.clip_busy && audio_app_threshold()==threshold);
+    /* A click is too short: the board asks for the ring again and keeps listening. */
+    audio_app_command('e'); silence(100);
+    ring_bell(5,8000,false);
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_LISTEN && audio_app_enroll_status().reason == CHIME_REASON_SHORT);
+    /* A capture gap ends registration. */
+    step(true);
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_FAILED && audio_app_threshold()==threshold);
+    silence(60);
+    /* Too loud a background: the gate would pass 16000. */
+    audio_app_command('e');
+    {
+        uint32_t seed=99;
+        for (unsigned f=0;f<100;++f) {
+            for (unsigned i=0;i<AUDIO_FRAME;++i) { seed=seed*1664525u+1013904223u; frame[i]=(int16_t)((int32_t)(seed>>16)-32768); }
+            step(false);
+        }
+    }
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_FAILED && audio_app_enroll_status().reason == CHIME_REASON_NOISY);
+    assert(audio_app_model_valid() && audio_app_threshold()==threshold);
+    /* The public entry points queue the same commands. */
+    posted_count=0;
+    assert(audio_app_enroll_start() && audio_app_enroll_cancel());
+    assert(posted_count==2u && posted[0]=='e' && posted[1]=='x');
 }
 static void test_recording_is_opt_in(void)
 {
@@ -161,9 +206,9 @@ static void test_recording_is_opt_in(void)
     silence(260);
     assert(!audio_jobs.clip_busy && !audio_jobs.clip_saving);
     enroll();
-    silence(60);
+    silence(GAP);
     ring_bell(50,8000,false);
-    silence(60);
+    silence(GAP);
     assert(audio_link()->event_seq==1u && !audio_jobs.clip_saving);
     for (unsigned slot=AUDIO_EVENT_FIRST_SLOT;slot<AUDIO_SLOT_COUNT;++slot) {
         audio_record_t header;
@@ -177,13 +222,16 @@ static void test_clip_saved_uploaded_and_deferred(void)
     upload_configured=true;
     audio_app_command('F'); storage_worker_step();
     enroll();
-    silence(60);
+    silence(GAP);
     ring_bell(50,8000,false);
     /* The event is published before the tail so the call never waits. */
     assert(audio_link()->event_seq==1u);
     assert(!audio_jobs.clip_saving);
     silence(20);
     assert(audio_jobs.clip_saving);
+    /* The clip: 1 s before the match, the match, 1 s after. */
+    assert(audio_jobs.pending_samples>=(AUDIO_PRE_FRAMES+38u+AUDIO_POST_FRAMES)*AUDIO_FRAME);
+    assert(audio_jobs.pending_samples<=AUDIO_CLIP_SAMPLES);
     /* A flash save waits for the end of a call. */
     call_busy=true; storage_worker_step(); assert(audio_jobs.clip_saving);
     call_busy=false; storage_worker_step();
@@ -228,11 +276,11 @@ static void test_call_mailbox(void)
     volatile audio_link_t *link=audio_link();
     audio_app_command('F'); storage_worker_step();
     enroll();
-    silence(60);
+    silence(GAP);
     /* While a chime's tail is being recorded the mic stays with it, then moves. */
     uint32_t seed=3;
     for (unsigned f=0;f<50;++f) { tone(f,50,8000,false,&seed); step(false); }
-    silence(25); /* candidate closed: detected, short tail pending */
+    silence(25); /* detected at the template's end; the clip's tail is pending */
     assert(link->event_seq==1u && !audio_jobs.clip_saving);
     link->voice_call_active=1u;
     audio_app_service();
@@ -328,6 +376,6 @@ int main(void)
     test_clip_saved_uploaded_and_deferred();
     test_call_mailbox();
     test_loopback_and_meter();
-    puts("PASS: enrollment, detection, restore, recording opt-in, upload retry, call mailbox, loopback");
+    puts("PASS: one-ring enrollment and its failures, streaming detection, restore, recording opt-in, upload retry, call mailbox, loopback");
     return 0;
 }
