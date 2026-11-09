@@ -13,7 +13,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import type { SymbolName } from '../lib/symbols';
+import { SYMBOLS, type SymbolName } from '../lib/symbols';
 import { colors, radius } from '../theme';
 import { Icon } from './Icon';
 import { Check, ChevronRight } from './icons';
@@ -94,10 +94,14 @@ export function TextButton({ label, onPress, disabled, style }: ButtonProps) {
   );
 }
 
-type FieldProps = TextInputProps & { label: string };
+type FieldProps = TextInputProps & {
+  label: string;
+  // 入力の誤り。紺の太い枠と警告の印で出す（赤は使わない）
+  error?: string | null;
+};
 
 // 上にラベルを置いた入力欄
-export function TextField({ label, style, ...input }: FieldProps) {
+export function TextField({ label, style, error, ...input }: FieldProps) {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel} nativeID={`label-${label}`}>
@@ -106,9 +110,15 @@ export function TextField({ label, style, ...input }: FieldProps) {
       <TextInput
         accessibilityLabel={label}
         placeholderTextColor={colors.placeholder}
-        style={[styles.input, style]}
+        style={[styles.input, error ? styles.inputError : null, style]}
         {...input}
       />
+      {error ? (
+        <View accessibilityRole="alert" style={styles.fieldError}>
+          <Icon name={SYMBOLS.alert} size={18} color={colors.navy} />
+          <Text style={styles.fieldErrorText}>{error}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -428,6 +438,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     color: colors.text,
   },
+  inputError: { borderWidth: 2, borderColor: colors.navy },
+  fieldError: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 4 },
+  fieldErrorText: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.navy },
   card: {
     marginHorizontal: 16,
     backgroundColor: colors.card,

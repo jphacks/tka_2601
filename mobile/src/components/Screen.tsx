@@ -83,7 +83,7 @@ export function NavBar({ title, backLabel, onBack, right }: NavBarProps) {
         <Pressable
           onPress={onBack}
           accessibilityRole="button"
-          accessibilityLabel={backLabel ? `${backLabel}に戻る` : '戻る'}
+          accessibilityLabel={backLabel && backLabel !== '戻る' ? `${backLabel}に戻る` : '戻る'}
           hitSlop={4}
           style={({ pressed }) => [styles.back, pressed && styles.pressed]}
         >
