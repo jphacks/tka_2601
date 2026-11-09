@@ -1,14 +1,12 @@
 #include "audio_core.h"
 #include "audio_store.h"
 #include <assert.h>
-#include <float.h>
+#include <stddef.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-static audio_dsp_t dsp;
 static audio_model_t model, restored;
-static audio_pattern_t other;
 static audio_ring_t ring;
 static uint8_t flash_memory[AUDIO_STORE_BYTES];
 static long fail_after = -1;
@@ -34,43 +32,17 @@ static bool erase_flash(uint32_t off, size_t n)
     assert(off % AUDIO_SLOT_SIZE == 0 && n % AUDIO_SLOT_SIZE == 0);
     memset(flash_memory + off, 255, n); return true;
 }
-static void pattern(audio_pattern_t *p, unsigned count, float gain, bool reverse, bool noise)
+/* A small valid v2 model: 40 loud frames, two notes. */
+static void make_model(audio_model_t *m)
 {
-    memset(p, 0, sizeof(*p)); p->length = count;
-    uint32_t seed = 12345;
-    int16_t pcm[AUDIO_FRAME];
-    for (unsigned f = 0; f < count; ++f) {
-        bool second = f >= count / 2;
-        float hz = (second != reverse) ? 880.0f : 1320.0f;
-        for (unsigned i = 0; i < AUDIO_FRAME; ++i) {
-            seed = seed * 1664525u + 1013904223u;
-            float random = (float)((int32_t)(seed >> 16) - 32768) / 32768.0f;
-            float v = noise ? random : sinf(6.2831853f * hz * (f * AUDIO_FRAME + i) / AUDIO_RATE) + 0.005f * random;
-            pcm[i] = (int16_t)(gain * v);
-        }
-        audio_feature(&dsp, pcm, &p->frame[f]);
+    memset(m, 0, sizeof(*m));
+    m->version = AUDIO_MODEL_VERSION; m->length = 40; m->gate_rms = 100; m->threshold = 0.2f;
+    for (unsigned f = 0; f < m->length; ++f) {
+        audio_frame_t *x = &m->frame[f];
+        x->loud = 1; x->tonal = 1; x->onset = f == 0 || f == 20;
+        x->cent = f < 20 ? 4500 : 4200;
+        for (unsigned b = 0; b < AUDIO_BANDS; ++b) x->mel.band[b] = (int8_t)((b == (f < 20 ? 9u : 7u)) ? 100 : -7);
     }
-}
-static void test_matching(void)
-{
-    audio_dsp_init(&dsp);
-    model.version = AUDIO_MODEL_VERSION; model.count = 3; model.gate_rms = 100;
-    pattern(&model.pattern[0], 50, 8000, false, false);
-    pattern(&model.pattern[1], 52, 4000, false, false);
-    pattern(&model.pattern[2], 48, 12000, false, false);
-    assert(audio_calibrate(&model));
-    pattern(&other, 54, 2000, false, false);
-    printf("matching distance %.5f, threshold %.5f\n", (double)audio_match(&model, &other), (double)model.threshold);
-    assert(audio_match(&model, &other) < model.threshold);
-    pattern(&other, 50, 8000, true, false);
-    assert(audio_match(&model, &other) > model.threshold);
-    pattern(&other, 50, 8000, false, true);
-    assert(audio_match(&model, &other) > model.threshold);
-    other.length = 0; assert(audio_match(&model, &other) == FLT_MAX);
-    other.length = AUDIO_MAX_FRAMES + 1; assert(audio_match(&model, &other) == FLT_MAX);
-    restored = model; restored.gate_rms = NAN; assert(!audio_model_valid(&restored));
-    restored = model; restored.pattern[0].length = 1; assert(!audio_model_valid(&restored));
-    restored = model; pattern(&restored.pattern[2], 50, 8000, true, false); assert(!audio_calibrate(&restored));
 }
 static void test_ring_wav(void)
 {
@@ -91,6 +63,8 @@ static void test_storage(void)
     memset(flash_memory, 255, sizeof(flash_memory));
     audio_flash_t ops = {read_flash, write_flash, erase_flash};
     audio_store_t store;
+    make_model(&model);
+    assert(audio_model_valid(&model));
     assert(!audio_store_open(&store, ops));
     assert(!audio_store_save_model(&store, &model));
     assert(audio_store_format(&store));
@@ -105,6 +79,40 @@ static void test_storage(void)
         assert(audio_store_open(&store, ops));
         assert(audio_store_load_model(&store, &restored));
         assert(memcmp(&model, &restored, sizeof(model)) == 0);
+    }
+    /* A model that fails its own checks is neither saved nor loaded. */
+    restored = model; restored.threshold = NAN;
+    assert(!audio_store_save_model(&store, &restored));
+    /* A v1 record (three mel templates, 10 812 bytes) from older firmware is
+     * not loaded: the store reports no model and registration starts over. */
+    {
+        uint8_t v1[16 + 3 * (4 + 225 * 16)];
+        memset(v1, 0, sizeof(v1)); v1[0] = 1; v1[4] = 3;
+        audio_record_t h = {.magic = 0x41554431u, .version = 1, .type = 2, .generation = 99, .length = sizeof(v1)};
+        h.crc = audio_crc32(v1, sizeof(v1)); h.acknowledged = UINT32_MAX;
+        h.header_crc = audio_crc32(&h, offsetof(audio_record_t, header_crc));
+        uint8_t saved[AUDIO_SLOT_SIZE * 2];
+        memcpy(saved, flash_memory + AUDIO_SLOT_SIZE, sizeof(saved));
+        for (unsigned slot = 1; slot <= 2; ++slot) {
+            erase_flash(slot * AUDIO_SLOT_SIZE, AUDIO_SLOT_SIZE);
+            write_flash(slot * AUDIO_SLOT_SIZE + AUDIO_BODY_OFFSET, v1, sizeof(v1));
+            write_flash(slot * AUDIO_SLOT_SIZE, &h, sizeof(h));
+        }
+        assert(audio_store_open(&store, ops));
+        assert(!audio_store_load_model(&store, &restored));
+        assert(audio_store_save_model(&store, &model)); /* registering again replaces it */
+        assert(audio_store_open(&store, ops) && audio_store_load_model(&store, &restored));
+        assert(memcmp(&model, &restored, sizeof(model)) == 0);
+        memcpy(flash_memory + AUDIO_SLOT_SIZE, saved, sizeof(saved));
+        assert(audio_store_open(&store, ops) && audio_store_load_model(&store, &restored));
+    }
+    /* A bit flip in the saved model is caught by the CRC. */
+    {
+        unsigned slot = store.valid[2] && store.record[2].generation > store.record[1].generation ? 2u : 1u;
+        flash_memory[slot * AUDIO_SLOT_SIZE + AUDIO_BODY_OFFSET + 40] ^= 4;
+        assert(audio_store_open(&store, ops) && audio_store_load_model(&store, &restored)); /* the other copy */
+        assert(memcmp(&model, &restored, sizeof(model)) == 0);
+        flash_memory[slot * AUDIO_SLOT_SIZE + AUDIO_BODY_OFFSET + 40] ^= 4;
     }
     int16_t pcm[320] = {1, 2, -3}; uint32_t id[4] = {1, 2, 3, 4};
     fail_after = 20; assert(!audio_store_enqueue(&store, pcm, 320, id, 0.01f)); fail_after = -1;
@@ -126,7 +134,7 @@ static void test_storage(void)
 }
 int main(void)
 {
-    test_matching(); test_ring_wav(); test_storage();
-    puts("PASS: matching, noise rejection, ring/WAV, reboot recovery, power cuts, queue bounds, CRC");
+    test_ring_wav(); test_storage();
+    puts("PASS: ring/WAV, v2 model round trip, v1 and corrupt models rejected, power cuts, queue bounds, CRC");
     return 0;
 }

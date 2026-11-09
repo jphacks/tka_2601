@@ -200,11 +200,10 @@ static void enrollAtFullSpeed() {
   quiet(50);
   audio_app_command('F'); storage_worker_step();
   audio_app_command('e');
-  quiet(250);
-  for (int ring = 0; ring < 4; ++ring) {
-    for (unsigned f = 0; f < 50; ++f) { bellFrame(f, 50, 8000.0f); feed(); }
-    quiet(30);
-  }
+  quiet(100);  // 2 s of background
+  for (unsigned f = 0; f < 50; ++f) { bellFrame(f, 50, 8000.0f); feed(); }  // one ring
+  quiet(30);
+  quiet(100);  // the board checks the recorded ring
   storage_worker_step();
   assert(audio_app_model_valid());
   quiet(60);

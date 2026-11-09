@@ -130,7 +130,7 @@ try:
 
     first.ask("FORMAT_AUDIO_STORAGE", r"\[AUDIO\] Storage format complete", 120)
     check("2 MiB partition erased sector by sector and formatted")
-    first.ask("e", r"\[SETUP\] Keep quiet")
+    first.ask("e", r"\[SETUP\] Keep quiet for 2 seconds")
     first.ask("x", r"\[SETUP\] Registration cancelled")
     check("registration starts and cancels")
 

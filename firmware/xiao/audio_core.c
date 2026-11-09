@@ -1,5 +1,4 @@
 #include "audio_core.h"
-#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -80,66 +79,44 @@ float audio_feature(audio_dsp_t *dsp, const int16_t pcm[AUDIO_FRAME], audio_feat
     return sqrtf(energy / AUDIO_FRAME);
 }
 
-static float feature_distance(const audio_feature_t *a, const audio_feature_t *b)
+static int16_t peak_cents(const float *p, unsigned k)
 {
-    float cost = 0;
-    for (unsigned k = 0; k < AUDIO_BANDS; ++k) {
-        float d = a->band[k] - b->band[k]; cost += d * d;
-    }
-    return cost / (2.0f * 127.0f * 127.0f);
+    float a = logf(p[k - 1] + 1e-6f), b = logf(p[k] + 1e-6f), c = logf(p[k + 1] + 1e-6f);
+    float den = a - 2.0f * b + c, delta = den < 0 ? 0.5f * (a - c) / den : 0;
+    delta = fmaxf(-0.5f, fminf(0.5f, delta));
+    float hz = ((float)k + delta) * AUDIO_RATE / 512.0f;
+    return (int16_t)lroundf(1200.0f * log2f(hz / 55.0f));
 }
 
-float audio_distance(const audio_pattern_t *a, const audio_pattern_t *b)
+float audio_pitch(const audio_dsp_t *dsp, int16_t *cent)
 {
-    if (a->length < 10 || b->length < 10 || a->length > AUDIO_MAX_FRAMES || b->length > AUDIO_MAX_FRAMES ||
-        a->length * 4 < b->length * 3 || b->length * 4 < a->length * 3) return FLT_MAX;
-    float previous[AUDIO_MAX_FRAMES + 1], current[AUDIO_MAX_FRAMES + 1];
-    for (unsigned j = 0; j <= b->length; ++j) previous[j] = FLT_MAX;
-    previous[0] = 0;
-    for (unsigned i = 1; i <= a->length; ++i) {
-        for (unsigned j = 0; j <= b->length; ++j) current[j] = FLT_MAX;
-        for (unsigned j = 1; j <= b->length; ++j) {
-            if (fabsf((float)i / a->length - (float)j / b->length) > 0.15f) continue;
-            float d = feature_distance(&a->frame[i - 1], &b->frame[j - 1]);
-            /* Symmetric weighting gives path-independent denominator n + m. */
-            current[j] = fminf(previous[j - 1] + 2 * d,
-                              fminf(previous[j] + d, current[j - 1] + d));
-        }
-        memcpy(previous, current, sizeof(previous));
-    }
-    return previous[b->length] / (a->length + b->length);
+    /* audio_feature() leaves the power spectrum of the frame in real[0..256]. */
+    const float *p = dsp->real;
+    unsigned best = 10; /* 312.5 Hz */
+    for (unsigned k = 11; k <= 128; ++k) /* .. 4000 Hz */
+        if (p[k] > p[best]) best = k;
+    float total = 0;
+    for (unsigned k = 7; k <= 192; ++k) total += p[k]; /* 219-6000 Hz */
+    *cent = 0;
+    if (!(total > 0) || !(p[best] > 0)) return 0;
+    *cent = peak_cents(p, best);
+    return fminf(1.0f, (p[best - 1] + p[best] + p[best + 1]) / total);
 }
 
 bool audio_model_valid(const audio_model_t *m)
 {
-    if (m->version != AUDIO_MODEL_VERSION || m->count != AUDIO_TEMPLATES ||
-        !isfinite(m->gate_rms) || m->gate_rms < 30 || m->gate_rms > 16000 ||
-        !isfinite(m->threshold) || m->threshold < 0.02f || m->threshold > 0.25f) return false;
-    for (unsigned i = 0; i < AUDIO_TEMPLATES; ++i)
-        if (m->pattern[i].length < 10 || m->pattern[i].length > AUDIO_MAX_FRAMES) return false;
-    return true;
-}
-
-float audio_match(const audio_model_t *m, const audio_pattern_t *candidate)
-{
-    if (!audio_model_valid(m)) return FLT_MAX;
-    float best = FLT_MAX;
-    for (unsigned i = 0; i < AUDIO_TEMPLATES; ++i)
-        best = fminf(best, audio_distance(&m->pattern[i], candidate));
-    return best;
-}
-
-bool audio_calibrate(audio_model_t *m)
-{
-    if (m->count != AUDIO_TEMPLATES) return false;
-    float worst = 0;
-    for (unsigned i = 0; i < AUDIO_TEMPLATES; ++i)
-        for (unsigned j = i + 1; j < AUDIO_TEMPLATES; ++j)
-            worst = fmaxf(worst, audio_distance(&m->pattern[i], &m->pattern[j]));
-    if (worst > 0.15f) return false;
-    m->version = AUDIO_MODEL_VERSION;
-    m->threshold = fminf(0.25f, fmaxf(0.08f, worst * 1.8f + 0.03f));
-    return audio_model_valid(m);
+    if (m->version != AUDIO_MODEL_VERSION || m->length < AUDIO_TEMPLATE_MIN_FRAMES ||
+        m->length > AUDIO_TEMPLATE_FRAMES ||
+        !isfinite(m->gate_rms) || m->gate_rms < 30 || m->gate_rms > AUDIO_GATE_MAX ||
+        !isfinite(m->threshold) || m->threshold < AUDIO_THRESHOLD_MIN || m->threshold > AUDIO_THRESHOLD_MAX) return false;
+    unsigned loud = 0;
+    for (unsigned i = 0; i < m->length; ++i) {
+        const audio_frame_t *f = &m->frame[i];
+        if (f->loud > 1 || f->tonal > 1 || f->onset > f->loud || f->cent < 0 || f->cent > AUDIO_CENT_MAX) return false;
+        loud += f->loud;
+    }
+    /* A registered sound starts and ends loud, and is mostly sound. */
+    return m->frame[0].loud && m->frame[m->length - 1].loud && loud * 2 >= m->length;
 }
 
 uint32_t audio_crc32(const void *data, size_t length)

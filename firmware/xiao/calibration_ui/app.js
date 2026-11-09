@@ -478,13 +478,11 @@
   }
 
   // --- Chime page
-  const chimeSteps = ['静かに', '1 回目', '2 回目', '3 回目', '確認'];
+  const chimeSteps = ['静かに', '鳴らす', '保存'];
   const chimeScreens = [
-    ['静かにしてください', '周りの音を 5 秒測っています'],
-    ['チャイムを鳴らしてください', '1 回目'],
-    ['もう一度鳴らしてください', '2 回目'],
-    ['もう一度鳴らしてください', '3 回目'],
-    ['確認のため、もう一度鳴らしてください', '確認'],
+    ['静かにしてください', '周りの音を 2 秒測っています'],
+    ['チャイムを鳴らしてください', '1 回だけ鳴らします'],
+    ['確かめています', '録った音を調べて保存します'],
     ['登録しました', '次に鳴らすと検知します'],
   ];
   let chimeError = '';
@@ -492,7 +490,7 @@
     useStore();
     const {mic, device, tune} = store;
     const {step, message} = chimeProgress(device.lines);
-    const running = step >= 0 && step <= 4, finished = step === 5;
+    const running = step >= 0 && step <= 2, finished = step === 3;
     const needsFormat = mic?.storage === false, registered = !!mic?.model;
     const [title, sub] = running || finished ? chimeScreens[step] : needsFormat ? ['保存領域が未初期化です', ''] : [registered ? '登録済み' : '未登録', ''];
     const fail = error => { chimeError = error.message; changed(); };
@@ -509,7 +507,7 @@
           !running && !needsFormat ? h(Button, {type: 'primary', size: 'large', disabled: !device.connected || device.voiceActive, onClick: () => { chimeError = ''; consoleCommand('e').catch(fail); }}, registered || finished ? '登録し直す' : '登録を始める') : null,
           needsFormat ? h(Button, {type: 'primary', size: 'large', disabled: !device.connected, onClick: () => Modal.confirm({title: '保存領域を初期化します', okText: '初期化', cancelText: 'やめる',
             onOk: () => post('/api/format', {confirm: 'FORMAT_AUDIO_STORAGE'}).catch(fail)})}, '保存領域を初期化') : null,
-          running && store.simulated ? h(Button, {type: 'primary', size: 'large', disabled: step === 0, onClick: () => simulate('chime').catch(fail)}, 'チャイムを鳴らす') : null,
+          running && store.simulated ? h(Button, {type: 'primary', size: 'large', disabled: step !== 1, onClick: () => simulate('chime').catch(fail)}, 'チャイムを鳴らす') : null,
           running ? h(Button, {size: 'large', onClick: () => consoleCommand('x').catch(fail)}, '中止') : null)),
       h(Card, {size: 'small'},
         h('div', {className: 'row'}, h('span', {className: 'text'}, '登録'), h('b', null, registered ? '登録済み' : '未登録')),
