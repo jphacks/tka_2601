@@ -1,6 +1,7 @@
 // 通信の形からドメインへの変換。ボイスエージェントや Edge Function が知らない値を返しても、
 // ここで丸めて画面を落とさない。形が変わったらここを直す
 import type { AssistantProposal, DayHours, TimeSpan } from '../../domain/assistant';
+import type { ChimeAction, ChimeEnrollmentState, ChimePhase, ChimeReason } from '../../domain/chime';
 import type { Device } from '../../domain/device';
 import type { AppNotification } from '../../domain/notification';
 import type { ReceptionCalendar, ReceptionEvent, ReceptionGoogle, ReceptionVisit } from '../../domain/reception';
@@ -95,6 +96,47 @@ export function toDevice(row: Row): Device {
     away_leave_at_door: row.away_leave_at_door === true,
     auto_away: row.auto_away === true,
     extra_instructions: text(row.extra_instructions),
+  };
+}
+
+const CHIME_ACTIONS: Record<ChimeAction, true> = { start: true, cancel: true };
+const CHIME_PHASES: Record<ChimePhase, true> = {
+  idle: true,
+  noise: true,
+  listen: true,
+  analyze: true,
+  saving: true,
+  done: true,
+  failed: true,
+  cancelled: true,
+};
+const CHIME_REASONS: Record<ChimeReason, true> = {
+  too_noisy: true,
+  too_short: true,
+  clipped: true,
+  no_recording: true,
+  unstable: true,
+  background_matches: true,
+  busy: true,
+};
+
+// bigint の列は数でも文字列でも届く
+function sequence(value: unknown): number {
+  const number = typeof value === 'string' ? Number(value) : value;
+  return typeof number === 'number' && Number.isFinite(number) && number >= 0 ? number : 0;
+}
+
+// 知らない phase は idle、知らない reason は null に丸める（失敗の画面は reason が null でも出せる）
+export function toChimeEnrollment(row: Row): ChimeEnrollmentState {
+  return {
+    request_seq: sequence(row.request_seq),
+    action: nullableOneOf(CHIME_ACTIONS, row.action, null),
+    requested_at: nullableText(row.requested_at),
+    handled_seq: sequence(row.handled_seq),
+    phase: oneOf(CHIME_PHASES, row.phase, 'idle'),
+    reason: nullableOneOf(CHIME_REASONS, row.reason, null),
+    registered: row.registered === true,
+    reported_at: nullableText(row.reported_at),
   };
 }
 

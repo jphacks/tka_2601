@@ -38,6 +38,11 @@ export const SYMBOLS = {
   door: { ios: 'door.left.hand.closed', android: 'door_front' },
   card: { ios: 'creditcard', android: 'credit_card' },
   scissors: { ios: 'scissors', android: 'content_cut' },
+  device: { ios: 'hifispeaker', android: 'speaker' },
+  wifi: { ios: 'wifi', android: 'wifi' },
+  microphone: { ios: 'mic', android: 'mic' },
+  waveform: { ios: 'waveform', android: 'graphic_eq' },
+  alert: { ios: 'exclamationmark.circle', android: 'error' },
 } satisfies Record<string, SymbolName>;
 
 const INTENT_SYMBOLS: Record<Intent, SymbolName> = {
