@@ -147,7 +147,7 @@ bash run.sh build
 - 報告：`audio_app_enroll_status()`の段階が変わるたびに、次のネットワークタスクの周期（200 ms）で送ります。登録の実行中（noise・listen・analyze・saving）は60秒ごとに同じ内容を再送します。idleと、終わった後の done・failed・cancelled には再送しません（終わった状態は変わらないため。契約は「idle以外」の再送としているので、この点だけ狭めています）。失敗した報告は同じ内容なら5秒から60秒の間隔で再送し、別の段階になれば待たずに送ります。`registered`は`audio_app_model_valid()`です。
 - 段階の対応：`AUDIO_ENROLL_*`を小文字にした名前（IDLE→idle … CANCELLED→cancelled）。`reason`は`FAILED`のときだけ付け、それ以外は`null`です。`chime_reason_text()`と同じ語（`too_noisy`・`too_short`・`clipped`・`no_recording`・`unstable`・`background_matches`）に対応させ、検出器の理由がない失敗（通話の開始、取り込みの途切れ）は`no_recording`にします。`busy`は本体が依頼を受けられなかったときだけです。listen中の「もう一度鳴らす」（SHORT・CLIPPED）は契約に項目がないため報告しません。
 - 409は連番の食い違いです。同じ報告を繰り返さず、すぐに取得し直し、報告は上の間隔で待ちます。クラウドの`request_seq`が処理済みより小さいときは、クラウドに合わせて処理済みを下げ、その値で報告し直します。
-- 再起動：処理済みの連番は保存しません。再起動後に最初に取得した応答が`paired:true`なら、その`request_seq`を処理済みとして採用します。古い開始の依頼が再起動で再実行されないためで、再起動の直前に出た依頼は実行されません（アプリから出し直す）。同じ起動の中で先に`paired:false`を受けてから`paired:true`になったときは、ペアリングの直後の依頼を実行するため、最初の応答の依頼も新しい依頼として扱います。
+- 再起動：処理済みの連番は保存しません。再起動後に最初に取得した応答が`paired:true`のとき、有効なチャイムのモデルを持つ本体（`audio_app_model_valid()`が真）は、その`request_seq`を処理済みとして採用します。登録済みの本体が、再起動で古い依頼を再実行しないためです。モデルがまだない本体（初回の設定中）は採用せず、保留中の`start`・`cancel`をそのまま実行します。本体がオフラインの間に出した依頼を、初回の設定で失わないためです。同じ起動の中で先に`paired:false`を受けてから`paired:true`になったときも、最初の応答の依頼を新しい依頼として扱います。登録済みの本体では、再起動の直前に出した依頼は実行されないので、アプリから出し直します。
 - 登録は動作モードによらず使えます（停止を含む）。同期処理は`device_mode`を見ません。通話の開始は`audio_app`が登録を失敗にし、通話が終わってから報告します。
 
 ホストテスト（`tests/chime_enroll_protocol_test.c`、`tests/chime_enroll_sync_test.c`）は、模擬のHTTPと音声タスクで、解析、取得の間隔、連番の重複排除、開始と中止、busyでの拒否、段階の即時報告と再送、409、未ペアでの取得、再起動後の連番を確かめます。ESP32-S3 向けのビルド、QEMU、実際のサーバーと実機での登録の流れは、まだ確かめていません（#48）。
@@ -278,7 +278,7 @@ QEMU には Wi-Fi と I2S のデータがないため、ネットワークと音
 - `esp32:esp32:XIAO_ESP32S3` 向けのビルド（プログラム 32%、静的 RAM 61%）
 - チャイム検出の作り直し（Issue #59）の後に実行したのは、`bash run.sh test`（チャイム検出器の単体テストと `audio_app` のテストを含む）、`bash run.sh eval`（合成音）、ホスト版ファームの -Werror でのビルドと、接続先なしでの「1 回登録→検知→通話開始」の確認だけです。ESP32-S3 向けのビルド、QEMU、`e2e`、`browser`、`bench` はこの変更の後にまだ実行していません。下の項目はそれより前の結果です
 - `bash run.sh test`：すべて成功。動作モードの追従（厳密な解析、最後の正常値の保持と再起動後の復元、停止モードでの通話の遮断、取得とheartbeatの間隔、適用モードの報告の条件・再試行・重複なし）は、模擬のHTTPとNVSで確かめた
-- アプリからのチャイム登録（Issue #62）：`bash run.sh test` の `chime_enroll_protocol`（解析・本文）と `chime_enroll_sync`（21 シナリオ）が成功。ESP32-S3 向けのビルド、QEMU、`e2e` は実行していない
+- アプリからのチャイム登録（Issue #62）：`bash run.sh test` の `chime_enroll_protocol`（解析・本文）と `chime_enroll_sync`（24 シナリオ）が成功。ESP32-S3 向けのビルド、QEMU、`e2e` は実行していない
 - `bash run.sh e2e`：5 件すべて成功（動作モードの追加後も実施）
 - `bash run.sh qemu`：すべて成功。確かめたのは次の項目です。
   - 実バイナリの起動、PSRAM、パーティション、全タスクの起動

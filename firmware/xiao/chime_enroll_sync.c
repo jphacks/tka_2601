@@ -25,10 +25,10 @@
 typedef struct { audio_enroll_phase_t phase; chime_report_reason_t reason; bool registered; uint32_t handled_seq; } report_t;
 typedef enum { WAIT_NONE, WAIT_START, WAIT_CANCEL } wait_t;
 
-/* Boot baseline. The first paired answer of a boot is adopted as already handled,
- * so an old request never restarts enrollment after a reboot. Only when this boot
- * saw the device unpaired before that answer is the answer treated as new: pairing
- * happened now, and the app may have asked for enrollment right after. */
+/* Boot baseline. The first paired answer of a boot is adopted as already handled, so an old
+ * request never restarts enrollment after a reboot, but only when the device already holds a valid
+ * chime model. Without a model (onboarding), or when this boot saw the device unpaired before that
+ * answer (pairing happened now), the answer is a new request and is acted on. */
 static bool baseline_known, saw_unpaired_first, paired_last;
 static uint32_t handled_seq;
 static bool polled, poll_force;
@@ -134,7 +134,9 @@ static void poll(void) {
     paired_last=true;
     if(!baseline_known) {
         baseline_known=true;
-        if(!saw_unpaired_first) { handled_seq=request.request_seq; return; }
+        /* A device that already holds a chime model ignores what was asked before the reboot. One without a model
+         * (onboarding) acts on it, so a request made while it was offline is not lost. */
+        if(!saw_unpaired_first && audio_app_model_valid()) { handled_seq=request.request_seq; return; }
         handled_seq=0;
     }
     if(request.request_seq<handled_seq) {

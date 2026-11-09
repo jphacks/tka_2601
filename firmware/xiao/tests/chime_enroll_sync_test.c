@@ -162,18 +162,41 @@ static void poll_cadence_follows_the_device_state(void)
     get_status(401,"{\"error\":\"unauthorized\"}"); run_for(30000,200);
     check(start_calls==0);
 }
-static void boot_adopts_the_cloud_sequence_as_handled(void)
+static void a_registered_boot_adopts_the_cloud_sequence_as_handled(void)
 {
-    /* An old start request is still stored in the cloud when the device reboots. */
-    boot(); get_is(true,5,"start");
+    /* An old start request is still stored in the cloud when a device that has a chime model reboots. */
+    boot(); fake_model_valid=true; get_is(true,5,"start");
     run_for(10000,200);
     check(start_calls==0 && fake_status.phase==AUDIO_ENROLL_IDLE);
-    check(put_count==1 && last_put_is("{\"handled_seq\":5,\"phase\":\"idle\",\"reason\":null,\"registered\":false}"));
-    unsigned polls=get_route.hits; run_for(30000,200);
+    check(put_count==1 && last_put_is("{\"handled_seq\":5,\"phase\":\"idle\",\"reason\":null,\"registered\":true}"));
+    unsigned polls=get_route.hits; run_for(60000,200);
     check(get_route.hits>polls && start_calls==0 && put_count==1); /* polled again, still not started */
     /* The next request after the boot baseline is real. */
-    get_is(true,6,"start"); run_for(6000,200);
+    get_is(true,6,"start"); run_for(16000,200);
     check(start_calls==1 && fake_status.phase==AUDIO_ENROLL_NOISE);
+}
+static void an_unregistered_boot_executes_the_pending_request(void)
+{
+    /* No chime model yet: a start made while the device was offline runs on the first paired answer. */
+    boot(); get_is(true,5,"start");
+    run_for(6000,200);
+    check(start_calls==1 && fake_status.phase==AUDIO_ENROLL_NOISE);
+    check(count_puts_with("\"handled_seq\":5,\"phase\":\"noise\"")==1);
+    run_for(60000,200); check(start_calls==1); /* deduped afterwards */
+}
+static void an_unregistered_boot_executes_a_pending_cancel(void)
+{
+    boot(); get_is(true,5,"cancel");
+    run_for(6000,200);
+    check(cancel_calls==1 && start_calls==0);
+    check(last_put_is("{\"handled_seq\":5,\"phase\":\"cancelled\",\"reason\":null,\"registered\":false}"));
+}
+static void an_unregistered_boot_with_no_action_just_records_the_sequence(void)
+{
+    boot(); get_is(true,5,NULL);
+    run_for(6000,200);
+    check(start_calls==0 && cancel_calls==0);
+    check(last_put_is("{\"handled_seq\":5,\"phase\":\"idle\",\"reason\":null,\"registered\":false}"));
 }
 static void pairing_during_this_boot_makes_the_first_request_new(void)
 {
@@ -384,7 +407,10 @@ int main(void)
 {
     SCENARIO(unpaired_keeps_polling_and_does_nothing);
     SCENARIO(poll_cadence_follows_the_device_state);
-    SCENARIO(boot_adopts_the_cloud_sequence_as_handled);
+    SCENARIO(a_registered_boot_adopts_the_cloud_sequence_as_handled);
+    SCENARIO(an_unregistered_boot_executes_the_pending_request);
+    SCENARIO(an_unregistered_boot_executes_a_pending_cancel);
+    SCENARIO(an_unregistered_boot_with_no_action_just_records_the_sequence);
     SCENARIO(pairing_during_this_boot_makes_the_first_request_new);
     SCENARIO(a_start_runs_reports_every_phase_at_once_and_ends_registered);
     SCENARIO(a_cancel_is_reported_as_cancelled);
