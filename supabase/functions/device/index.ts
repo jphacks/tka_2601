@@ -20,6 +20,15 @@
 //     XIAO向け。本体が実際に適用しているモードの報告。本文: {"mode": "normal|omakase|away|off"}（他の項目は 400）
 //     → {"applied_mode": "...", "applied_mode_at": "..."}。devices.applied_mode / applied_mode_at だけを書き、
 //       アプリが保存した devices.mode は変えない。未ペアは 409
+//   GET /functions/v1/device/chime-enrollment
+//     XIAO向け。アプリが出したチャイム登録の依頼。{"contract_version": 1, "paired": true, "request_seq": 3, "action": "start"}。
+//     依頼がなければ request_seq が 0、action が null。未ペアも同じ形で paired が false
+//   PUT /functions/v1/device/chime-enrollment-status
+//     XIAO向け。登録の進捗の報告。本文: {"handled_seq": 3, "phase": "listen", "reason": null, "registered": false}
+//     （4項目だけ。phase は idle・noise・listen・analyze・saving・done・failed・cancelled。reason は failed のときだけ
+//     too_noisy・too_short・clipped・no_recording・unstable・background_matches・busy）
+//     → {request_seq, action, requested_at, handled_seq, phase, reason, registered, reported_at}。
+//       handled_seq が request_seq を超える・今の handled_seq より小さい・未ペアは 409
 //   GET /functions/v1/device/reservations?from=&to=（31 日まで）
 //     → {"provider": "monban", "reservations": [...]}。電話番号とメモは返さない
 //   POST /functions/v1/device/reservations

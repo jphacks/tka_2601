@@ -59,7 +59,7 @@ MONBAN は、インターホンに後付けして来客に AI が応答するサ
 | FR-6 | 来客、会話の文字、対応結果を Supabase に保存し、スマホアプリで見る（[history.md](history.md)） | Must |
 | FR-7 | 来客時と対応後にスマホアプリへ通知する（[history.md](history.md)） | Must |
 | FR-8 | 住人がアプリで「AI への追加の指示」と「外出時の置き配の許可」を設定し、会話に反映する（[5.6](#56-house_rules)） | Must |
-| FR-9 | 店や家族でグループを作り、招待で参加し、本体をペアリングで結び付ける（[history.md](history.md)。グループと招待は実装済み。ペアリングは Supabase だけで、アプリにコードを入れる画面はない） | － |
+| FR-9 | 店や家族でグループを作り、招待で参加し、本体をペアリングで結び付ける（[history.md](history.md)。グループと招待、アプリでペアリングコードを入れる画面は実装済み） | － |
 | FR-10 | 店が予約先（MONBAN の予約帳、Google カレンダー、Square 予約（読み取りのみ）、ホットペッパービューティー）を選び、アプリで予約の一覧とカレンダーを見る（[reservations.md](reservations.md)） | Must |
 | FR-11 | AI がインターホンで受けた予約は仮予約とし、店がアプリの予約一覧で確定する（[reservations.md 2.2](reservations.md#22-仮予約の承認)） | Must |
 | FR-12 | 予約の追加、変更、キャンセル、予約客の到着、本体や予約先の異常をアプリへ通知し、種類ごとにオンオフできる（[reservations.md 4章](reservations.md#4-通知)） | Must |
@@ -445,9 +445,10 @@ PSoC 6 のフラッシュに保存する音声は次の2つにする。会話エ
 
 ### 6.1 チャイム検知（PSoC 6）
 
-`firmware/psoc6` に実装済みの方式を使う。
+登録の手順は XIAO 版の設計（[chime-detection/design.md](specs/chime-detection/design.md)）に従う。特徴と照合、保存、対象の音は `firmware/psoc6` の実装済みの方式で、XIAO 版では設計の側が優先する（照合は SPRING 法の部分一致 DTW、特徴に音程と立ち上がりを足す）。
 
-- 登録: 環境音を 5 秒測り、チャイムを3回鳴らして特徴を登録し、別の1回で確かめる。
+- 登録: 親機のピンポンを1回鳴らして登録する。環境音を 2 秒測り、1 回の鳴動を待ち、約 3 秒で解析し、保存する。
+- 登録の開始: アプリの「ピンポンを1回鳴らす」で始め、取り消しもできる。アプリの依頼は Supabase の `device_chime_enrollment`（`request_chime_enrollment`）に置き、本体が `GET /functions/v1/device/chime-enrollment` で読み、進捗（`noise`、`listen`、`analyze`、`saving`、`done`、`failed`、`cancelled`）と失敗の理由を `PUT /functions/v1/device/chime-enrollment-status` で報告する。契約は `supabase/README.md`。
 - 特徴と照合: 16 帯域の対数メル特徴を作り、時間のずれを制限した DTW で登録した特徴と比べる。
 - 保存: 登録した特徴は外付け QSPI フラッシュに2つ写しを置き、CRC で検証する。電源が途中で切れても前の登録に戻せる。
 - 対象: 0.2〜4 秒の音。入力が基準を 0.5 秒下回ったら区間の終わりとする。
