@@ -17,6 +17,7 @@
 | `migrations/20261017073719_extra_instructions_limit.sql` | AI への追加の指示を 350 字までにする |
 | `migrations/20261102000000_shop_reservations.sql` | 店舗の設定とメニュー、予約帳、Google カレンダーの接続、通知の種類と記録、本体の死活通信、pg_cron の追加 |
 | `migrations/20261102000001_review_followups.sql` | 予約の冪等キー、Google への書き込みの記録を書き込み id に替える変更、差分の読み取りの権利、アカウントの削除で使う通知の送り先の片付け |
+| `migrations/20261109000000_chime_enrollment.sql` | チャイム登録の依頼（アプリ）と進捗の報告（本体）の表 `device_chime_enrollment` と、その RPC（Issue #61） |
 | `functions/device/` | 本体と中継が来客と予約を書き、設定を読むための Edge Function |
 | `functions/push/` | 来客の通知を作って端末に送り、送信待ちを再送する Edge Function |
 | `functions/reservations/` | アプリが予約と予約先を読み書きし、Google カレンダーと Square に接続する Edge Function。Square の Webhook も受ける |
@@ -194,6 +195,8 @@ POST /functions/v1/assistant/parse
 | `GET /functions/v1/device/settings`（`/mode` も同じ） | なし | `{"contract_version": 1, "paired": true, "mode": "normal", "away_leave_at_door": false, "auto_away": false, "extra_instructions": "", "shop": {...}}` |
 | `GET /functions/v1/device/mode-settings` | なし | `{"contract_version": 1, "paired": true, "mode": "normal"}`。`mode` は `normal`、`omakase`、`away`、`off`（停止）。グループに結び付く前は `paired` が `false` で `mode` は `null`。本体が小さな受信バッファで読むための最小の形 |
 | `PUT /functions/v1/device/mode-status` | `{"mode": "normal"}`。`mode` は `normal`、`omakase`、`away`、`off` のどれか1つだけ。他の項目や綴りの違いは 400 | `{"applied_mode": "normal", "applied_mode_at": "..."}`。未ペアは 409 |
+| `GET /functions/v1/device/chime-enrollment` | なし | `{"contract_version": 1, "paired": true, "request_seq": 3, "action": "start"}`。アプリが出したチャイム登録の依頼。依頼がなければ `request_seq` が 0 で `action` が `null`。未ペアは `paired` が `false` で、同じく依頼なし（下の「チャイム登録」） |
+| `PUT /functions/v1/device/chime-enrollment-status` | `{"handled_seq": 3, "phase": "listen", "reason": null, "registered": false}`。4項目だけで、他の項目や綴りの違いは 400 | `{"request_seq", "action", "requested_at", "handled_seq", "phase", "reason", "registered", "reported_at"}`。連番が飛ぶ・戻る、未ペアは 409 |
 | `PUT /functions/v1/device/state` | `{"auto_away_active": true}` | `{"auto_away_active": true}` |
 | `PUT /functions/v1/device/visits/<来客 id>` | `chimed_at`、`mode`、`status`、`answered_at`、`ended_at`、`end_reason`、`intent`、`company`、`outcome`、`messages`（任意） | `{"id": "...", "status": "ended", "applied": true}` |
 
@@ -212,6 +215,29 @@ POST /functions/v1/assistant/parse
 - `messages` は `[{"seq": 1, "speaker": "visitor", "text": "...", "spoken_at": "..."}]` の形。同じ `seq` は足さない。
 - `applied` は、送った内容を来客に反映したかを示す。古い送信だと `false` になる。
 - 値の誤りは 400、他の本体の来客への書き込みは 403 を返す。
+
+### チャイム登録（アプリの依頼と本体の進捗）
+
+アプリの「ピンポンを1回鳴らす」操作を本体に届け、本体の進捗をアプリに返す。登録の中身は `docs/specs/chime-detection/design.md`（静音 2 秒 → 1 回待つ → 約 3 秒の解析 → 保存）で、ここでは2者のやり取りだけを決める。
+
+表 `public.device_chime_enrollment`（`device_id` が主キーで、本体を消すと行も消える）。行は最初の依頼か最初の報告で作り、行がなければ連番は両方 0 として読む。
+
+| 側 | 列 | 中身 |
+|---|---|---|
+| 希望（アプリが書く） | `request_seq` | 依頼ごとに 1 ずつ増える連番（0〜4294967295）。0 は依頼なし |
+| | `action` | `start` か `cancel`。`request_seq` が 0 の間は `null` |
+| | `requested_at` | 依頼の時刻 |
+| 報告（本体が書く） | `handled_seq` | 本体が処理した依頼の連番。`request_seq` を超えない |
+| | `phase` | `idle`、`noise`、`listen`、`analyze`、`saving`、`done`、`failed`、`cancelled` |
+| | `reason` | `phase` が `failed` のときだけ。`too_noisy`、`too_short`、`clipped`、`no_recording`、`unstable`、`background_matches`、`busy`、または `null` |
+| | `registered` | 本体が有効なチャイムのモデルを持つか。依頼では変わらず、報告だけが決める |
+| | `reported_at` | 報告をクラウドが受けた時刻 |
+
+- **依頼（アプリ）**: `rpc('request_chime_enrollment', {p_device_id, p_action})` が新しい `request_seq` を返す。呼べるのは、その本体のグループの住人だけ。本体の行をロックして、同じ本体への依頼と報告を1つずつ処理する。`request_seq` を 1 増やし、`action` と `requested_at` を書き、`phase` を `idle`、`reason` を `null` に戻す（前の依頼の進捗や失敗の理由を見せないため。`handled_seq` と `registered` は残す）。他のグループの本体と存在しない本体は `PT404`、グループに結び付く前の本体は `PT409`、`action` が `start` と `cancel` 以外は `22023`、連番が上限なら `PT409`。
+- **読み取り（アプリ）**: `from('device_chime_enrollment').select()` で、自分のグループの本体の行だけを読める（RLS）。直接の INSERT・UPDATE・DELETE は 42501。アプリが進捗として見るのは `handled_seq = request_seq` のときの `phase` と `reason` で、`handled_seq < request_seq` の間は本体がまだ依頼を処理していない（`phase` は `idle`）。
+- **取得（本体）**: `device_get_chime_enrollment(p_device_id)`（service_role 専用）。Edge Function の `GET chime-enrollment` は、そのうち `request_seq` と `action` だけを返す。本体は `request_seq` が自分の `handled_seq` より大きければ、`action` を実行する。
+- **報告（本体）**: `device_report_chime_enrollment(p_device_id, p_handled_seq, p_phase, p_reason, p_registered)`（service_role 専用）。Edge Function の `PUT chime-enrollment-status` が本体の鍵の本人の `device_id` で呼ぶ。`handled_seq` は、`request_seq` 以下で、今の `handled_seq` 以上でなければならず、外れると `PT409`（Edge Function では 409）。同じ連番の報告は何度でも受ける（再送と、同じ依頼の中での `phase` の進み）。未ペアは `PT409`、存在しない本体は `PT404`、`phase`・`reason` が許す値でない、`reason` が `failed` 以外に付いている、`registered` が `null` のときは `22023`（Edge Function では 400）。
+- 連番は uint32 の範囲（0〜4294967295）に限る。本体の整数型に合わせるため。
 
 会話サーバーの中継（labpc）は、会話の始めに PSoC から受け取ったデバイス鍵で `GET /functions/v1/device/settings` を一度呼び、`extra_instructions` と `away_leave_at_door` を会話エージェントに渡す。中継には secret key を置かない。`extra_instructions` は 350 字までなので、基本の規則と合わせても 800 字に収まる。
 
@@ -259,9 +285,10 @@ App Store の審査用のアカウントは `supabase/scripts/create_review_acco
 
 | 試験 | 実行 | 内容 |
 |---|---|---|
-| pgTAP（304 件） | `supabase test db` | H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送、店舗の設定とメニューの権限、予約帳と接続（Square を含む）を直接読めないこと、通知のオンオフと操作した本人の除外、接続切れ、差分を読む呼び出し、本体が適用しているモードの報告（`device_applied_mode.test.sql`） |
+| pgTAP（384 件） | `supabase test db` | チャイム登録の依頼と報告（`chime_enrollment.test.sql`。直接の書き込みの拒否、家ごとの分離、依頼と取り消し、連番の逆戻りと飛び越え、不正な phase と reason、未ペアの本体、service_role 専用の RPC）、H1、H2、H3、H3b、H4、デバイス鍵の保護、状態の後戻りの防止、Webhook の送信待ち、グループと招待、メンバーの名前、設定、ペアリング、通知の送信待ちと再送、店舗の設定とメニューの権限、予約帳と接続（Square を含む）を直接読めないこと、通知のオンオフと操作した本人の除外、接続切れ、差分を読む呼び出し、本体が適用しているモードの報告（`device_applied_mode.test.sql`） |
 | 結合（154 件） | `deno run --allow-read --allow-run --allow-net --allow-env supabase/tests/e2e_local.ts` | Data API での H1 と H3b、device での H2 と H4（同時の作成を含む）、グループの作成から招待での参加まで、ペアリング、設定、Webhook から Expo までと通知の文面、pg_cron の再送、予約帳の操作と通知、AI の仮予約と重なりの拒否、予約先の切り替え、Square の未設定と未接続、assistant の認証と入力の検証と「書き込まない」こと |
 | Edge Function（210 件） | `deno test --allow-env supabase/functions/` | 通知の条件と文面、Expo の試し直し、予定と予約の変換、差分の分類とまとめ通知、410 の扱い、自分の書き込みの除外、OAuth、更新トークンの暗号化、予約先の振り分け、device の経路、Square（状態の対応、ページングと期間の分割、顧客とメニュー、読み取り専用、合流、署名、Webhook、トークンの更新）、自然言語の入力（案への変換、文との突き合わせ、Ollama の成功と失敗、未設定の 503） |
+| 結合（チャイム登録、50 件） | `SUPABASE_TELEMETRY_DISABLED=1 deno run --frozen --cached-only --config supabase/functions/device/deno.json --allow-read --allow-env --allow-run=supabase,docker --allow-net=127.0.0.1,localhost supabase/tests/chime_http_local.ts` | 起動済みのローカルの Supabase に、本番の device ハンドラーを一時的なループバックの HTTP で立てて通す。住人の Data API の依頼、本体の GET と PUT、住人の読み取り、他のグループの拒否、連番の逆戻りと飛び越え、不正な本文を確かめ、作った行は終わりに消す。`device` の試験は `deno test --config supabase/functions/device/deno.json --allow-env supabase/functions/device/` で単独でも流せる |
 
 結合試験は、シードを入れたローカルで流す。Expo には実在しないトークンで送るため、Expo から `DeviceNotRegistered` の ticket が返れば正しい。シミュレーターなどが本物のトークンを登録していれば、その端末にも試験の通知が届く。デモデータ（`scripts/seed_demo.ts`）が入っていても壊さず、試験で作った行だけを片付ける。マイグレーションを変えたら `supabase db advisors --local` も通す。
 
