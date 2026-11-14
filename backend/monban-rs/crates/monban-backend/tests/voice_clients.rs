@@ -1030,3 +1030,64 @@ async fn warm_up_schedule_runs_once_after_success() {
 
 #[path = "support/relay_latency.rs"]
 mod relay_latency;
+
+/// The fake upstream withholds its second delta and DONE until the speaker writes the
+/// first voiced sample to the device. A buffered implementation would deadlock here.
+#[tokio::test]
+async fn device_hears_first_delta_before_second_delta_and_no_retry_replays_partial_audio() {
+    for fail_after_first in [false, true] {
+        let release = Arc::new(tokio::sync::Notify::new());
+        let release_server = release.clone();
+        let server = fake(handler(move |_, _| {
+            let release = release_server.clone();
+            let body = futures::stream::unfold(0, move |step| {
+                let release = release.clone();
+                async move {
+                    let payload = match step {
+                        0 | 1 => {
+                            if step == 1 {
+                                release.notified().await;
+                            }
+                            if step == 1 && fail_after_first {
+                                "data: {\"type\":\"speech.audio.error\"}\n\n".to_owned()
+                            } else {
+                                let amplitude = 600_i16 + 300 * step;
+                                let pcm = amplitude.to_le_bytes().repeat(3200);
+                                let data = base64::engine::general_purpose::STANDARD.encode(pcm);
+                                format!("data: {}\n\n", json!({"type":"speech.audio.delta","delta": data}))
+                            }
+                        }
+                        2 => "data: [DONE]\n\n".to_owned(),
+                        _ => return None,
+                    };
+                    Some((Ok::<_, Infallible>(bytes::Bytes::from(payload)), step + 1))
+                }
+            });
+            response(200, "text/event-stream", Body::from_stream(body))
+        })).await;
+        let settings = settings_for(&server.base, &[]);
+        let models = monban_backend::voice::adapters::live_models(settings.clone(), reqwest::Client::new());
+        let sink = Arc::new(GreetingSink::default());
+        let speaker_sink = sink.clone();
+        let turn = tokio::spawn(async move {
+            let agent = Box::new(DoorAgent::new("", settings.max_house_rules_chars, &settings.house_rules));
+            Session::new(agent).greet(models.speech.as_ref(), speaker_sink.as_ref()).await
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while sink.pcm.lock().unwrap().len() < 640 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("first device frame must precede second TTS delta");
+        assert_eq!(&sink.pcm.lock().unwrap()[..640], &600_i16.to_le_bytes().repeat(320));
+        release.notify_one();
+        let result = turn.await.unwrap();
+        assert_eq!(result.is_err(), fail_after_first);
+        assert_eq!(server.count("/v1/audio/speech"), 1);
+        if !fail_after_first {
+            let mut expected = 600_i16.to_le_bytes().repeat(3200);
+            expected.extend(900_i16.to_le_bytes().repeat(3200));
+            expected.extend(vec![0; 2 * livekit_marker_bytes(16000)]);
+            assert_eq!(*sink.pcm.lock().unwrap(), expected);
+        }
+    }
+}

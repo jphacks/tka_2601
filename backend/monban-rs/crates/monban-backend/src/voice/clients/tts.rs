@@ -5,7 +5,7 @@
 //! one `POST /v1/audio/speech`, each sentence's audio gets [`trim_delayed_audio_tail`], and
 //! the result is the concatenation (mono s16le at `tts_sample_rate`).
 //!
-//! The whole call is retried like livekit's `ChunkedStream` with the session's default
+//! Before any PCM reaches a consumer, the whole call is retried like livekit's `ChunkedStream` with the session's default
 //! `APIConnectOptions()` (3 retries after 0.1 s, 2 s, 2 s, only for retryable errors).
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,12 +15,12 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use tokio::sync::OnceCell;
+use tokio::sync::{mpsc, OnceCell};
 
 use monban_policy::agent_rules::{DOOR_GREETING, RECEPTION_GREETING};
 
 use super::error::{livekit_retry_interval, ClientError, Service};
-use super::text::{py_strip, split_sentences, trim_delayed_audio_tail};
+use super::text::{py_strip, sentence_ending_runs, split_sentences, trim_delayed_audio_tail};
 use crate::config::Settings;
 use crate::services::{content_type, LineSplitter};
 
@@ -114,6 +114,14 @@ impl SpeechCppTts {
     /// Synthesize one reply: mono s16le PCM at [`sample_rate`](Self::sample_rate). Empty
     /// for a blank text.
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, ClientError> {
+        self.synthesize_to(text, None).await
+    }
+
+    pub(crate) async fn synthesize_to(
+        &self,
+        text: &str,
+        tx: Option<&mpsc::Sender<Vec<u8>>>,
+    ) -> Result<Vec<u8>, ClientError> {
         let entry = match text {
             DOOR_GREETING => Some(&self.greetings.door),
             RECEPTION_GREETING => Some(&self.greetings.reception),
@@ -122,15 +130,26 @@ impl SpeechCppTts {
         if let Some(entry) = entry {
             let started = Instant::now();
             let cache_hit = entry.get().is_some();
-            let result = entry.get_or_try_init(|| self.synthesize_uncached(text)).await.cloned();
+            let mut streamed_by_this_call = false;
+            let result = entry.get_or_try_init(|| async {
+                streamed_by_this_call = true;
+                self.synthesize_uncached(text, tx).await
+            }).await;
+            if let (Some(tx), Ok(pcm)) = (tx, &result) {
+                if !streamed_by_this_call {
+                    send_audio(tx, pcm).await?;
+                }
+            }
+            // The caller with a sink already owns its PCM; avoid cloning the cached reply.
+            let result = result.map(|pcm| if tx.is_none() { pcm.clone() } else { Vec::new() });
             tracing::info!(cache_hit, elapsed_ms = started.elapsed().as_millis() as u64,
                 ok = result.is_ok(), "tts_fixed_greeting_complete");
             return result;
         }
-        self.synthesize_uncached(text).await
+        self.synthesize_uncached(text, tx).await
     }
 
-    async fn synthesize_uncached(&self, text: &str) -> Result<Vec<u8>, ClientError> {
+    async fn synthesize_uncached(&self, text: &str, tx: Option<&mpsc::Sender<Vec<u8>>>) -> Result<Vec<u8>, ClientError> {
         let mut sentences = split_sentences(text);
         let stripped = py_strip(text);
         if sentences.is_empty() && !stripped.is_empty() {
@@ -139,7 +158,8 @@ impl SpeechCppTts {
         tracing::info!(text_chars = text.chars().count(), sentences = sentences.len(), "tts_text_split");
         let mut attempt = 0;
         loop {
-            match self.synthesize_once(&sentences).await {
+            let mut sent = false;
+            match self.synthesize_once(&sentences, tx, &mut sent).await {
                 Ok(pcm) if pcm.is_empty() && !stripped.is_empty() => {
                     // ChunkedStream: "no audio frames were pushed" (a retryable APIError).
                     let error = ClientError::protocol(Service::Tts, "no audio frames were pushed");
@@ -149,7 +169,7 @@ impl SpeechCppTts {
                 }
                 Ok(pcm) => return Ok(pcm),
                 Err(error) => {
-                    if !error.retryable() || attempt >= MAX_RETRY {
+                    if sent || !error.retryable() || attempt >= MAX_RETRY {
                         return Err(error);
                     }
                     tracing::warn!("failed to synthesize speech: {error}, retrying");
@@ -160,18 +180,23 @@ impl SpeechCppTts {
         }
     }
 
-    async fn synthesize_once(&self, sentences: &[String]) -> Result<Vec<u8>, ClientError> {
+    async fn synthesize_once(
+        &self,
+        sentences: &[String],
+        tx: Option<&mpsc::Sender<Vec<u8>>>,
+        sent: &mut bool,
+    ) -> Result<Vec<u8>, ClientError> {
         let mut audio = Vec::new();
         for sentence in sentences {
-            let pcm = self.sentence_pcm(sentence).await?;
-            if !pcm.is_empty() {
-                audio.extend_from_slice(trim_delayed_audio_tail(&pcm, self.settings.tts_sample_rate, sentence));
-            }
+            let mut body = SentenceAudio::new(self.settings.tts_sample_rate, sentence, tx, sent);
+            self.read_sentence(sentence, &mut body).await?;
+            let pcm = body.finish().await?;
+            audio.extend(pcm);
         }
         Ok(audio)
     }
 
-    async fn sentence_pcm(&self, sentence: &str) -> Result<Vec<u8>, ClientError> {
+    async fn read_sentence(&self, sentence: &str, body: &mut SentenceAudio<'_>) -> Result<(), ClientError> {
         let settings = &self.settings;
         let started = Instant::now();
         tracing::info!(text_chars = sentence.chars().count(), "tts_api_post");
@@ -192,7 +217,6 @@ impl SpeechCppTts {
         }
         let media_type = content_type(&response);
         let mut stream = response.bytes_stream();
-        let mut pcm = Vec::new();
         let mut first_pcm = false;
         match media_type.as_str() {
             "text/event-stream" => {
@@ -219,7 +243,7 @@ impl SpeechCppTts {
                                     first_pcm = true;
                                     tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, "tts_first_pcm");
                                 }
-                                pcm.extend_from_slice(&audio);
+                                body.push(&audio).await?;
                             }
                         }
                     }
@@ -235,18 +259,98 @@ impl SpeechCppTts {
                         first_pcm = true;
                         tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, "tts_first_pcm");
                     }
-                    pcm.extend_from_slice(&chunk);
+                    body.push(&chunk).await?;
                 }
             }
             _ => {
                 return Err(ClientError::protocol(Service::Tts, "unsupported content type"));
             }
         }
-        if pcm.len() % 2 != 0 {
+        if body.pcm.len() % 2 != 0 {
             return Err(ClientError::protocol(Service::Tts, "incomplete PCM sample"));
         }
-        tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, pcm_bytes = pcm.len(), "tts_pcm_complete");
-        Ok(pcm)
+        tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, pcm_bytes = body.pcm.len(), "tts_pcm_complete");
+        Ok(())
+    }
+}
+
+async fn send_audio(tx: &mpsc::Sender<Vec<u8>>, pcm: &[u8]) -> Result<(), ClientError> {
+    if !pcm.is_empty() {
+        tx.send(pcm.to_vec()).await.map_err(|_| not_retryable("audio consumer closed"))?;
+    }
+    Ok(())
+}
+
+/// Emit only PCM which cannot be removed by the legacy delayed-tail trimmer. A frame with
+/// RMS >= 32768 * .006 is active at every possible final threshold. Shorter gaps cannot
+/// trigger the one-second rule. An ambiguous long gap and its suffix await the final trim.
+struct SentenceAudio<'a> {
+    rate: u32,
+    sentence: &'a str,
+    tx: Option<&'a mpsc::Sender<Vec<u8>>>,
+    sent: &'a mut bool,
+    pcm: Vec<u8>,
+    emitted: usize,
+    scanned_frames: usize,
+    gap_frames: usize,
+    possible_tail: bool,
+}
+
+impl<'a> SentenceAudio<'a> {
+    fn new(rate: u32, sentence: &'a str, tx: Option<&'a mpsc::Sender<Vec<u8>>>, sent: &'a mut bool) -> Self {
+        Self { rate, sentence, tx, sent, pcm: Vec::new(), emitted: 0, scanned_frames: 0, gap_frames: 0, possible_tail: false }
+    }
+
+    async fn publish_to(&mut self, end: usize) -> Result<(), ClientError> {
+        if let Some(tx) = self.tx {
+            if self.emitted < end {
+                send_audio(tx, &self.pcm[self.emitted..end]).await?;
+                *self.sent = true;
+                self.emitted = end;
+            }
+        }
+        Ok(())
+    }
+
+    async fn push(&mut self, bytes: &[u8]) -> Result<(), ClientError> {
+        self.pcm.extend_from_slice(bytes);
+        if self.tx.is_none() || self.possible_tail {
+            return Ok(());
+        }
+        if sentence_ending_runs(self.sentence) > 1 {
+            return self.publish_to(self.pcm.len() / 2 * 2).await;
+        }
+        let samples = (self.rate as usize / 50).max(1);
+        let frame = samples * 2;
+        let silence_frames = self.rate as usize / samples;
+        let keep_frames = (0.18 * f64::from(self.rate) / samples as f64) as usize;
+        let mut safe = self.emitted;
+        for bytes in self.pcm[self.scanned_frames * frame..].chunks_exact(frame) {
+            let energy: i64 = bytes.chunks_exact(2).map(|s| {
+                let value = i64::from(i16::from_le_bytes([s[0], s[1]]));
+                value * value
+            }).sum();
+            self.scanned_frames += 1;
+            if energy as f64 >= samples as f64 * (32768.0_f64 * 0.006).powi(2) {
+                self.gap_frames = 0;
+            } else {
+                self.gap_frames += 1;
+            }
+            safe = (self.scanned_frames - self.gap_frames.saturating_sub(keep_frames)) * frame;
+            if self.gap_frames >= silence_frames {
+                self.possible_tail = true;
+                break;
+            }
+        }
+        self.publish_to(safe).await
+    }
+
+    async fn finish(mut self) -> Result<Vec<u8>, ClientError> {
+        let end = trim_delayed_audio_tail(&self.pcm, self.rate, self.sentence).len();
+        debug_assert!(end >= self.emitted);
+        self.publish_to(end).await?;
+        self.pcm.truncate(end);
+        Ok(self.pcm)
     }
 }
 

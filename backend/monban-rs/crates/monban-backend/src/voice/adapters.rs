@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::agents::{ChatModel, NodeEvent, NodeStream};
 use super::clients::llm::{LlmClient, LlmEvent};
-use super::clients::resample::resample;
+use super::clients::resample::StreamingResampler;
 use super::clients::stt::SttClient;
 use super::clients::text::TtsTextFilter;
 use super::clients::tts::{livekit_marker_bytes, SpeechCppTts};
@@ -58,21 +58,12 @@ impl TextFilter for Filter {
     }
 }
 
-/// Resamples each piece on its own; pieces are whole sentences, which end in a pause.
-struct PieceResampler {
-    rate: u32,
-}
-
-impl Resampler for PieceResampler {
+impl Resampler for StreamingResampler {
     fn process(&mut self, pcm: &[u8]) -> Vec<u8> {
-        if self.rate == DEVICE_RATE {
-            pcm.to_vec()
-        } else {
-            resample(pcm, self.rate, DEVICE_RATE)
-        }
+        StreamingResampler::process(self, pcm)
     }
     fn flush(&mut self) -> Vec<u8> {
-        Vec::new()
+        self.finish()
     }
 }
 
@@ -86,10 +77,14 @@ impl SpeechBackend for SpeechCppBackend {
         Box::new(Filter(TtsTextFilter::new()))
     }
     fn resampler(&self) -> Box<dyn Resampler> {
-        Box::new(PieceResampler { rate: self.tts.sample_rate() })
+        Box::new(StreamingResampler::new(self.tts.sample_rate(), DEVICE_RATE))
     }
     async fn synthesize(&self, sentence: &str) -> anyhow::Result<Vec<u8>> {
         Ok(self.tts.synthesize(sentence).await?)
+    }
+    async fn synthesize_to(&self, sentence: &str, tx: tokio::sync::mpsc::Sender<Vec<u8>>) -> anyhow::Result<()> {
+        self.tts.synthesize_to(sentence, Some(&tx)).await?;
+        Ok(())
     }
     fn segment_marker(&self) -> Vec<u8> {
         vec![0; livekit_marker_bytes(self.tts.sample_rate())]
