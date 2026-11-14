@@ -38,6 +38,9 @@ from .core.services import (
     model_available as _model_available,
 )
 from .persistence.device_api import fetch_device_settings
+# Relay v2 runs the agent in this process. LiveKit registers its plugins only on the
+# main thread, so load them at import time rather than on the first call.
+from .relay import v2 as _relay_v2  # noqa: F401
 
 logger = logging.getLogger("door-api")
 PREVIEW_TEXTS = {

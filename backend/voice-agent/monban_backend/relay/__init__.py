@@ -13,8 +13,9 @@ import logging
 import secrets
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from datetime import UTC, datetime
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -40,6 +41,8 @@ ATTRIBUTE_TRANSCRIPTION_FINAL = "lk.transcription_final"
 ATTRIBUTE_TRANSCRIPTION_TRACK_ID = "lk.transcribed_track_id"
 ATTRIBUTE_AGENT_STATE = "lk.agent.state"
 FORWARDED_AGENT_STATES = {"speaking", "listening", "thinking"}
+# How long to wait for the dispatched agent worker to join before telling the device it is down.
+AGENT_JOIN_TIMEOUT_SECONDS = 10.0
 
 CLOSE_NORMAL = 1000
 CLOSE_POLICY = 1008
@@ -67,10 +70,28 @@ def configure_event_log() -> None:
     logger.setLevel(logging.INFO)
 
 
+class RelayErrorCode(StrEnum):
+    START_TIMEOUT = "start_timeout"
+    INVALID_START = "invalid_start"
+    INVALID_AUDIO = "invalid_audio"
+    INVALID_MESSAGE = "invalid_message"
+    LIVEKIT_DISCONNECTED = "livekit_disconnected"
+    TIME_LIMIT = "time_limit"
+    AGENT_UNAVAILABLE = "agent_unavailable"
+    INVALID_OUTPUT = "invalid_output"
+    OUTPUT_LIMIT = "output_limit"
+    INPUT_LIMIT = "input_limit"
+    INVALID_INPUT_END = "invalid_input_end"
+    INVALID_ACK = "invalid_ack"
+    INVALID_PLAYBACK = "invalid_playback"
+    INVALID_STATE = "invalid_state"
+    EMPTY_GREETING = "empty_greeting"
+
+
 class RelayError(Exception):
     def __init__(self, code: str, message: str, close_code: int = CLOSE_POLICY) -> None:
-        super().__init__(code)
-        self.code = code
+        super().__init__(str(code))
+        self.code = str(code)
         self.message = message
         self.close_code = close_code
 
@@ -88,6 +109,8 @@ class StartMessage(BaseModel):
 class AgentLink(Protocol):
     async def send_audio(self, pcm: bytes) -> None: ...
 
+    async def wait_for_agent(self, timeout: float) -> None: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -102,12 +125,16 @@ class LiveKitLink:
         self._track_sid: str | None = None
         self._agent_speaking = False
         self._tasks: set[asyncio.Task] = set()
+        self._agent_identities: set[str] = set()
+        self._agent_joined = asyncio.Event()
 
     async def connect(self, url: str, token: str) -> None:
         room = self._room
         room.on("track_subscribed", self._on_track_subscribed)
         room.on("participant_attributes_changed", self._on_attributes_changed)
         room.on("disconnected", self._on_disconnected)
+        room.on("participant_connected", self._on_participant_connected)
+        room.on("participant_disconnected", self._on_participant_disconnected)
         room.register_text_stream_handler(TRANSCRIPTION_TOPIC, self._on_transcription)
         # Session events for LiveKit's own tools; drained so they are not logged one by one.
         room.register_byte_stream_handler(AGENT_SESSION_TOPIC, self._discard_stream)
@@ -122,7 +149,16 @@ class LiveKitLink:
         frame = rtc.AudioFrame(pcm, SAMPLE_RATE, 1, len(pcm) // 2)
         await self._source.capture_frame(frame)
 
+    async def wait_for_agent(self, timeout: float) -> None:
+        """Return once an agent participant is in the room; raise TimeoutError if none joins."""
+        for participant in self._room.remote_participants.values():
+            self._note_agent(participant)
+        await asyncio.wait_for(self._agent_joined.wait(), timeout)
+
     async def aclose(self) -> None:
+        # Our own teardown must not be reported as the agent leaving.
+        self._room.off("participant_connected", self._on_participant_connected)
+        self._room.off("participant_disconnected", self._on_participant_disconnected)
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -145,6 +181,20 @@ class LiveKitLink:
     @staticmethod
     def _is_agent(participant: rtc.Participant) -> bool:
         return participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+
+    def _note_agent(self, participant: rtc.Participant) -> None:
+        if self._is_agent(participant):
+            self._agent_identities.add(participant.identity)
+            self._agent_joined.set()
+
+    def _on_participant_connected(self, participant) -> None:
+        self._note_agent(participant)
+
+    def _on_participant_disconnected(self, participant) -> None:
+        # The call cannot continue once the last agent is gone; do not wait for the time limit.
+        self._agent_identities.discard(participant.identity)
+        if self._is_agent(participant) and not self._agent_identities:
+            self._outbox.put_nowait(("closed", RelayErrorCode.AGENT_UNAVAILABLE))
 
     def _on_track_subscribed(self, track, _publication, participant) -> None:
         if track.kind == rtc.TrackKind.KIND_AUDIO and self._is_agent(participant):
@@ -205,7 +255,7 @@ class LiveKitLink:
         self._spawn(drain())
 
     def _on_disconnected(self, _reason) -> None:
-        self._outbox.put_nowait(("closed", "livekit_disconnected"))
+        self._outbox.put_nowait(("closed", RelayErrorCode.LIVEKIT_DISCONNECTED))
 
 
 def participant_token(room: str, identity: str) -> str:
@@ -255,7 +305,7 @@ async def _receive_start(websocket: WebSocket) -> StartMessage:
             websocket.receive(), timeout=settings.relay_start_timeout_seconds
         )
     except asyncio.TimeoutError as exc:
-        raise RelayError("start_timeout", "開始の JSON が届きません。") from exc
+        raise RelayError(RelayErrorCode.START_TIMEOUT, "開始の JSON が届きません。") from exc
     if message["type"] == "websocket.disconnect":
         raise WebSocketDisconnect(message.get("code", CLOSE_NORMAL))
     try:
@@ -271,7 +321,7 @@ async def _receive_start(websocket: WebSocket) -> StartMessage:
             for error in exc.errors()
         ]
         logger.warning("relay invalid start fields=%s", fields)
-        raise RelayError("invalid_start", "開始の JSON の形が違います。") from exc
+        raise RelayError(RelayErrorCode.INVALID_START, "開始の JSON の形が違います。") from exc
 
 
 async def _pump_inbound(websocket: WebSocket, link: AgentLink) -> str:
@@ -282,15 +332,17 @@ async def _pump_inbound(websocket: WebSocket, link: AgentLink) -> str:
         data = message.get("bytes")
         if data is not None:
             if not data or len(data) % 2 or len(data) > MAX_AUDIO_MESSAGE_BYTES:
-                raise RelayError("invalid_audio", "音声は 16bit の PCM を 100 ms 以下ずつ送ってください。")
+                raise RelayError(
+                    RelayErrorCode.INVALID_AUDIO, "音声は 16bit の PCM を 100 ms 以下ずつ送ってください。"
+                )
             await link.send_audio(data)
             continue
         try:
             payload = json.loads(message.get("text") or "")
         except ValueError as exc:
-            raise RelayError("invalid_message", "テキストのメッセージは JSON にしてください。") from exc
+            raise RelayError(RelayErrorCode.INVALID_MESSAGE, "テキストのメッセージは JSON にしてください。") from exc
         if not isinstance(payload, dict):
-            raise RelayError("invalid_message", "テキストのメッセージは JSON のオブジェクトにしてください。")
+            raise RelayError(RelayErrorCode.INVALID_MESSAGE, "テキストのメッセージは JSON のオブジェクトにしてください。")
         if payload.get("type") == "end":
             return "end"
 
@@ -302,6 +354,8 @@ async def _pump_outbound(websocket: WebSocket, outbox: asyncio.Queue[Outbound]) 
             await websocket.send_bytes(value)
         elif kind == "json":
             await websocket.send_json(value)
+        elif value == RelayErrorCode.AGENT_UNAVAILABLE:
+            raise RelayError(value, "音声エージェントが切断されました。", CLOSE_SERVER_ERROR)
         else:
             raise RelayError(value, "会話サーバーとの接続が切れました。", CLOSE_SERVER_ERROR)
 
@@ -324,7 +378,7 @@ async def _converse(websocket: WebSocket, link: AgentLink, outbox: asyncio.Queue
             return_when=asyncio.FIRST_COMPLETED,
         )
         if not done:
-            raise RelayError("time_limit", "会話の上限時間を過ぎました。")
+            raise RelayError(RelayErrorCode.TIME_LIMIT, "会話の上限時間を過ぎました。")
         for task in done:
             task.result()
     finally:
@@ -374,10 +428,11 @@ async def serve(websocket: WebSocket, dispatch: Dispatch) -> None:
             device = await house_task if house_task is not None else None
             rules = build_house_rules(start.mode, device.house if device else None, settings.max_house_rules_chars)
             await dispatch(room, rules, reception_metadata(start.device_key, device))
+            await link.wait_for_agent(AGENT_JOIN_TIMEOUT_SECONDS)
         except Exception as exc:
             logger.warning("relay could not start the agent: %s", type(exc).__name__)
             raise RelayError(
-                "agent_unavailable", "音声エージェントを開始できません。", CLOSE_SERVER_ERROR
+                RelayErrorCode.AGENT_UNAVAILABLE, "音声エージェントを開始できません。", CLOSE_SERVER_ERROR
             ) from exc
         await websocket.send_json({"type": "ready"})
         answered_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")

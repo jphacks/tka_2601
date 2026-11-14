@@ -1,0 +1,143 @@
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
+
+import { Screen } from '../../components/Screen';
+import { CenterMessage, LargeTitle, Separator } from '../../components/ui';
+import { VisitRow } from '../../components/VisitRow';
+import { appendUnique } from '../../domain/collections';
+import { VISITS_PAGE_SIZE, type VisitSummary } from '../../domain/visit';
+import { useHousehold } from '../../lib/auth';
+import { repositories } from '../../lib/container';
+import { errorMessage } from '../../lib/errors';
+import { useLiveRefresh } from '../../lib/liveRefresh';
+import { dayKey, sectionTitle } from '../../lib/format';
+import { colors, radius } from '../../theme';
+
+type Section = { key: string; title: string; data: VisitSummary[] };
+
+function groupByDay(visits: VisitSummary[]): Section[] {
+  const now = new Date();
+  const sections: Section[] = [];
+  for (const visit of visits) {
+    const date = new Date(visit.chimed_at);
+    const key = dayKey(date);
+    const last = sections[sections.length - 1];
+    if (last?.key === key) last.data.push(visit);
+    else sections.push({ key, title: sectionTitle(date, now), data: [visit] });
+  }
+  return sections;
+}
+
+export default function VisitListScreen() {
+  const household = useHousehold();
+  const [visits, setVisits] = useState<VisitSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const loadingMore = useRef(false);
+  // 読み直しの回数。読み直す前に始めた続きの読み込みの結果を捨てる
+  const generation = useRef(0);
+
+  const loadFirstPage = useCallback(async () => {
+    const current = ++generation.current;
+    try {
+      const rows = await repositories.visits.list(household.id);
+      if (current !== generation.current) return;
+      setVisits(rows);
+      setHasMore(rows.length === VISITS_PAGE_SIZE);
+      setError(null);
+    } catch (e) {
+      if (current === generation.current) setError(errorMessage(e) ?? '読み込めませんでした');
+    }
+  }, [household.id]);
+
+  // 画面に戻るたびに読み直す（詳細で消したときも反映する）
+  useFocusEffect(
+    useCallback(() => {
+      loadFirstPage();
+    }, [loadFirstPage]),
+  );
+
+  useLiveRefresh(loadFirstPage);
+
+  async function refresh() {
+    setRefreshing(true);
+    await loadFirstPage();
+    setRefreshing(false);
+  }
+
+  async function loadMore() {
+    const last = visits?.[visits.length - 1];
+    if (!hasMore || loadingMore.current || !last) return;
+    loadingMore.current = true;
+    const started = generation.current;
+    try {
+      const next = await repositories.visits.list(household.id, { at: last.chimed_at, id: last.id });
+      if (started !== generation.current) return;
+      setVisits((current) => appendUnique(current ?? [], next));
+      setHasMore(next.length === VISITS_PAGE_SIZE);
+    } finally {
+      loadingMore.current = false;
+    }
+  }
+
+  const sections = useMemo(() => groupByDay(visits ?? []), [visits]);
+
+  return (
+    <Screen waves={false}>
+      <SectionList
+        sections={sections}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={<LargeTitle title="来客" />}
+        stickySectionHeadersEnabled={false}
+        renderSectionHeader={({ section }) => (
+          <Text style={styles.sectionTitle} accessibilityRole="header">
+            {section.title}
+          </Text>
+        )}
+        renderItem={({ item, index, section }) => {
+          const first = index === 0;
+          const last = index === section.data.length - 1;
+          return (
+            <View style={[styles.cell, first && styles.cellFirst, last && styles.cellLast]}>
+              {first ? null : <Separator inset={60} />}
+              <VisitRow visit={item} onPress={() => router.push({ pathname: '/visits/[id]', params: { id: item.id } })} />
+            </View>
+          );
+        }}
+        ListEmptyComponent={
+          visits === null && !error ? (
+            <View style={styles.empty}>
+              <ActivityIndicator color={colors.navy} />
+            </View>
+          ) : (
+            <View style={styles.empty}>
+              <CenterMessage>{error ?? '来客の記録はありません'}</CenterMessage>
+            </View>
+          )
+        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.navy} />}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        contentContainerStyle={styles.content}
+      />
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  content: { paddingBottom: 32 },
+  sectionTitle: {
+    paddingTop: 14,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textTertiary,
+  },
+  cell: { marginHorizontal: 16, backgroundColor: colors.card, overflow: 'hidden' },
+  cellFirst: { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card },
+  cellLast: { borderBottomLeftRadius: radius.card, borderBottomRightRadius: radius.card },
+  empty: { paddingTop: 120 },
+});

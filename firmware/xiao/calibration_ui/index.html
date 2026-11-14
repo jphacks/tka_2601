@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MONBAN 調整</title>
+<link rel="stylesheet" href="/vendor/antd-reset.css">
+<style>
+body{margin:0;background:#fff}
+.bar{min-height:64px;box-sizing:border-box;padding:12px 24px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;border-bottom:1px solid #ECEEF2}
+.brand{font-size:20px;font-weight:700;margin-right:12px}
+.body{display:flex;flex-wrap:wrap;align-items:flex-start}
+.side{flex:1 1 180px;min-width:0;max-width:100%;box-sizing:border-box;padding:16px 12px}
+.side .ant-menu{border-inline-end:none!important}
+.main{flex:999 1 560px;min-width:0;box-sizing:border-box;padding:24px}
+.pane{flex:1 1 440px;min-width:0;box-sizing:border-box;padding:24px 24px 24px 0;position:sticky;top:0}
+@media (max-width:1100px){.pane{position:static;padding:0 24px 24px}}
+.head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:16px}
+.head h1{margin:0;flex:1;min-width:200px;font-size:24px;font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;align-items:start}
+.stack{display:grid;gap:16px}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:12px 0;border-top:1px solid #ECEEF2}
+.row:first-child{border-top:none;padding-top:0}
+.row:last-child{padding-bottom:0}
+.row .text{flex:1;min-width:150px}
+.row .name{font-weight:500}
+.sub{font-size:14px;color:#5C616B}
+.meter{position:relative;height:8px;background:#F0F2F5;border-radius:4px;overflow:hidden}
+.meter.tall{height:28px;border-radius:8px}
+.meter>div{height:100%;background:#5E6AD2}
+.meter.soft>div{background:#B5BEEB}
+.meter .mark{position:absolute;top:0;bottom:0;width:3px;background:#5E6AD2}
+.kv{display:flex;align-items:center;font-size:14px;gap:8px}
+.kv>span:first-child{flex:1;font-weight:500}
+.bubble{display:flex;margin:6px 0}
+.bubble.ai{justify-content:flex-end}
+.bubble>div{max-width:88%;padding:6px 10px;border-radius:8px;background:#F5F6F8;font-size:14px;line-height:1.5}
+.bubble.ai>div{background:#5E6AD2;color:#fff}
+.log{margin:0;background:#17191E;color:#E6E8EE;border-radius:8px;padding:12px 16px;font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-all;overflow:auto}
+.scene{position:relative;height:440px;border:1px solid #E6E8EE;border-radius:8px 8px 0 0;overflow:hidden}
+.scene canvas{display:block;width:100%;height:100%;cursor:grab}
+.scene .xray{position:absolute;right:12px;top:12px}
+.scene .caption{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);width:max-content;max-width:86%;box-sizing:border-box;padding:8px 12px;border-radius:8px;border:1px solid #E6E8EE;background:#fff;font-size:14px;line-height:1.5;text-align:center}
+.scene .caption.ai{background:#5E6AD2;color:#fff}
+.under{border:1px solid #E6E8EE;border-top:none;border-radius:0 0 8px 8px;padding:12px 16px 14px}
+.fields{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:4px}
+.fields label{display:block;font-size:12px;color:#5C616B}
+.swatch{display:inline-block;width:12px;height:12px;margin-right:8px;vertical-align:-1px;border-radius:50%;border:1px solid #D9DCE3}
+.dot{display:inline-block;width:8px;height:8px;margin-right:8px;border-radius:50%;background:#D9DCE3}
+.dot.on{background:#27A644}
+.status{font-size:14px;white-space:nowrap}
+.step-control{padding:10px 0 2px;border-top:1px solid #ECEEF2}
+.step-control:first-child{border-top:none;padding-top:0}
+.step-control .top{display:flex;align-items:center;gap:8px}
+.step-control label{flex:1;font-weight:500}
+.step-control output{min-width:72px;text-align:center;font-weight:700}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script src="/vendor/dayjs.min.js"></script>
+<script src="/vendor/antd.min.js"></script>
+<script src="/vendor/three.min.js"></script>
+<script src="/scene/monban_meshes.js"></script>
+<script src="/scene/monban_scene.js"></script>
+<script src="/logic.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

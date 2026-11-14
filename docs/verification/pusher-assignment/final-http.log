@@ -1,0 +1,33 @@
+PASS: HTTP settings require a device key
+PASS: unknown device key is rejected
+PASS: anonymous Data API cannot read pusher state
+PASS: resident cannot save another household's settings
+PASS: real authenticated app RPC saves one shared pusher
+PASS: HTTP GET returns exact desired shared configuration
+PASS: fixture full settings exceed the firmware response buffer
+PASS: dedicated HTTP settings omit large shop and report fields
+PASS: other device GET cannot receive first device settings
+PASS: HTTP ACK uses authenticated device identity
+PASS: real DB readback confirms shared settings and application time
+PASS: body device id cannot create a report for another device
+PASS: other household cannot read the first device report
+PASS: app cannot forge a device application report
+PASS: real app RPC saves swapped assignment as revision two
+PASS: HTTP GET receives both swapped physical assignments
+PASS: HTTP ACK and DB readback agree on revision-two swapped mapping
+PASS: HTTP late ACK cannot regress device state
+PASS: HTTP future ACK is rejected
+PASS: HTTP same revision with different config is rejected
+PASS: real Data API preserves compare-and-swap conflict
+PASS: second household can independently save its own pusher
+PASS: foreign body id cannot redirect an old ACK to another device
+PASS: second device can report its own actual applied mapping
+PASS: race device fetches shared revision one before an unreported ACK
+PASS: new desired revision overtakes the missing applied ACK
+PASS: raced full ACK returns 409 without updating runtime or applied history
+PASS: status-only fallback records manual recovery despite the newer desired revision
+PASS: real resident readback selects the mobile manual-check message instead of pending
+PASS: a subsequent confirmed mapping clears manual state and restores applied display
+PASS: production HTTP handler completed without unexpected errors
+PASS: 31 real HTTP/Auth/Data API/DB checks
+PASS: temporary HTTP server stopped and all fixture households/users/devices removed

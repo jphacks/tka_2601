@@ -1,0 +1,101 @@
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
+
+import { repositories } from './container';
+import { Cancelled, hasErrorCode } from './errors';
+import { unregisterPushToken } from './push';
+import { requireSupabase } from '../infrastructure/supabase/client';
+
+export async function signInWithEmail(email: string, password: string): Promise<void> {
+  const { error } = await requireSupabase().auth.signInWithPassword({ email: email.trim(), password });
+  if (error) throw error;
+}
+
+// 名前は user_metadata.full_name に入れる。グループ画面のメンバー名に使う
+export async function signUpWithEmail(
+  fullName: string,
+  email: string,
+  password: string,
+): Promise<{ needsConfirmation: boolean }> {
+  const { data, error } = await requireSupabase().auth.signUp({
+    email,
+    password,
+    options: { data: { full_name: fullName } },
+  });
+  if (error) throw error;
+  return { needsConfirmation: !data.session };
+}
+
+export async function signInWithApple(): Promise<void> {
+  const supabase = requireSupabase();
+  let credential: AppleAuthentication.AppleAuthenticationCredential;
+  try {
+    credential = await AppleAuthentication.signInAsync({
+      requestedScopes: [
+        AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+        AppleAuthentication.AppleAuthenticationScope.EMAIL,
+      ],
+    });
+  } catch (error) {
+    if (hasErrorCode(error, 'ERR_REQUEST_CANCELED')) throw new Cancelled();
+    throw error;
+  }
+  if (!credential.identityToken) throw new Error('Apple から本人確認の情報を受け取れませんでした');
+  const { error } = await supabase.auth.signInWithIdToken({ provider: 'apple', token: credential.identityToken });
+  if (error) throw error;
+
+  // Apple は名前を初回のサインインでしか渡さないので、そのときに保存する
+  const { givenName, familyName } = credential.fullName ?? {};
+  const fullName = [familyName, givenName].filter(Boolean).join(' ');
+  if (fullName) await supabase.auth.updateUser({ data: { full_name: fullName } });
+}
+
+// Google のログイン画面をアプリ内のブラウザで開き、戻ってきたコードをセッションに換える
+export async function signInWithGoogle(): Promise<void> {
+  const supabase = requireSupabase();
+  const redirectTo = Linking.createURL('auth-callback');
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo, skipBrowserRedirect: true },
+  });
+  if (error) throw error;
+  if (!data.url) throw new Error('Google のログイン画面を開けませんでした');
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+  if (result.type !== 'success') throw new Cancelled();
+
+  const { queryParams } = Linking.parse(result.url);
+  const authError = queryParams?.error_description ?? queryParams?.error;
+  if (typeof authError === 'string') throw new Error(authError);
+  const code = queryParams?.code;
+  if (typeof code !== 'string') throw new Error('Google から戻ったリンクにコードがありません');
+  const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+  if (exchangeError) throw exchangeError;
+}
+
+// 端末を通知の送り先から外せなかったときの失敗。店の通知が届き続けるので、画面で確かめる
+export class PushCleanupFailed extends Error {}
+
+// keepPushToken は、外せなくてもログアウトすると利用者が決めたときに付ける
+export async function signOut({ keepPushToken = false }: { keepPushToken?: boolean } = {}): Promise<void> {
+  const supabase = requireSupabase();
+  const { data } = await supabase.auth.getSession();
+  const userId = data.session?.user.id;
+  if (userId && !keepPushToken) {
+    try {
+      await unregisterPushToken(userId);
+    } catch (error) {
+      throw new PushCleanupFailed(error instanceof Error ? error.message : String(error));
+    }
+  }
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+
+// アカウントを消して、この端末のセッションも消す。サーバーのセッションは残っていないので local だけでよい
+export async function deleteAccount(): Promise<void> {
+  await repositories.account.remove();
+  const { error } = await requireSupabase().auth.signOut({ scope: 'local' });
+  if (error) throw error;
+}

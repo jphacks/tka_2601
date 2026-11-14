@@ -1,0 +1,74 @@
+name: XIAO firmware
+
+on:
+  pull_request:
+    paths:
+      - "firmware/xiao/**"
+      - "backend/voice-agent/door_backend/**"
+      - ".github/workflows/xiao-firmware.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "firmware/xiao/**"
+      - "backend/voice-agent/door_backend/**"
+      - ".github/workflows/xiao-firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xiao-firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: Host tests and real relay code
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@v6
+      - run: python -m pip install python-dotenv
+      - run: bash firmware/xiao/run.sh test
+      # Synthetic chime evaluation; fails when the tuning set misses its targets.
+      - run: bash firmware/xiao/run.sh eval --check
+      - run: bash firmware/xiao/run.sh e2e
+      - run: bash firmware/xiao/run.sh browser
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: bench-page-failure
+          path: |
+            firmware/xiao/.host-build/browser-failure.png
+            firmware/xiao/.host-build/browser-bench.log
+          if-no-files-found: ignore
+
+  esp32:
+    name: ESP32-S3 build and QEMU
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
+      - uses: arduino/setup-arduino-cli@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.arduino15/packages/esp32
+          key: arduino-esp32-3.3.8-${{ runner.os }}
+      - uses: actions/cache@v4
+        with:
+          path: firmware/xiao/.host-build/qemu
+          key: qemu-${{ runner.os }}-${{ hashFiles('firmware/xiao/tests/qemu.sh') }}
+      - run: bash firmware/xiao/run.sh build
+      - run: bash firmware/xiao/run.sh qemu

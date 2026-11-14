@@ -18,6 +18,10 @@ from livekit.agents.voice.agent_session import SessionConnectOptions
 
 from ..config import settings
 from ..persistence.device_api import ShopProfile
+from ..reception.service import ReceptionDesk
+# Imported at module load: LiveKit registers these plugins only on the main thread.
+from ..voice.agent import DOOR_GREETING, DoorAgent, ReceptionAgent, _llm, _stt
+from ..voice.speech_tts import SpeechCppTTS
 
 
 class DeviceAudioOutput(io.AudioOutput):
@@ -120,11 +124,6 @@ class DeviceAgent:
         self, house_rules: str, write, finish, transcript, *,
         device_key: str | None = None, shop: ShopProfile | None = None,
     ):
-        # Lazy import keeps v1 and tests independent of the v2 model clients.
-        from ..reception.service import ReceptionDesk
-        from ..voice.agent import DOOR_GREETING, DoorAgent, ReceptionAgent, _llm, _stt
-        from ..voice.speech_tts import SpeechCppTTS
-
         self._last_assistant_text = ""
         if device_key is not None and shop is not None:
             self.agent = ReceptionAgent(ReceptionDesk(device_key), shop)

@@ -1,0 +1,4 @@
+fastapi>=0.116,<1
+uvicorn>=0.35,<1
+# HTTP test client; not imported by the production receiver.
+httpx>=0.28,<1
