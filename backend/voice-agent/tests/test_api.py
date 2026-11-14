@@ -2,9 +2,7 @@ import asyncio
 import io
 import os
 import wave
-from dataclasses import replace
-from datetime import UTC, datetime
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 
 import pytest
@@ -13,7 +11,7 @@ from fastapi.testclient import TestClient
 TEST_API_KEY = "a" * 64
 os.environ.setdefault("DOOR_API_KEY", TEST_API_KEY)
 
-from door_backend import api
+from monban_backend import api
 
 
 def auth_headers():
@@ -36,27 +34,73 @@ def test_status_reports_individual_service_readiness(monkeypatch):
     assert result["llm"]["ready"]
     assert not result["livekit"]["ready"]
     assert not result["ready"]
-    assert result["test_environment"] == (api.settings.environment == "development")
-    assert result["admin_settings_available"] is True
+    assert "supabase_configured" in result
 
 
-def test_local_root_serves_the_web_ui_in_development(monkeypatch):
-    monkeypatch.setattr(api, "settings", replace(api.settings, environment="development"))
+def test_on_demand_status_does_not_wake_modal_models(monkeypatch):
+    async def should_not_probe(*_args, **_kwargs):
+        raise AssertionError("status must not wake on-demand inference")
+
+    async def livekit():
+        return True
+
+    monkeypatch.setattr(api, "settings", replace(api.settings, inference_on_demand=True))
+    monkeypatch.setattr(api, "_model_available", should_not_probe)
+    monkeypatch.setattr(api, "_llm_available", should_not_probe)
+    monkeypatch.setattr(api, "_livekit_available", livekit)
+    result = asyncio.run(api.status())
+    assert result["inference_mode"] == "on-demand"
+    assert result["asr"]["ready"] is None
+    assert result["tts"]["ready"] is None
+    assert result["llm"]["ready"] is None
+    assert result["ready"]
+
+
+def test_root_returns_api_metadata_without_serving_a_web_ui():
     with TestClient(api.app) as client:
         response = client.get("/")
-        script = client.get("/assets/app.js")
-        stylesheet = client.get("/assets/app.css")
     assert response.status_code == 200
-    assert 'id="test-panel"' in response.text
-    assert script.status_code == stylesheet.status_code == 200
-    assert "/api/test/rules" in script.text
-    assert 'id="save-admin-settings"' in response.text
-    assert 'id="reset-admin-settings"' in response.text
-    assert "history-test" in stylesheet.text
+    assert response.json() == {"service": "monban-api", "docs": "/docs", "health": "/healthz"}
+    assert client.get("/assets/app.js").status_code == 404
+
+
+def test_production_preserves_authenticated_voice_api_endpoints(monkeypatch):
+    monkeypatch.setattr(api, "settings", replace(api.settings, environment="production", allow_tailnet_http=True))
+    with TestClient(api.app) as client:
+        unauthorized = client.post("/api/connect", json={})
+        direct_connect = client.post("/api/connect", json={}, headers=auth_headers())
+        tts_check = client.post("/api/tts-check", headers=auth_headers())
+    assert unauthorized.status_code == 401
+    assert direct_connect.status_code == 409
+    assert tts_check.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/control/mode"),
+        ("PUT", "/api/control/mode"),
+        ("GET", "/api/control/sessions"),
+        ("POST", "/api/test/rules"),
+        ("POST", "/api/test/visits"),
+        ("POST", "/api/demo/connect"),
+        ("POST", "/api/demo/speech"),
+        ("POST", "/api/reception/connect"),
+        ("GET", "/api/reception/settings"),
+        ("POST", "/api/integrations/google-calendar/start"),
+        ("POST", "/api/v1/auth/login"),
+        ("GET", "/oauth/google/callback"),
+        ("GET", "/env-config.js"),
+    ],
+)
+def test_demo_account_and_google_routes_are_gone(method, path):
+    with TestClient(api.app) as client:
+        response = client.request(method, path, headers=auth_headers(), json={})
+    assert response.status_code in {404, 405}
 
 
 def test_connect_returns_503_when_dispatch_fails(monkeypatch):
-    async def fail(_room, _rules):
+    async def fail(_room, _rules, _reception=None):
         raise RuntimeError("agent worker is unavailable")
 
     monkeypatch.setattr(api, "_dispatch_agent", fail)
@@ -69,99 +113,37 @@ def test_connect_returns_503_when_dispatch_fails(monkeypatch):
     assert response.status_code == 503
 
 
-def test_development_rules_preview_applies_selected_mode_and_settings(monkeypatch):
+def test_connect_uses_the_device_settings_from_supabase(monkeypatch):
+    from monban_backend.core.house_rules import HouseSettings
+    from monban_backend.persistence.device_api import DeviceSettings, ShopProfile
+
     monkeypatch.setattr(api, "settings", replace(api.settings, environment="development"))
-    result = asyncio.run(
-        api.test_rules(
-            api.ConnectRequest(
-                mode="away",
-                away_leave_at_door=True,
-                extra_instructions="犬がいるので、ドアから離れてください。",
-            )
-        )
-    )
-    assert result["mode"] == "away"
-    assert "置き配の指定があればその場所に置き" in result["house_rules"]
-    assert "犬がいるので、ドアから離れてください。" in result["house_rules"]
+    dispatched = []
+    devices = {
+        "home-key": DeviceSettings(HouseSettings(extra_instructions="呼び鈴を鳴らしたら少し待ってください。")),
+        "shop-key": DeviceSettings(HouseSettings(), shop=ShopProfile(name="ネイルサロン架空")),
+    }
 
+    async def fetch(device_key):
+        return devices.get(device_key)
 
-def test_connect_dispatches_admin_mode_rules_in_production(monkeypatch):
-    monkeypatch.setattr(api, "settings", replace(api.settings, environment="production"))
-    dispatched = {}
+    async def dispatch(room, rules, reception=None):
+        dispatched.append((room, rules, reception))
 
-    async def dispatch(room, rules):
-        dispatched.update(room=room, rules=rules)
-
+    monkeypatch.setattr(api, "fetch_device_settings", fetch)
     monkeypatch.setattr(api, "_dispatch_agent", dispatch)
-    response = asyncio.run(
-        api.connect(
-            api.ConnectRequest(
-                mode="away",
-                away_leave_at_door=False,
-                extra_instructions="呼び鈴を鳴らしたら少し待ってください。",
-            )
-        )
-    )
-    assert response.room == dispatched["room"]
-    assert "不在票を入れるよう頼む" in dispatched["rules"]
-    assert "呼び鈴を鳴らしたら少し待ってください。" in dispatched["rules"]
+    home = asyncio.run(api.connect(api.ConnectRequest(device_key="home-key", mode="away")))
+    assert home.room == dispatched[0][0]
+    assert "不在票を入れるよう頼む" in dispatched[0][1]
+    assert "呼び鈴を鳴らしたら少し待ってください。" in dispatched[0][1]
+    assert dispatched[0][2] is None
 
+    asyncio.run(api.connect(api.ConnectRequest(device_key="shop-key")))
+    assert dispatched[1][2] == {"device_key": "shop-key", "shop": devices["shop-key"].shop.to_json()}
 
-def test_admin_rules_preview_is_available_in_production(monkeypatch):
-    monkeypatch.setattr(api, "settings", replace(api.settings, environment="production"))
-    result = asyncio.run(api.test_rules(api.ConnectRequest(mode="away")))
-    assert result["mode"] == "away"
-    assert "不在票を入れるよう頼む" in result["house_rules"]
-
-
-def test_development_visit_save_passes_test_device_key_and_transcript(monkeypatch):
-    monkeypatch.setattr(
-        api,
-        "settings",
-        replace(api.settings, environment="development", supabase_url="https://example.supabase.co", supabase_anon_key="test-public-api-key"),
-    )
-    written = {}
-
-    async def save(settings, device_key, visit_id, mode, **kwargs):
-        written.update(device_key=device_key, visit_id=visit_id, mode=mode, kwargs=kwargs)
-        return {"applied": True}
-
-    monkeypatch.setattr(api, "write_visit", save)
-    body = api.TestVisitRequest(
-        visit_id="6d761ee0-b454-4d25-bc6c-60672dd1fa37",
-        device_key="test-device-key",
-        mode="away",
-        chimed_at=datetime(2026, 10, 17, tzinfo=UTC),
-        answered_at=datetime(2026, 10, 17, 0, 0, 1, tzinfo=UTC),
-        messages=[
-            api.TestVisitMessage(
-                speaker="visitor", text="荷物です。", spoken_at=datetime(2026, 10, 17, 0, 0, 2, tzinfo=UTC)
-            )
-        ],
-    )
-    response = asyncio.run(api.test_save_visit(body))
-
-    assert response == {"saved": True}
-    assert written["device_key"] == "test-device-key"
-    assert written["mode"] == "away"
-    assert written["kwargs"]["utterances"][0]["text"] == "荷物です。"
-
-
-def test_development_visit_save_is_disabled_in_production(monkeypatch):
-    monkeypatch.setattr(
-        api, "settings", replace(api.settings, environment="production", supabase_url="https://example.supabase.co")
-    )
-    body = api.TestVisitRequest(
-        visit_id="6d761ee0-b454-4d25-bc6c-60672dd1fa37",
-        device_key="test-device-key",
-        mode="normal",
-        chimed_at=datetime(2026, 10, 17, tzinfo=UTC),
-        answered_at=datetime(2026, 10, 17, 0, 0, 1, tzinfo=UTC),
-        messages=[],
-    )
     with pytest.raises(api.HTTPException) as error:
-        asyncio.run(api.test_save_visit(body))
-    assert error.value.status_code == 404
+        asyncio.run(api.connect(api.ConnectRequest(device_key="unknown-key")))
+    assert error.value.status_code == 502
 
 
 def test_tts_preview_is_playable_wav(monkeypatch):
@@ -295,3 +277,23 @@ def test_capacity_limiter_bounds_queue_and_admits_after_release():
         await limiter.release()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("path", "heading"),
+    [("/about", "<h1>Monban</h1>"), ("/privacy", "<h1>プライバシーポリシー</h1>"), ("/terms", "<h1>利用規約</h1>")],
+)
+def test_public_pages_for_the_google_consent_screen(monkeypatch, path, heading):
+    # The consent screen links here, so the pages are public even in production.
+    monkeypatch.setattr(api, "settings", replace(api.settings, environment="production"))
+    with TestClient(api.app) as client:
+        response = client.get(path)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert heading in response.text
+    assert "<script" not in response.text
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    if path == "/privacy":
+        assert "限定使用" in response.text
+        assert "calendar.events" in response.text
+    assert path not in api.app.openapi()["paths"]

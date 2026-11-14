@@ -4,14 +4,14 @@ on:
   pull_request:
     paths:
       - "firmware/xiao/**"
-      - "backend/voice-agent/door_backend/**"
+      - "backend/voice-agent/monban_backend/**"
       - ".github/workflows/xiao-firmware.yml"
   push:
     branches:
       - main
     paths:
       - "firmware/xiao/**"
-      - "backend/voice-agent/door_backend/**"
+      - "backend/voice-agent/monban_backend/**"
       - ".github/workflows/xiao-firmware.yml"
   workflow_dispatch:
 

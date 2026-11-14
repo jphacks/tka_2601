@@ -4,7 +4,8 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
-from door_backend import api, relay_v2
+from monban_backend import api
+from monban_backend.relay import v2 as relay_v2
 PCM = b'\x01\x00' * 320
 
 class FakeAgent:
@@ -30,19 +31,20 @@ class FakeAgent:
         await self.transcript('ai', 'はい、どちら様でしょうか。' if text is None else '玄関前にお願いします。')
     def played(self): self.played_event.set()
     def end_after_reply(self): return self.end
+    def staff_requested(self): return False
     async def aclose(self): self.closed = True
 
 @pytest.fixture
 def backend(monkeypatch):
     calls = SimpleNamespace(agents=[], visits=[])
-    def factory(*args):
+    def factory(*args, **_kwargs):
         agent = FakeAgent(*args)
         calls.agents.append(agent)
         return agent
     async def house(_key): return None
     async def write_visit(*args, **kwargs): calls.visits.append((args, kwargs))
     monkeypatch.setattr(relay_v2, 'DeviceAgent', factory)
-    monkeypatch.setattr(relay_v2, 'fetch_house_settings', house)
+    monkeypatch.setattr(relay_v2, 'fetch_device_settings', house)
     monkeypatch.setattr(relay_v2, 'write_visit', write_visit)
     return calls
 

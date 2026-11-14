@@ -4,7 +4,7 @@ import pytest
 from livekit import rtc
 from livekit.agents import Agent, AgentSession, TurnHandlingOptions, llm, tts
 
-from door_backend.relay_agent import DeviceAgent, DeviceAudioOutput
+from monban_backend.relay.agent import DeviceAgent, DeviceAudioOutput
 
 
 class LocalLLM(llm.LLM):
@@ -176,16 +176,17 @@ def test_close_unblocks_real_sdk_waiting_for_remote_playback():
 
 
 def patch_device_models(monkeypatch, agent_type=LocalAgent):
-    from door_backend import agent, speech_tts
+    # DeviceAgent binds the voice classes at import time (main-thread plugin registration).
+    from monban_backend.relay import agent as device_agent_module
 
     class LocalSTT:
         async def aclose(self):
             pass
 
-    monkeypatch.setattr(agent, "DoorAgent", agent_type)
-    monkeypatch.setattr(agent, "_llm", LocalLLM)
-    monkeypatch.setattr(agent, "_stt", LocalSTT)
-    monkeypatch.setattr(speech_tts, "SpeechCppTTS", LocalTTS)
+    monkeypatch.setattr(device_agent_module, "DoorAgent", agent_type)
+    monkeypatch.setattr(device_agent_module, "_llm", LocalLLM)
+    monkeypatch.setattr(device_agent_module, "_stt", LocalSTT)
+    monkeypatch.setattr(device_agent_module, "SpeechCppTTS", LocalTTS)
 
 
 def test_device_agent_propagates_audio_write_failure(monkeypatch):

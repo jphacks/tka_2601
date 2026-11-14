@@ -1,0 +1,1 @@
+"""Supabase visit history persistence."""

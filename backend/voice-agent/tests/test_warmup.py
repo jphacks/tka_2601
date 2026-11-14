@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from aiohttp import web
 
-from door_backend import warmup
+from monban_backend.core import warmup
 
 
 def test_silence_wav_is_16khz_mono_pcm():
@@ -43,7 +43,7 @@ def test_warm_models_probes_every_service(monkeypatch):
     async def main():
         app = web.Application()
         app.router.add_post("/v1/audio/transcriptions", asr)
-        app.router.add_post("/api/generate", llm)
+        app.router.add_post("/v1/chat/completions", llm)
         app.router.add_post("/v1/audio/speech", tts)
         runner = web.AppRunner(app)
         await runner.setup()
@@ -70,7 +70,7 @@ def test_warm_models_probes_every_service(monkeypatch):
     assert seen["asr"]["language"] == "ja"
     assert seen["asr"]["file"].filename == "warmup.wav"
     assert seen["llm"]["model"] == warmup.settings.llm_model
-    assert seen["llm"]["keep_alive"] == warmup.settings.llm_keep_alive
+    assert seen["llm"]["messages"] == [{"role": "user", "content": "こんにちは"}]
     assert seen["tts"]["voice"] == warmup.settings.tts_voice
 
 

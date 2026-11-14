@@ -1,9 +1,9 @@
 import asyncio
-
-from door_backend.supabase_history import build_visit_payload, visit_messages
-from door_backend import supabase_history
-from door_backend.config import settings
 from dataclasses import replace
+
+from monban_backend.persistence.supabase_history import build_visit_payload, visit_messages
+from monban_backend.persistence import supabase_history
+from monban_backend.config import settings
 from uuid import uuid4
 
 
@@ -67,13 +67,14 @@ def test_put_visit_uses_device_edge_function_and_bearer_key(monkeypatch):
             return Response()
 
     monkeypatch.setattr(supabase_history.aiohttp, "ClientSession", Session)
+    test_settings = replace(settings, supabase_url="https://example.supabase.co", supabase_anon_key="test-public-key")
     result = asyncio.run(
-        supabase_history.put_visit(replace(settings, supabase_url="https://test-project.supabase.co", supabase_anon_key="test-public-api-key"), "device-secret", uuid4(), {"status": "ended"})
+        supabase_history.put_visit(test_settings, "device-secret", uuid4(), {"status": "ended"})
     )
 
     assert result == {"applied": True}
-    assert seen["url"].startswith("https://test-project.supabase.co/functions/v1/device/visits/")
-    assert seen["headers"] == {"apikey": "test-public-api-key", "Authorization": "Bearer device-secret"}
+    assert seen["url"].startswith(f"{test_settings.supabase_url}/functions/v1/device/visits/")
+    assert seen["headers"] == {"Authorization": "Bearer device-secret", "apikey": "test-public-key"}
     assert seen["body"] == {"status": "ended"}
     assert seen["timeout"] == settings.visit_write_timeout_seconds
 
@@ -103,7 +104,7 @@ def test_put_visit_returns_none_on_edge_function_error(monkeypatch):
 
     monkeypatch.setattr(supabase_history.aiohttp, "ClientSession", Session)
     result = asyncio.run(
-        supabase_history.put_visit(replace(settings, supabase_url="https://test-project.supabase.co", supabase_anon_key="test-public-api-key"), "device-secret", uuid4(), {"status": "ended"})
+        supabase_history.put_visit(settings, "device-secret", uuid4(), {"status": "ended"})
     )
 
     assert result is None

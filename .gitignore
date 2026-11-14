@@ -1,5 +1,7 @@
 # Secrets: never commit real values. Keep the *.example templates.
 .env
+backend/voice-agent/.env.production
+backend/voice-agent/.env.modal-inference.json
 .env.*
 !.env.example
 !.env.*.example
@@ -14,9 +16,16 @@ credentials/
 # ModusToolbox shared libraries (created next to the apps in firmware/)
 firmware/mtb_shared/
 
+# ESP32 hardware work is kept local and must not be pushed to GitHub.
+firmware/esp32/
+firmware/esp32-*/
+
 # Python
 __pycache__/
 .venv/
 
 # OS
 .DS_Store
+
+# Local-only deployment diagnostics (never upload to GitHub).
+.local/

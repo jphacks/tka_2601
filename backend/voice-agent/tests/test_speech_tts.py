@@ -3,7 +3,7 @@ import base64
 import json
 import struct
 
-from door_backend import speech_tts
+from monban_backend.voice import speech_tts
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
 
 
@@ -108,39 +108,44 @@ def test_speech_audio_done_stops_later_audio_deltas(monkeypatch):
     assert emitter.flushed
 
 
-def test_trim_delayed_vocal_tail_after_long_pause():
-    speech_samples = [5000] * (24000 // 2)
-    silence_samples = [0] * (24000 * 16 // 10)
-    stray_tail_samples = [5000] * (24000 * 3 // 10)
-    pcm = struct.pack(
-        f"<{len(speech_samples) + len(silence_samples) + len(stray_tail_samples)}h",
-        *(speech_samples + silence_samples + stray_tail_samples),
-    )
-
-    trimmed = speech_tts._trim_delayed_audio_tail(pcm, 24000)
-
-    assert len(trimmed) < len(pcm) - len(stray_tail_samples) * 2
-    assert len(trimmed) <= len(speech_samples + silence_samples) * 2
-
-
-def test_keep_audio_after_normal_pause():
-    first = [5000] * (24000 // 2)
-    silence = [0] * (24000 // 2)
-    second = [5000] * (24000 // 2)
-    pcm = struct.pack(f"<{len(first + silence + second)}h", *(first + silence + second))
-
-    assert speech_tts._trim_delayed_audio_tail(pcm, 24000) == pcm
-
-
-def test_keep_two_sentences_after_a_long_pause():
-    first = [5000] * (24000 // 2)
-    silence = [0] * (24000 * 14 // 10)
-    second = [4200] * (24000 * 3 // 4)
-    samples = first + silence + second
+def test_trim_removes_vocal_tail_after_long_silence():
+    rate = 24000
+    first_phrase = [5000] * (rate // 2)
+    silence = [0] * (rate * 14 // 10)
+    delayed_tail = [5000] * (rate // 4)
+    samples = first_phrase + silence + delayed_tail
     pcm = struct.pack(f"<{len(samples)}h", *samples)
-    text = "恐れ入りますが、こちらでお願いいたします。ご不明でしたらお知らせください。"
 
-    assert speech_tts._trim_delayed_audio_tail(pcm, 24000, text) == pcm
+    trimmed = speech_tts._trim_delayed_audio_tail(pcm, rate, "失礼いたします。")
+
+    assert len(trimmed) < len(pcm) - len(delayed_tail) * 2
+    assert len(trimmed) > len(first_phrase) * 2
+
+
+def test_trim_preserves_two_sentences_with_a_normal_pause():
+    rate = 24000
+    first_sentence = [4500] * (rate // 2)
+    pause = [0] * (rate * 7 // 10)
+    second_sentence = [4200] * (rate * 3 // 4)
+    samples = first_sentence + pause + second_sentence
+    pcm = struct.pack(f"<{len(samples)}h", *samples)
+
+    assert speech_tts._trim_delayed_audio_tail(
+        pcm, rate, "恐れ入りますが、こちらでお願いいたします。ご不明でしたらお知らせください。"
+    ) == pcm
+
+
+def test_trim_preserves_a_real_second_sentence_after_a_long_pause():
+    rate = 24000
+    first_sentence = [4500] * (rate // 2)
+    pause = [0] * (rate * 14 // 10)
+    second_sentence = [4200] * (rate * 3 // 4)
+    samples = first_sentence + pause + second_sentence
+    pcm = struct.pack(f"<{len(samples)}h", *samples)
+
+    assert speech_tts._trim_delayed_audio_tail(
+        pcm, rate, "恐れ入りますが、こちらでお願いいたします。ご不明でしたらお知らせください。"
+    ) == pcm
 
 
 def test_split_sentences_keeps_punctuation_and_closing_quote():
