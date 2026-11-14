@@ -103,6 +103,16 @@ Web で動かないものは、`.web.ts(x)` の別ファイルに分けてある
 
 Vercel のプロジェクトの Root Directory を `mobile` にする。ビルドは `vercel.json` に書いてある。環境変数に `EXPO_PUBLIC_SUPABASE_URL` と `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を入れる（ビルド時に埋め込まれる）。
 
+本番は `monban-web`（https://monban-web.vercel.app ）。GitHub からの自動デプロイはつながっていないので、main を更新したら、プロジェクトの権限を持つ人が Vercel のダッシュボードの Redeploy か、`mobile` で `npx vercel --prod` を実行して出す。
+
+予約先（Google カレンダー、Square）への接続は、同意のあと Web 版のオリジンへ戻ってくる。戻ってよいオリジンは Supabase のシークレット `APP_WEB_ORIGINS` で決まる（[supabase/functions/.env.example](../supabase/functions/.env.example)）。今は `https://monban-web.vercel.app` だけを許している。独自ドメインなど別の URL で出すときは、そのオリジンを足してから出す。プレビューの URL からは接続できない。
+
+```bash
+npx supabase secrets set APP_WEB_ORIGINS=https://monban-web.vercel.app,https://<別のオリジン> --project-ref <ref>
+```
+
+出したあとは、設定 → 連携 → Google カレンダーで「Google でログイン」を押す。同じタブで Google の同意画面に移り、許可すると戻ってきて「接続済み」になれば通っている。
+
 ## EAS のビルド
 
 `eas.json` のプロファイルは次の4つ。どれも Expo へのログイン（`npx eas-cli@latest login`）が要る。
