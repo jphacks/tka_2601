@@ -116,7 +116,9 @@ def test_recognizes_asr_variant_of_delivery_announcement_and_confirmation():
             ("user", "ありがとうございました"),
         ]
     )
-    assert acknowledgement.deterministic_reply == "はい、よろしくお願いいたします。"
+    # Standalone past-tense thanks requests departure; present-tense thanks stays open.
+    assert acknowledgement.closing
+    assert acknowledgement.deterministic_reply == "失礼いたします。"
 
 
 def test_deterministic_placement_reply_uses_the_location_already_requested():
