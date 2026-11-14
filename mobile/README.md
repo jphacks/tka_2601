@@ -96,6 +96,7 @@ Web で動かないものは、`.web.ts(x)` の別ファイルに分けてある
 | SF Symbols | Material Symbols のフォント（`components/Icon.web.tsx`） |
 | 分割ボタンと日付のカレンダー | 同じ形の描画と、ブラウザの日付の入力 |
 | 招待リンクを送る | リンクをコピーする |
+| 予約先（Google カレンダー、Square）への接続 | ポップアップではなく同じタブで同意画面へ移り、戻ってきた URL の `code` で接続を完了する（`lib/oauthSession.web.ts`）。本番の Web のオリジンを Supabase のシークレット `APP_WEB_ORIGINS` に入れる。`localhost` は設定なしで使える |
 | Apple と Google のログイン | `EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN` を 1 にしない。Web 用の戻り先を用意していない |
 
 ### Vercel に出す
