@@ -4,7 +4,11 @@ import { Platform } from 'react-native';
 export const features = {
   // 自然言語の入力。Edge Function「assistant」から Ollama に届く必要がある
   assistant: process.env.EXPO_PUBLIC_FEATURE_ASSISTANT === '1',
-  // Google カレンダーと Square。OAuth のシークレットが要る
+  // Google カレンダーの連携画面。0 で非表示にする
+  googleCalendar: process.env.EXPO_PUBLIC_FEATURE_GOOGLE_CALENDAR !== '0',
+  // ホットペッパービューティーは再開時に 1 にする
+  hotpepper: process.env.EXPO_PUBLIC_FEATURE_HOTPEPPER === '1',
+  // Square。OAuth のシークレットが要る
   externalProviders: process.env.EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS === '1',
   // 受付（ボイスバックエンド）の案内文と Google カレンダーでの照合。Edge Function「door」のシークレットが要る
   reception: process.env.EXPO_PUBLIC_FEATURE_RECEPTION === '1',

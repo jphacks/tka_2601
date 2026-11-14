@@ -9,12 +9,17 @@ export function isIntegration(value: unknown): value is Integration {
   return typeof value === 'string' && (INTEGRATIONS as readonly string[]).includes(value);
 }
 
-// OAuth のシークレットがないときは、Google と Square を出さない。すでに使っているものは外せるように残す
-export function visibleIntegrations(state: ProviderState | null, externalProviders: boolean): Integration[] {
-  return INTEGRATIONS.filter(
-    (integration) =>
-      externalProviders || integration === 'hotpepper' || (state !== null && state.provider === integration),
-  );
+// Google とホットペッパーは独立したフラグで表示を決める。
+// Square は使用中なら、フラグがオフでも解除できるように残す。
+export function visibleIntegrations(
+  state: ProviderState | null,
+  flags: { googleCalendar: boolean; hotpepper: boolean; externalProviders: boolean },
+): Integration[] {
+  return INTEGRATIONS.filter((integration) => {
+    if (integration === 'google_calendar') return flags.googleCalendar;
+    if (integration === 'hotpepper') return flags.hotpepper;
+    return flags.externalProviders || state?.provider === integration;
+  });
 }
 
 export function isConnected(state: ProviderState, integration: Integration): boolean {
