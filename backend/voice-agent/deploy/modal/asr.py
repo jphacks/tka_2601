@@ -86,6 +86,11 @@ def _infer(audio: np.ndarray, language: str):
 )
 @modal.asgi_app()
 def web():
+    import numpy as np
+
+    # Load the model and run it once while the container starts, so a visitor's first
+    # request after a container restart does not wait ~8 s for it (#82).
+    _infer(np.zeros(16000, dtype=np.float32), "ja")
     api = FastAPI()
 
     @api.get("/v1/models")
