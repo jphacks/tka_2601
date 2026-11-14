@@ -64,5 +64,6 @@ echo "--- Python and page tests"
 python3 -m unittest tests/test_receiver.py 2>&1 | tail -n 1
 python3 -m unittest discover -s calibration_ui -p 'test_*.py' 2>&1 | tail -n 1
 python3 -m unittest tests/test_configure.py 2>&1 | tail -n 1
+python3 -m unittest tests/test_timing_report.py 2>&1 | tail -n 1
 node tests/ui_test.mjs
 echo "PASS: all host tests"
