@@ -64,6 +64,7 @@ cp profiles/j2-probe/servo_config.example.h "$src/servo_config.h"
 rm "$src/servo_config.h"
 "${CXX[@]}" "$src/servo_probe.cpp" "$src/j2_probe_test.cpp" -o "$work/j2_probe"; run j2_probe
 "${CXX[@]}" "$src/tune.cpp" "$src/tune_test.cpp" -o "$work/tune"; run tune
+"${CXX[@]}" "$src/voice_call_diag.cpp" "$src/voice_call_diag_test.cpp" -o "$work/call_diag"; run call_diag
 
 echo "--- Python and page tests"
 python3 -m unittest tests/test_receiver.py 2>&1 | tail -n 1

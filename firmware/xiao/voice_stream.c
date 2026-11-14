@@ -8,6 +8,7 @@
 #include "tune.h"
 #include "voice_settings.h"
 #include "voice_transport.h"
+#include "voice_call_diag.h"
 #include "xlog.h"
 #include <limits.h>
 #include <math.h>
@@ -26,12 +27,21 @@ typedef struct {
     uint32_t began, phase, last_server, last_ping, playback_done;
 } call_t;
 static call_t call;
+static voice_call_diag_t call_diag,pending_call_diag;
+static bool call_diag_pending;
+static bool call_diag_greeting_seen;
 static volatile bool busy, start_requested, stop_requested, recovery_required;
 static volatile bool recovery_confirm_requested;
 /* Only the voice task advances the timer; console callers can read it. */
 static _Atomic bool cooldown_active;
 static _Atomic uint32_t cooldown_began;
 static volatile uint8_t probe_requested;
+static void flush_call_diag(void) {
+    if(!call_diag_pending || busy || !playback_idle())return;
+    audio_link_acquire();if(audio_link()->voice_record_enabled)return;
+    call_diag_pending=false; /* One storage attempt, including failure. */
+    if(!voice_call_diag_store(&pending_call_diag))xlog("[VOICE CALL] save_failed; previous record retained if available.\n");
+}
 /* Only the voice task owns recovery timers. An uncertain shared button always
  * remains locked for operator confirmation; distinct END may be retried. */
 static uint32_t recovery_began, recovery_logged, recovery_delay_ms, recovery_attempts;
@@ -128,6 +138,7 @@ static bool server_packet(const voice_packet_t *p)
     case VOICE_OUTPUT_AUDIO:
         if (call.state!=PLAYING || call.output_ended || h->sequence!=call.output_count || call.output_count>=3000) return false;
         if (!playback_push(p->payload,h->length,net_now_ms())) { call.io_failure="audio_queue_full"; return false; }
+        if(!call_diag_greeting_seen){call_diag.greeting_ms=net_now_ms();call_diag_greeting_seen=true;}
         ++call.output_count; return true;
     case VOICE_OUTPUT_END:
         if (call.state!=PLAYING || call.output_ended || !call.output_count || h->sequence!=call.output_count) return false;
@@ -323,6 +334,7 @@ static bool capture_step(void)
         }
         if (!call.input_count) call.phase=net_now_ms();
         ++call.input_count;
+        ++call_diag.input_frames;
         audio_link_release(); s->voice_read_seq=read+1u; audio_link_release();
         if (call.input_count==1u || call.input_count-call.input_report_count>=50u) {
             call.input_report_count=call.input_count;
@@ -341,6 +353,8 @@ static bool capture_step(void)
             voice_header_t h={.type=VOICE_INPUT_END,.flags=s->voice_end_reason==2?1:0,
                 .session=call.session,.turn=call.turn,.sequence=call.input_count};
             if (!voice_transport_send(&call.server,&h,NULL)) return false;
+            call_diag.input_end_ms=net_now_ms();
+            if(!voice_transport_legacy(&call.server))call_diag.input_end_sent=1;
             s->voice_record_enabled=0; audio_link_release();
             phase(WAIT_REPLY);
             xlog("[VOICE] Input complete: %lu ms; recording paused.\n",(unsigned long)(call.input_count*20));
@@ -388,6 +402,8 @@ static void enter_recovery(bool end_pending)
 static bool run_call(uint32_t session)
 {
     memset(&call,0,sizeof(call)); call.session=session; voice_transport_init(&call.server);
+    memset(&call_diag,0,sizeof(call_diag));
+    call_diag_greeting_seen=false;
     bool success=false, release=false, opened=false, button_attempted=false;
     const char *reason="capture_pause_failed";
     xlog("[VOICE] Preparing streaming call.\n");
@@ -411,6 +427,7 @@ static bool run_call(uint32_t session)
         if (stop_requested || !net_voice_ready()) goto cleanup;
     }
     phase(STARTING); call.began=call.last_server=call.last_ping=net_now_ms();
+    call_diag.started_ms=call.began;
     call.may_have_answered=button_attempted=true;
     reason="call_button_failed";
     if (!servo_call_press()) goto cleanup;
@@ -471,6 +488,9 @@ cleanup:
     if (stop_requested) reason="manual_stop";
     else if (!net_voice_ready() && !success) reason="network_lost";
     else if (!success && call_time_limit_reached()) reason="device_time_limit";
+    call_diag.reason=voice_call_diag_reason(reason);call_diag.phase=(uint32_t)call.state;
+    call_diag.turn=call.turn;call_diag.ended_ms=net_now_ms();
+    pending_call_diag=call_diag;call_diag_pending=true;
     xlog("[VOICE] Call ending: reason=%s state=%u turn=%lu input_ms=%lu.\n",
         reason,(unsigned)call.state,(unsigned long)call.turn,(unsigned long)(call.input_count*20u));
     audio_link()->voice_record_enabled=0; audio_link_release();
@@ -641,6 +661,7 @@ void voice_stream_task(void *argument)
     uint32_t observed=0;
     bool available_before=false;
     for (;;) {
+        flush_call_diag();
         volatile audio_link_t *s=audio_link();
         bool available=VOICE_STREAM_ENABLED && net_voice_ready();
         audio_link_acquire();

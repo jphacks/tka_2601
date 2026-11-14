@@ -3,6 +3,18 @@
 #include <stdio.h>
 #include <string.h>
 #include "voice_stream.c"
+static unsigned diag_stores;
+static bool diag_store_ok=true;
+static voice_call_diag_t stored_diag;
+uint32_t voice_call_diag_reason(const char *reason) {
+    if(!strcmp(reason,"device_time_limit"))return 19u;
+    if(!strcmp(reason,"completed"))return 2u;
+    return 1u;
+}
+bool voice_call_diag_store(const voice_call_diag_t *value) {
+    assert(!busy && playback_idle() && !audio_link()->voice_record_enabled);
+    stored_diag=*value;++diag_stores;return diag_store_ok;
+}
 
 #define EXPECT_API_FIRST (VOICE_RELAY_PROTOCOL != 1)
 
@@ -131,6 +143,8 @@ int voice_transport_poll(voice_transport_t *link, voice_packet_t *packet)
 
 static void reset(void)
 {
+    call_diag_pending=call_diag_greeting_seen=false;diag_stores=0;diag_store_ok=true;
+    memset(&call_diag,0,sizeof(call_diag));memset(&stored_diag,0,sizeof(stored_diag));
     memset(&call, 0, sizeof(call));
     memset(&mailbox, 0, sizeof(mailbox));
     memset(sent, 0, sizeof(sent));
@@ -680,6 +694,9 @@ static void test_call_time_limit(void)
     assert(call_presses==1u && cancels==1u && closes==1u);
     assert(cooldown_began-call.began==50000u);
     assert(count_sent(VOICE_CALL_START)==1u && count_sent(VOICE_CANCEL)==1u);
+    assert(call_diag_pending && pending_call_diag.reason==19u && pending_call_diag.greeting_ms==0u);
+    assert(pending_call_diag.started_ms==call.began && pending_call_diag.ended_ms-call.began==50000u);
+    assert(!pending_call_diag.input_frames && !pending_call_diag.input_end_sent);
     fresh_call(); server_keepalives=true;
     assert(run_call(123u));
 #if EXPECT_API_FIRST
@@ -829,8 +846,32 @@ static void test_stop_mode_answers_nothing(void)
     assert(server_opened && count_sent(VOICE_CALL_START) == 0);
     assert(device_mode_apply(DEVICE_MODE_OMAKASE));
 }
+static void test_call_diag_timing_and_single_save(void)
+{
+    reset();assert(from_server(VOICE_OUTPUT_START,1u,0u));
+    tick=1100u;assert(from_server(VOICE_OUTPUT_AUDIO,1u,0u));assert(call_diag.greeting_ms==1100u);
+    tick=1200u;assert(from_server(VOICE_OUTPUT_AUDIO,1u,1u));assert(call_diag.greeting_ms==1100u);
+    for(unsigned legacy=0;legacy<2;++legacy) {
+        reset();call.server.websocket=true;call.server.relay.legacy=legacy!=0;
+        call.state=LISTENING;call.listen_generation=1u;
+        mailbox.voice_listen_ack=mailbox.voice_end_listen_seq=1u;
+        mailbox.voice_end_reason=1u;mailbox.voice_end_turn=call.turn;
+        mailbox.voice_write_seq=mailbox.voice_end_seq=1u;mailbox.voice_samples=320u;
+        assert(capture_step());assert(call_diag.input_frames==1u && call_diag.input_end_ms==tick);
+        assert(call_diag.input_end_sent==(legacy?0u:1u));
+    }
+    reset();pending_call_diag=(voice_call_diag_t){.reason=19u,.turn=3u,.input_frames=12u};call_diag_pending=true;
+    busy=true;flush_call_diag();assert(!diag_stores);
+    busy=false;mailbox.voice_record_enabled=1u;flush_call_diag();assert(!diag_stores);
+    mailbox.voice_record_enabled=0u;fake_idle=false;flush_call_diag();assert(!diag_stores);
+    fake_idle=true;flush_call_diag();assert(diag_stores==1u && !call_diag_pending && stored_diag.input_frames==12u);
+    flush_call_diag();assert(diag_stores==1u);
+    call_diag_pending=true;diag_store_ok=false;flush_call_diag();flush_call_diag();
+    assert(diag_stores==2u && !call_diag_pending); /* Failed save never retries per loop. */
+}
 int main(void)
 {
+    test_call_diag_timing_and_single_save();
     test_api_is_proven_before_the_button();
     test_automatic_recovery();
     test_recovery_edge_cases();
