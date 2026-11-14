@@ -180,6 +180,7 @@ async fn failed_recognition_is_an_unheard_turn() {
         chat: Arc::new(Model(ModelBehavior::Answers)),
         speech: Arc::new(Speech { fail: false }),
         recognizer: Arc::new(FailingAsr),
+        call_warmup: Arc::default(),
         settings,
     });
     let sink = Arc::new(Sink::default());

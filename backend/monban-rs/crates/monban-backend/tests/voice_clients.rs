@@ -1028,6 +1028,32 @@ async fn warm_up_schedule_runs_once_after_success() {
     warmup::shutdown().await;
 }
 
+#[tokio::test]
+async fn call_warmup_runs_one_at_a_time_and_skips_after_a_recent_success() {
+    let server = fake(handler(|_, _| response(200, "application/json", "{}"))).await;
+    let settings = settings_for(&server.base, &[("DOOR_WARMUP", "1")]);
+    let wake = Arc::new(warmup::CallWarmup::default());
+    assert!(wake.wake(settings.clone(), Duration::from_secs(30)));
+    assert!(!wake.wake(settings.clone(), Duration::from_secs(30))); // still running
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.requests().len() < 3 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!wake.wake(settings.clone(), Duration::from_secs(30))); // fresh success
+    assert_eq!(server.requests().len(), 3);
+    assert!(wake.wake(settings.clone(), Duration::ZERO)); // stale: wakes again
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.requests().len() < 6 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(server.requests().len(), 6);
+    wake.shutdown().await;
+
+    let disabled = settings_for(&server.base, &[("DOOR_WARMUP", "0")]);
+    assert!(!Arc::new(warmup::CallWarmup::default()).wake(disabled, Duration::ZERO));
+}
+
 #[path = "support/relay_latency.rs"]
 mod relay_latency;
 

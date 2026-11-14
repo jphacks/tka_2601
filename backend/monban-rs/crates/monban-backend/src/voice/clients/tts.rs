@@ -266,7 +266,7 @@ impl SpeechCppTts {
                 return Err(ClientError::protocol(Service::Tts, "unsupported content type"));
             }
         }
-        if body.pcm.len() % 2 != 0 {
+        if !body.pcm.len().is_multiple_of(2) {
             return Err(ClientError::protocol(Service::Tts, "incomplete PCM sample"));
         }
         tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, pcm_bytes = body.pcm.len(), "tts_pcm_complete");

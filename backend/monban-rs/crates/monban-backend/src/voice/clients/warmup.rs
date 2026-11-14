@@ -2,7 +2,8 @@
 //!
 //! [`warm_models`] probes ASR (0.8 s of silence), the LLM (`max_tokens: 1`, not streamed)
 //! and TTS (「はい。」) concurrently and never fails; [`schedule`] runs it in the
-//! background once per process, again only after a failed run.
+//! background once per process, again only after a failed run. [`CallWarmup`] runs it
+//! again when a call starts, because on-demand models stop after a minute without requests.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -148,4 +149,62 @@ pub async fn shutdown() {
 /// Whether a scheduled warm-up has succeeded in this process.
 pub fn warmed() -> bool {
     WARMED_OK.load(Ordering::SeqCst)
+}
+
+/// A successful call-start warm-up this recent also covers the next call. Modal stops an
+/// idle inference container 60 s after its last request (`scaledown_window=60`).
+pub const CALL_WARMUP_FRESH: Duration = Duration::from_secs(30);
+
+/// Wakes ASR, the LLM and TTS in the background when a call starts, so a stopped
+/// on-demand model boots while the greeting plays and the visitor speaks, not after the
+/// visitor has finished. At most one runs at a time; a recent success skips the next.
+#[derive(Default)]
+pub struct CallWarmup {
+    state: Mutex<CallWarmupState>,
+}
+
+#[derive(Default)]
+struct CallWarmupState {
+    task: Option<tokio::task::JoinHandle<()>>,
+    last_ok: Option<Instant>,
+}
+
+impl CallWarmup {
+    /// Start a warm-up unless one is running or one started successfully within `fresh`.
+    /// Returns whether one was started. Never blocks the call.
+    pub fn wake(self: &Arc<Self>, settings: Arc<Settings>, fresh: Duration) -> bool {
+        if !settings.warmup_enabled {
+            return false;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return false };
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.task.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return false;
+        }
+        if state.last_ok.is_some_and(|started| started.elapsed() < fresh) {
+            return false;
+        }
+        let this = Arc::clone(self);
+        state.task = Some(runtime.spawn(async move {
+            let started = Instant::now();
+            tracing::info!("call_warmup_started");
+            let ok = warm_models(&settings).await;
+            if ok {
+                let mut state = this.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                state.last_ok = Some(started);
+            }
+        }));
+        true
+    }
+
+    /// Cancel a warm-up that is still running.
+    pub async fn shutdown(&self) {
+        let handle = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).task.take();
+        if let Some(handle) = handle {
+            if !handle.is_finished() {
+                handle.abort();
+                let _ = handle.await;
+            }
+        }
+    }
 }

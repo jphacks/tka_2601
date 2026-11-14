@@ -100,6 +100,7 @@ pub fn live_models(settings: Arc<Settings>, http: reqwest::Client) -> super::run
         chat: Arc::new(LlmChatModel(LlmClient::new(settings.clone()))),
         speech: Arc::new(SpeechCppBackend { tts }),
         recognizer: Arc::new(SttRecognizer(SttClient::new(settings.clone()))),
+        call_warmup: Arc::default(),
         settings,
     }
 }
