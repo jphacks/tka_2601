@@ -94,6 +94,8 @@ async fn main() -> anyhow::Result<()> {
 
     let mut request = format!("ws://127.0.0.1:{port}/api/relay").into_client_request()?;
     request.headers_mut().insert("authorization", format!("Bearer {}", settings.api_key).parse()?);
+    // Production accepts only WSS; the Cloudflare tunnel marks forwarded requests this way.
+    request.headers_mut().insert("x-forwarded-proto", "https".parse()?);
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await?;
     let visit_id = uuid::Uuid::new_v4();
     let start = json!({"type": "start", "protocol_version": 2, "visit_id": visit_id, "mode": "normal"});
