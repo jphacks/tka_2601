@@ -98,10 +98,12 @@ impl SpeechBackend for SpeechCppBackend {
 
 /// The real models for every call.
 pub fn live_models(settings: Arc<Settings>, http: reqwest::Client) -> super::runtime::Models {
+    let tts = SpeechCppTts::new(settings.clone());
+    tts.schedule_greeting_prewarm();
     super::runtime::Models {
         device_api: crate::persistence::device_api::DeviceApi::new(http, &settings),
         chat: Arc::new(LlmChatModel(LlmClient::new(settings.clone()))),
-        speech: Arc::new(SpeechCppBackend { tts: SpeechCppTts::new(settings.clone()) }),
+        speech: Arc::new(SpeechCppBackend { tts }),
         recognizer: Arc::new(SttRecognizer(SttClient::new(settings.clone()))),
         settings,
     }
