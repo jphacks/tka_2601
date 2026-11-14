@@ -1,0 +1,22 @@
+# Override for running the Rust API instead of the Python api/agent (Issue #82):
+#   docker compose --env-file .env.production -f compose.production.yaml \
+#     -f compose.production.livekit.yaml -f ../monban-rs/compose.production.rust.yaml up -d
+# Relay v2 (the XIAO default) runs entirely in the API. The Python LiveKit worker is only
+# needed for relay v1 and /api/connect, which the Rust build does not serve yet (#81).
+services:
+  api:
+    image: monban-api-rs:${MONBAN_RS_IMAGE_TAG:-local}
+    build: !reset null
+    command: ["monban-api"]
+    environment:
+      MONBAN_HOST: 0.0.0.0
+      MONBAN_PORT: "8093"
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "monban-api", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  agent:
+    profiles: ["python-livekit-worker"]
