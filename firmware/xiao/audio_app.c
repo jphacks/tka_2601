@@ -58,7 +58,11 @@ float audio_app_gate(void) { return model.gate_rms; }
 audio_enroll_status_t audio_app_enroll_status(void)
 {
     audio_enroll_status_t status = {(audio_enroll_phase_t)enroll_phase, (chime_reason_t)enroll_reason};
-    if (status.phase == AUDIO_ENROLL_SAVING && !audio_jobs.model_busy) status.phase = AUDIO_ENROLL_DONE;
+    if (status.phase == AUDIO_ENROLL_SAVING && !audio_jobs.model_busy) {
+        audio_link_acquire();
+        status.phase = audio_jobs.model_save_failed ? AUDIO_ENROLL_FAILED : AUDIO_ENROLL_DONE;
+        if (audio_jobs.model_save_failed) status.reason = CHIME_REASON_NO_PCM;
+    }
     return status;
 }
 bool audio_app_enroll_start(void) { return audio_app_post_command('e'); }
@@ -217,6 +221,7 @@ static void enroll_frame(const int16_t pcm[AUDIO_FRAME])
             chime_detector_init(&detector, &model);
             detector_ready = true;
             audio_jobs.model_to_save = model;
+            audio_jobs.model_save_failed = false;
             audio_link_release();
             audio_jobs.model_busy = true;
             mode = NORMAL;
