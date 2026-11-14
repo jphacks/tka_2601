@@ -1,0 +1,19 @@
+[package]
+name = "monban-vad"
+description = "Silero VAD with livekit's streaming speech/silence state machine (ported from livekit-plugins-silero)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version = "1.92"
+
+[dependencies]
+ort.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde = { workspace = true }
+# float_roundtrip: parse the oracle's f64 values exactly, so equal probabilities compare as 0.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+sha2.workspace = true

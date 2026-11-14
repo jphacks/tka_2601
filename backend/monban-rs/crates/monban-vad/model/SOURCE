@@ -1,0 +1,10 @@
+silero_vad.onnx
+
+Model:   Silero VAD (v5 graph: inputs input[1,N] f32, state[2,1,128] f32, sr i64 scalar;
+         outputs output[1,1], stateN[2,1,128])
+Authors: Silero Team, https://github.com/snakers4/silero-vad
+License: MIT, see LICENSE-silero-vad in this directory
+Copied from: livekit-plugins-silero 1.8.8 (Python wheel), livekit/plugins/silero/resources/silero_vad.onnx
+             (the file the Python voice agent loads through silero.VAD.load)
+sha256:  1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
+Size:    2327524 bytes
