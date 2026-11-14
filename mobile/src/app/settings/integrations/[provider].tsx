@@ -1,7 +1,6 @@
 import * as Linking from 'expo-linking';
 import { Redirect, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
-import { Fragment, useCallback, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -23,11 +22,15 @@ import { confirmAction } from '../../../lib/confirm';
 import { repositories } from '../../../lib/container';
 import { errorMessage } from '../../../lib/errors';
 import { features } from '../../../lib/features';
-import { type Integration, isIntegration } from '../../../lib/integrations';
+import { type Integration, isIntegration, oauthOutcome } from '../../../lib/integrations';
 import { PROVIDER_LABELS } from '../../../lib/labels';
+import { OAUTH_RETURNS_TO_PAGE, openOAuthSession } from '../../../lib/oauthSession';
 import { colors } from '../../../theme';
 
 type Connectable = Exclude<Integration, 'hotpepper'>;
+
+// Web 版で、同意から戻った code を一度だけ完了に送る（開発時の効果の二重実行や、画面の作り直しに備える）
+const completedCodes = new Set<string>();
 
 const CONNECTIONS: Record<
   Connectable,
@@ -69,6 +72,8 @@ export default function IntegrationRoute() {
 
 function IntegrationScreen({ provider }: { provider: Integration }) {
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ google?: string; square?: string; code?: string }>();
+  const connectable: Connectable | null = provider === 'hotpepper' ? null : provider;
   const [state, setState] = useState<ProviderState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [calendars, setCalendars] = useState<GoogleCalendar[] | null>(null);
@@ -115,32 +120,64 @@ function IntegrationScreen({ provider }: { provider: Integration }) {
     }
   }
 
+  // 同意画面から戻っただけでは接続されない。ログインした本人のセッションで完了させる
+  const finishLogin = useCallback(
+    async (kind: Connectable, query: Record<string, unknown>) => {
+      const outcome = oauthOutcome(query, CONNECTIONS[kind].resultParam);
+      if (outcome.kind === 'error') {
+        Alert.alert('ログインできませんでした', '');
+        return;
+      }
+      if (outcome.kind !== 'pending') return;
+      await CONNECTIONS[kind].complete(outcome.code);
+      // Square はカレンダーを選ばないので、つないだら予約一覧にも使う
+      if (kind === 'square') await repositories.providers.select('square');
+      await load();
+    },
+    [load],
+  );
+
   async function login(kind: Connectable) {
     const connection = CONNECTIONS[kind];
     setBusy(true);
     try {
       const returnUrl = Linking.createURL(`settings/integrations/${kind}`);
       const url = await connection.start(returnUrl);
-      const result = await WebBrowser.openAuthSessionAsync(url, returnUrl);
-      if (result.type !== 'success') return;
-      const query = Linking.parse(result.url).queryParams;
-      const outcome = query?.[connection.resultParam];
-      if (outcome === 'error') {
-        Alert.alert('ログインできませんでした', '');
-        return;
-      }
-      if (outcome !== 'pending' || typeof query?.code !== 'string') return;
-      // 同意画面から戻っただけでは接続されない。ログインした本人のセッションで完了させる
-      await connection.complete(query.code);
-      // Square はカレンダーを選ばないので、つないだら予約一覧にも使う
-      if (kind === 'square') await repositories.providers.select('square');
-      await load();
+      const query = await openOAuthSession(url, returnUrl);
+      if (query) await finishLogin(kind, query);
     } catch (e) {
       Alert.alert('ログインできませんでした', errorMessage(e) ?? '');
     } finally {
       setBusy(false);
     }
   }
+
+  // Web 版は同じタブで同意画面へ移り、この画面に ?google=pending&code=... を付けて戻ってくる
+  const resultParam = connectable ? CONNECTIONS[connectable].resultParam : null;
+  const returnedResult = resultParam ? params[resultParam as 'google' | 'square'] : undefined;
+  const returnedCode = params.code;
+  useEffect(() => {
+    if (!OAUTH_RETURNS_TO_PAGE || !connectable || !resultParam || returnedResult === undefined) return;
+    if (typeof returnedCode === 'string') {
+      if (completedCodes.has(returnedCode)) return;
+      completedCodes.add(returnedCode);
+    }
+    const kind = connectable;
+    const query = { [resultParam]: returnedResult, code: returnedCode };
+    async function complete() {
+      setBusy(true);
+      try {
+        await finishLogin(kind, query);
+      } catch (e) {
+        Alert.alert('ログインできませんでした', errorMessage(e) ?? '');
+      } finally {
+        setBusy(false);
+        // 読み直しや履歴で同じ code をもう一度送らないよう、問い合わせのない URL に置き換える
+        router.replace({ pathname: '/settings/integrations/[provider]', params: { provider: kind } });
+      }
+    }
+    complete();
+  }, [connectable, resultParam, returnedResult, returnedCode, finishLogin]);
 
   // 初めてカレンダーを選んだときは、予約一覧にも使う。選び直すときは、使うかどうかを変えない
   async function chooseCalendar(calendarId: string) {
@@ -170,7 +207,6 @@ function IntegrationScreen({ provider }: { provider: Integration }) {
     }
   }
 
-  const connectable: Connectable | null = provider === 'hotpepper' ? null : provider;
   const connection =
     state && connectable
       ? connectable === 'google_calendar'

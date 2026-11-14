@@ -9,6 +9,9 @@
 //   SQUARE_APPLICATION_ID、SQUARE_APPLICATION_SECRET  Square Developer Console のアプリ
 //   SQUARE_ENVIRONMENT             production か sandbox（既定は production）
 //   SQUARE_WEBHOOK_SIGNATURE_KEY   Webhook の署名鍵。<公開 URL>/square/webhook を登録する
+// シークレット（Web 版から接続するとき）:
+//   APP_WEB_ORIGINS  同意のあとに戻してよい Web 版のオリジン。カンマ区切り（例: https://monban.vercel.app）。
+//                    http://localhost などの開発用は設定しなくても許す
 
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "@supabase/server";
@@ -18,6 +21,7 @@ import { authenticateMember } from "../_shared/member_auth.ts";
 import { notify, notifySafely } from "../_shared/notify.ts";
 import { squareConfigFromEnv } from "../_shared/square.ts";
 import { handleReservationsRequest } from "./handler.ts";
+import { webOriginsFromEnv } from "./return_url.ts";
 
 export default {
   fetch: withSupabase({ auth: "none" }, (req, ctx) => {
@@ -26,6 +30,7 @@ export default {
     return handleReservationsRequest(req, {
       store,
       config: googleConfigFromEnv(),
+      webOrigins: webOriginsFromEnv(),
       squareConfig: squareConfigFromEnv(),
       squareClient: (connection, config) => squareClientFor(admin, store, connection, config),
       authenticate: (request) => authenticateMember(admin, request),

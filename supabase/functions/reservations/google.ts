@@ -4,6 +4,7 @@ import { GOOGLE_AUTH_URL, GOOGLE_REVOKE_URL, GOOGLE_TOKEN_URL, GOOGLE_USERINFO_U
 import { ProviderError } from "../_shared/reservation.ts";
 import { decryptToken, encryptToken } from "../_shared/token_crypto.ts";
 import { type CompletingMember, holdTokens, takeTokens } from "./oauth_pending.ts";
+import { isAllowedReturnUrl } from "./return_url.ts";
 
 export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
@@ -11,19 +12,20 @@ export const GOOGLE_SCOPES = [
   "openid",
   "email",
 ];
-const APP_SCHEME = "tka2601://";
 export const STATE_TTL_MS = 10 * 60 * 1000;
 
-export type GoogleDeps = { store: CalendarStore; config: GoogleConfig | null; fetch?: typeof fetch; now?: () => Date };
+export type GoogleDeps = {
+  store: CalendarStore;
+  config: GoogleConfig | null;
+  // 同意のあとに戻してよい Web のオリジン（return_url.ts）
+  webOrigins?: readonly string[];
+  fetch?: typeof fetch;
+  now?: () => Date;
+};
 
 function requireConfig(config: GoogleConfig | null): GoogleConfig {
   if (!config) throw new ProviderError(503, "Google カレンダーの接続が設定されていません", "google_not_configured");
   return config;
-}
-
-// 転送先はアプリに限る（オープンリダイレクトを防ぐ）
-export function isAllowedReturnUrl(url: unknown): url is string {
-  return typeof url === "string" && url.startsWith(APP_SCHEME) && !/[\s\\]/.test(url);
 }
 
 function callbackUrl(config: GoogleConfig): string {
@@ -32,7 +34,7 @@ function callbackUrl(config: GoogleConfig): string {
 
 export async function startOAuth(deps: GoogleDeps, householdId: string, userId: string, returnUrl: unknown): Promise<string> {
   const config = requireConfig(deps.config);
-  if (!isAllowedReturnUrl(returnUrl)) throw new ProviderError(400, "return_url が正しくありません");
+  if (!isAllowedReturnUrl(returnUrl, deps.webOrigins)) throw new ProviderError(400, "return_url が正しくありません");
   const state = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
   await deps.store.saveState({ state, household_id: householdId, user_id: userId, return_url: returnUrl, provider: "google_calendar" });
   return `${GOOGLE_AUTH_URL}?${new URLSearchParams({

@@ -6,7 +6,7 @@ import type { NewNotification } from "../_shared/notify.ts";
 import { ProviderError, type Reservation, type ReservationProvider, type ReservationWrite } from "../_shared/reservation.ts";
 import { SquareAuthError, squareSignature } from "../_shared/square.ts";
 import { baseConnection, fakeGoogle, memoryStore } from "../_shared/testing.ts";
-import { isAllowedReturnUrl } from "./google.ts";
+import { isAllowedReturnUrl } from "./return_url.ts";
 import { handleReservationsRequest, type ReservationsDeps } from "./handler.ts";
 
 const reservation: Reservation = {
@@ -233,11 +233,83 @@ Deno.test("OAuth の設定がなければ 503 と分かる error を返す", asy
   assertEquals((await res.json()).code, "google_not_configured");
 });
 
-Deno.test("return_url はアプリのスキームだけを許す", () => {
-  assertEquals(isAllowedReturnUrl("tka2601://settings/provider"), true);
-  for (const url of ["https://evil.example", "exp://x", "//evil.example", "tka2601://x\\y", 1, undefined]) {
-    assertEquals(isAllowedReturnUrl(url), false);
+Deno.test("return_url はアプリのスキームと、開発用の localhost と、許した Web のオリジンだけを許す", () => {
+  const origins = ["https://monban.example"];
+  for (
+    const url of [
+      "tka2601://settings/provider",
+      "http://localhost:8081/settings/integrations/google_calendar",
+      "http://127.0.0.1:19006/settings/integrations/square",
+      "https://monban.example/settings/integrations/google_calendar",
+    ]
+  ) {
+    assertEquals(isAllowedReturnUrl(url, origins), true, url);
   }
+  for (
+    const url of [
+      "https://evil.example",
+      "https://monban.example.evil.example/x",
+      "http://monban.example/x",
+      "https://localhost/x",
+      "http://localhost.evil.example/x",
+      "https://user@monban.example/x",
+      "javascript:alert(1)",
+      "exp://x",
+      "//evil.example",
+      "tka2601://x\\y",
+      "http://localhost:8081/a b",
+      1,
+      undefined,
+    ]
+  ) {
+    assertEquals(isAllowedReturnUrl(url, origins), false, String(url));
+  }
+  // オリジンを設定しなければ、本番の Web は許さない
+  assertEquals(isAllowedReturnUrl("https://monban.example/x"), false);
+});
+
+Deno.test("OAuth: Web 版の戻り先は、許したオリジンなら受け付けて、同意のあとそこへ戻す", async () => {
+  const google = fakeGoogle((url) =>
+    url.pathname === "/token"
+      ? Response.json({ access_token: "access", refresh_token: "plain-refresh" })
+      : Response.json({ email: "shop@example.com" })
+  );
+  const { deps } = setup({ config, fetch: google.fetch, webOrigins: ["https://monban.example"] });
+  const returnUrl = "https://monban.example/settings/integrations/google_calendar";
+
+  const denied = await handleReservationsRequest(
+    request("/google/start", "POST", { return_url: "https://other.example/settings" }),
+    deps,
+  );
+  assertEquals(denied.status, 400);
+
+  const started = await handleReservationsRequest(request("/google/start", "POST", { return_url: returnUrl }), deps);
+  assertEquals(started.status, 200);
+  const oauthState = new URL((await started.json()).url).searchParams.get("state")!;
+  const callback = await handleReservationsRequest(request(`/google/callback?state=${oauthState}&code=c1`), deps);
+  assertEquals(callback.status, 302);
+  const location = callback.headers.get("location")!;
+  assertEquals(location.startsWith(`${returnUrl}?google=pending&code=`), true, location);
+  const completed = await handleReservationsRequest(
+    request("/google/complete", "POST", { code: pendingCode(callback, "google") }),
+    deps,
+  );
+  assertEquals(completed.status, 200);
+  assertEquals((await completed.json()).google.connected, true);
+});
+
+Deno.test("Square: Web 版の戻り先も同じ規則で受け付ける", async () => {
+  const { deps } = setup({ squareConfig, webOrigins: ["https://monban.example"] });
+  const ok = await handleReservationsRequest(
+    request("/square/start", "POST", { return_url: "https://monban.example/settings/integrations/square" }),
+    deps,
+  );
+  assertEquals(ok.status, 200);
+  const denied = await handleReservationsRequest(
+    request("/square/start", "POST", { return_url: "https://evil.example/settings/integrations/square" }),
+    deps,
+  );
+  assertEquals(denied.status, 400);
 });
 
 function pendingCode(res: Response, provider: "google" | "square"): string {
