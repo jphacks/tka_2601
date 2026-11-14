@@ -8,7 +8,7 @@ extern "C" {
 
 #define PLAYBACK_QUEUE_FRAMES 64u
 #define PLAYBACK_PREBUFFER_FRAMES 32u
-/* The API may have another 10 unacknowledged frames in flight: 48+10 < 64. */
+/* The API may have another 16 unacknowledged frames in flight: 48+16 <= 64. */
 #define PLAYBACK_CREDIT_FRAMES 48u
 #define PLAYBACK_FRAME_SAMPLES 320u
 

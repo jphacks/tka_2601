@@ -7,6 +7,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use super::agents::{Agent, ChatModel, DoorAgent, ReceptionAgent};
+use super::clients::warmup::{CallWarmup, CALL_WARMUP_FRESH};
 use super::session::{Recognizer, Session, SpeechBackend};
 use crate::config::Settings;
 use crate::persistence::device_api::DeviceApi;
@@ -20,6 +21,8 @@ pub struct Models {
     pub chat: Arc<dyn ChatModel>,
     pub speech: Arc<dyn SpeechBackend>,
     pub recognizer: Arc<dyn Recognizer>,
+    /// Wakes the on-demand models at the start of each call.
+    pub call_warmup: Arc<CallWarmup>,
 }
 
 pub struct DeviceRuntimeFactory {
@@ -68,6 +71,9 @@ impl DeviceRuntime {
 #[async_trait::async_trait]
 impl VoiceRuntime for DeviceRuntime {
     async fn start(&self) -> anyhow::Result<()> {
+        // The greeting is cached, so a stopped ASR/LLM/TTS would otherwise first boot when
+        // the visitor's words arrive. Boot them now, in the background.
+        self.models.call_warmup.wake(self.models.settings.clone(), CALL_WARMUP_FRESH);
         if let Some(desk) = self.desk.clone() {
             // Read today's reservations while the greeting plays.
             let handle = tokio::spawn(async move { desk.prefetch().await });

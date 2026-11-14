@@ -306,7 +306,7 @@ pub fn split_sentences(text: &str) -> Vec<String> {
 }
 
 /// `len(re.findall(r"[。！？!?]+", text))`.
-fn sentence_ending_runs(text: &str) -> usize {
+pub(super) fn sentence_ending_runs(text: &str) -> usize {
     let mut runs = 0;
     let mut in_run = false;
     for c in text.chars() {

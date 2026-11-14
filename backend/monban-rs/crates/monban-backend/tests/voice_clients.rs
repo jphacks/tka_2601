@@ -16,12 +16,18 @@ use futures::{FutureExt, StreamExt};
 use http_body_util::BodyExt;
 use monban_backend::config::Settings;
 use monban_backend::services::py_json_dumps_ensure_ascii_false;
+use monban_backend::persistence::device_api::ShopProfile;
+use monban_backend::reception::desk::ReceptionDesk;
+use monban_backend::relay::OutputSink;
+use monban_backend::voice::agents::{Agent, DoorAgent, ReceptionAgent};
+use monban_backend::voice::session::Session;
 use monban_backend::voice::clients::error::Service;
 use monban_backend::voice::clients::llm::{LlmClient, LlmEvent};
 use monban_backend::voice::clients::stt::{SttClient, ASR_PROMPT};
 use monban_backend::voice::clients::text::{split_sentences, tts_text};
 use monban_backend::voice::clients::tts::{livekit_marker_bytes, SpeechCppTts};
 use monban_backend::voice::clients::{warmup, ClientError};
+use monban_policy::agent_rules::{DOOR_GREETING, RECEPTION_GREETING};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
@@ -521,6 +527,213 @@ async fn tts_requests_and_audio_match_fixtures() {
 // TTS behavior
 // ---------------------------------------------------------------------------------------
 
+async fn wait_for_requests(server: &Fake, count: usize) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while server.requests().len() < count {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("expected fake TTS request");
+}
+
+#[tokio::test]
+async fn fixed_greetings_are_single_flight_across_clones() {
+    let server = fake(Arc::new(|_, recorded| async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        speech_response(&recorded.body, 16000, false)
+    }.boxed())).await;
+    let tts = SpeechCppTts::new(settings_for(&server.base, &[]));
+    let clone = tts.clone();
+    let (first, second) = tokio::join!(tts.synthesize(DOOR_GREETING), clone.synthesize(DOOR_GREETING));
+    let first = first.unwrap();
+    assert_eq!(first, second.unwrap());
+    assert_eq!(first, tts_pcm(DOOR_GREETING, 16000));
+    assert_eq!(tts.synthesize(DOOR_GREETING).await.unwrap(), first);
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn live_models_prewarm_both_fixed_greetings_without_blocking_startup() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let handler_gate = gate.clone();
+    let server = fake(Arc::new(move |index, recorded| {
+        let gate = handler_gate.clone();
+        async move {
+            if index == 0 { gate.notified().await; }
+            speech_response(&recorded.body, 16000, false)
+        }.boxed()
+    })).await;
+    // Constructing the real shared models returns while the first synthesis is blocked.
+    let models = monban_backend::voice::adapters::live_models(
+        settings_for(&server.base, &[("DOOR_WARMUP", "1")]), reqwest::Client::new(),
+    );
+    wait_for_requests(&server, 1).await;
+    let speech = models.speech.clone();
+    let call = tokio::spawn(async move { speech.synthesize(DOOR_GREETING).await });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!call.is_finished());
+    assert_eq!(server.requests().len(), 1); // The call joins prewarm, not another request.
+    gate.notify_one();
+    assert_eq!(call.await.unwrap().unwrap(), tts_pcm(DOOR_GREETING, 16000));
+    wait_for_requests(&server, 3).await; // Door + the two reception sentences.
+    let reception = models.speech.synthesize(RECEPTION_GREETING).await.unwrap();
+    let expected: Vec<u8> = split_sentences(RECEPTION_GREETING)
+        .iter().flat_map(|sentence| tts_pcm(sentence, 16000)).collect();
+    assert_eq!(reception, expected);
+    models.speech.synthesize(DOOR_GREETING).await.unwrap();
+    models.speech.synthesize(RECEPTION_GREETING).await.unwrap();
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[derive(Default)]
+struct GreetingSink {
+    pcm: Mutex<Vec<u8>>,
+    transcripts: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl OutputSink for GreetingSink {
+    async fn write_audio(&self, pcm: Vec<u8>) -> anyhow::Result<()> {
+        assert!(!pcm.is_empty() && pcm.len() <= 640 && pcm.len().is_multiple_of(2));
+        self.pcm.lock().unwrap().extend(pcm);
+        Ok(())
+    }
+    async fn finish_audio(&self) -> anyhow::Result<()> { Ok(()) }
+    async fn wait_played(&self) -> anyhow::Result<()> { Ok(()) }
+    async fn transcript(&self, speaker: &str, text: &str) -> anyhow::Result<()> {
+        assert_eq!(speaker, "ai");
+        self.transcripts.lock().unwrap().push(text.to_string());
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn session_speaker_hits_prewarmed_greetings_after_filtering_and_tokenization() {
+    let server = fake(handler(|_, recorded| speech_response(&recorded.body, 16000, false))).await;
+    let settings = settings_for(&server.base, &[("DOOR_WARMUP", "1")]);
+    let models = monban_backend::voice::adapters::live_models(settings.clone(), reqwest::Client::new());
+    wait_for_requests(&server, 3).await;
+    models.speech.synthesize(RECEPTION_GREETING).await.unwrap(); // prewarm is complete
+    let spaced_reception = format!("{RECEPTION_GREETING} ");
+    let custom = "いらっしゃいませ。MONBAN店へようこそ。";
+    for (shop_greeting, text, extra_requests) in [
+        (None, DOOR_GREETING, 0),
+        (Some(""), RECEPTION_GREETING, 0),
+        (Some(spaced_reception.as_str()), spaced_reception.as_str(), 0),
+        (Some(custom), custom, 4),
+    ] {
+        let before = server.requests().len();
+        for _ in 0..2 {
+            let agent: Box<dyn Agent> = match shop_greeting {
+                None => Box::new(DoorAgent::new("", settings.max_house_rules_chars, &settings.house_rules)),
+                Some(greeting) => Box::new(ReceptionAgent::new(
+                    Arc::new(ReceptionDesk::new(None, Duration::from_secs(30))),
+                    Some(ShopProfile { greeting: greeting.into(), ..Default::default() }),
+                )),
+            };
+            let sink = GreetingSink::default();
+            Session::new(agent).greet(models.speech.as_ref(), &sink).await.unwrap();
+            // Both fixed greetings are one StreamAdapter token; sentence splitting,
+            // trimming, the two marker frames and device framing preserve the old PCM.
+            let mut expected: Vec<u8> = split_sentences(text)
+                .iter().flat_map(|sentence| tts_pcm(sentence, 16000)).collect();
+            expected.extend(vec![0; 2 * livekit_marker_bytes(16000)]);
+            assert_eq!(*sink.pcm.lock().unwrap(), expected, "{text}");
+            assert_eq!(*sink.transcripts.lock().unwrap(), [text], "{text}");
+        }
+        assert_eq!(server.requests().len() - before, extra_requests, "{text}");
+    }
+}
+
+#[tokio::test]
+async fn greeting_prewarm_is_scheduled_once_and_failures_retry_on_demand() {
+    let server = fake(handler(|index, recorded| {
+        if index == 0 { response(400, "application/json", "{}") }
+        else { speech_response(&recorded.body, 16000, false) }
+    })).await;
+    let tts = SpeechCppTts::new(settings_for(&server.base, &[("DOOR_WARMUP", "1")]));
+    tts.schedule_greeting_prewarm();
+    tts.clone().schedule_greeting_prewarm();
+    wait_for_requests(&server, 3).await;
+    tts.synthesize(RECEPTION_GREETING).await.unwrap();
+    assert_eq!(tts.synthesize(DOOR_GREETING).await.unwrap(), tts_pcm(DOOR_GREETING, 16000));
+    tts.synthesize(DOOR_GREETING).await.unwrap();
+    assert_eq!(server.requests().len(), 4); // Failed prewarm is not cached.
+}
+
+#[tokio::test]
+async fn timed_out_greeting_prewarm_releases_the_entry_for_on_demand_retry() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let handler_gate = gate.clone();
+    let server = fake(Arc::new(move |index, recorded| {
+        let gate = handler_gate.clone();
+        async move {
+            if index == 0 { gate.notified().await; }
+            speech_response(&recorded.body, 16000, false)
+        }.boxed()
+    })).await;
+    let tts = SpeechCppTts::new(settings_for(&server.base, &[
+        ("DOOR_WARMUP", "1"), ("DOOR_WARMUP_TIMEOUT_SECONDS", "0.05"),
+    ]));
+    tts.schedule_greeting_prewarm();
+    wait_for_requests(&server, 3).await;
+    let pcm = tokio::time::timeout(Duration::from_secs(1), tts.synthesize(DOOR_GREETING))
+        .await.expect("cancelled initialization must not hold the entry").unwrap();
+    assert_eq!(pcm, tts_pcm(DOOR_GREETING, 16000));
+    tts.synthesize(DOOR_GREETING).await.unwrap();
+    assert_eq!(server.requests().len(), 4);
+    gate.notify_one();
+}
+
+#[tokio::test]
+async fn custom_greetings_and_non_exact_text_are_not_cached() {
+    let server = fake(handler(|_, recorded| speech_response(&recorded.body, 16000, false))).await;
+    let tts = SpeechCppTts::new(settings_for(&server.base, &[]));
+    for text in ["いらっしゃいませ。MONBAN店へようこそ。", "はい、どちら様でしょうか。 "] {
+        let before = server.requests().len();
+        let first = tts.synthesize(text).await.unwrap();
+        let requests = server.requests().len() - before;
+        assert_eq!(tts.synthesize(text).await.unwrap(), first);
+        assert_eq!(server.requests().len() - before, requests * 2);
+    }
+}
+
+#[tokio::test]
+async fn greeting_cache_never_crosses_tts_settings_or_upstream_clients() {
+    let server = fake(handler(|index, _| response(200, "audio/pcm", ((index + 1) as u16).to_le_bytes().to_vec()))).await;
+    let baseline = SpeechCppTts::new(settings_for(&server.base, &[]));
+    assert_eq!(baseline.synthesize(DOOR_GREETING).await.unwrap(), [1, 0]);
+    for (index, extra) in [
+        ("DOOR_TTS_VOICE", "other-voice"), ("DOOR_TTS_SEED", "42"),
+        ("DOOR_TTS_INSTRUCTIONS", "other instructions"), ("DOOR_TTS_SAMPLE_RATE", "48000"),
+        ("DOOR_TTS_API_MODEL", "other-model"), ("DOOR_TTS_API_KEY", "other-test-key"),
+    ].iter().enumerate() {
+        let tts = SpeechCppTts::new(settings_for(&server.base, &[*extra]));
+        let expected = ((index + 2) as u16).to_le_bytes().to_vec();
+        assert_eq!(tts.synthesize(DOOR_GREETING).await.unwrap(), expected);
+        assert_eq!(tts.synthesize(DOOR_GREETING).await.unwrap(), expected);
+    }
+    let other = fake(handler(|_, _| response(200, "audio/pcm", vec![99u8, 0]))).await;
+    let tts = SpeechCppTts::new(settings_for(&other.base, &[]));
+    assert_eq!(tts.synthesize(DOOR_GREETING).await.unwrap(), [99, 0]);
+    assert_eq!(baseline.synthesize(DOOR_GREETING).await.unwrap(), [1, 0]);
+    assert_eq!(server.requests().len(), 7);
+    assert_eq!(other.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn disabled_prewarm_makes_no_requests_but_keeps_lazy_caching() {
+    let server = fake(handler(|_, recorded| speech_response(&recorded.body, 16000, false))).await;
+    let tts = SpeechCppTts::new(settings_for(&server.base, &[]));
+    tts.schedule_greeting_prewarm();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(server.requests().is_empty());
+    tts.synthesize(DOOR_GREETING).await.unwrap();
+    tts.synthesize(DOOR_GREETING).await.unwrap();
+    assert_eq!(server.requests().len(), 1);
+}
+
 #[tokio::test]
 async fn tts_trims_a_delayed_tail_per_sentence() {
     // One sentence whose audio resumes after 1.5 s of silence: cut 180 ms into the gap.
@@ -813,4 +1026,118 @@ async fn warm_up_schedule_runs_once_after_success() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(server.requests().len(), 3);
     warmup::shutdown().await;
+}
+
+#[tokio::test]
+async fn call_warmup_runs_one_at_a_time_and_skips_after_a_recent_success() {
+    let server = fake(handler(|_, _| response(200, "application/json", "{}"))).await;
+    let settings = settings_for(&server.base, &[("DOOR_WARMUP", "1")]);
+    let wake = Arc::new(warmup::CallWarmup::default());
+    assert!(wake.wake(settings.clone(), Duration::from_secs(30)));
+    assert!(!wake.wake(settings.clone(), Duration::from_secs(30))); // still running
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.requests().len() < 3 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!wake.wake(settings.clone(), Duration::from_secs(30))); // fresh success
+    assert_eq!(server.requests().len(), 3);
+    assert!(wake.wake(settings.clone(), Duration::ZERO)); // stale: wakes again
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.requests().len() < 6 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(server.requests().len(), 6);
+    wake.shutdown().await;
+
+    let disabled = settings_for(&server.base, &[("DOOR_WARMUP", "0")]);
+    assert!(!Arc::new(warmup::CallWarmup::default()).wake(disabled, Duration::ZERO));
+}
+
+#[tokio::test]
+async fn call_warmup_uses_the_given_clients() {
+    let server = fake(handler(|_, recorded| match recorded.path.as_str() {
+        "/v1/audio/speech" => response(200, "audio/pcm", vec![0u8; 64]),
+        _ => response(200, "application/json", "{}"),
+    }))
+    .await;
+    let settings = settings_for(&server.base, &[("DOOR_WARMUP", "1")]);
+    let http = reqwest::Client::new();
+    let clients = warmup::WarmClients { asr: http.clone(), llm: http.clone(), tts: http };
+    assert!(warmup::warm_models_with(&settings, &clients).await);
+    let mut paths: Vec<String> = server.requests().into_iter().map(|r| r.path).collect();
+    paths.sort();
+    assert_eq!(paths, ["/v1/audio/speech", "/v1/audio/transcriptions", "/v1/chat/completions"]);
+    let wake = Arc::new(warmup::CallWarmup::with_clients(clients));
+    assert!(wake.wake(settings, Duration::ZERO));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.requests().len() < 6 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(server.requests().len(), 6);
+    wake.shutdown().await;
+}
+
+#[path = "support/relay_latency.rs"]
+mod relay_latency;
+
+/// The fake upstream withholds its second delta and DONE until the speaker writes the
+/// first voiced sample to the device. A buffered implementation would deadlock here.
+#[tokio::test]
+async fn device_hears_first_delta_before_second_delta_and_no_retry_replays_partial_audio() {
+    for fail_after_first in [false, true] {
+        let release = Arc::new(tokio::sync::Notify::new());
+        let release_server = release.clone();
+        let server = fake(handler(move |_, _| {
+            let release = release_server.clone();
+            let body = futures::stream::unfold(0, move |step| {
+                let release = release.clone();
+                async move {
+                    let payload = match step {
+                        0 | 1 => {
+                            if step == 1 {
+                                release.notified().await;
+                            }
+                            if step == 1 && fail_after_first {
+                                "data: {\"type\":\"speech.audio.error\"}\n\n".to_owned()
+                            } else {
+                                let amplitude = 600_i16 + 300 * step;
+                                let pcm = amplitude.to_le_bytes().repeat(3200);
+                                let data = base64::engine::general_purpose::STANDARD.encode(pcm);
+                                format!("data: {}\n\n", json!({"type":"speech.audio.delta","delta": data}))
+                            }
+                        }
+                        2 => "data: [DONE]\n\n".to_owned(),
+                        _ => return None,
+                    };
+                    Some((Ok::<_, Infallible>(bytes::Bytes::from(payload)), step + 1))
+                }
+            });
+            response(200, "text/event-stream", Body::from_stream(body))
+        })).await;
+        let settings = settings_for(&server.base, &[]);
+        let models = monban_backend::voice::adapters::live_models(settings.clone(), reqwest::Client::new());
+        let sink = Arc::new(GreetingSink::default());
+        let speaker_sink = sink.clone();
+        let turn = tokio::spawn(async move {
+            let agent = Box::new(DoorAgent::new("", settings.max_house_rules_chars, &settings.house_rules));
+            Session::new(agent).greet(models.speech.as_ref(), speaker_sink.as_ref()).await
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while sink.pcm.lock().unwrap().len() < 640 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("first device frame must precede second TTS delta");
+        assert_eq!(&sink.pcm.lock().unwrap()[..640], &600_i16.to_le_bytes().repeat(320));
+        release.notify_one();
+        let result = turn.await.unwrap();
+        assert_eq!(result.is_err(), fail_after_first);
+        assert_eq!(server.count("/v1/audio/speech"), 1);
+        if !fail_after_first {
+            let mut expected = 600_i16.to_le_bytes().repeat(3200);
+            expected.extend(900_i16.to_le_bytes().repeat(3200));
+            expected.extend(vec![0; 2 * livekit_marker_bytes(16000)]);
+            assert_eq!(*sink.pcm.lock().unwrap(), expected);
+        }
+    }
 }

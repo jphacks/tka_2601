@@ -63,75 +63,129 @@ fn sinc(x: f64) -> f64 {
 
 /// Resample mono s16le `pcm` (a trailing odd byte is ignored).
 pub fn resample(pcm: &[u8], input_rate: u32, output_rate: u32) -> Vec<u8> {
-    assert!(input_rate > 0 && output_rate > 0, "sample rates must be positive");
-    let input: Vec<f64> = pcm
-        .chunks_exact(2)
-        .map(|sample| f64::from(i16::from_le_bytes([sample[0], sample[1]])))
-        .collect();
-    if input_rate == output_rate {
-        return pcm[..input.len() * 2].to_vec();
-    }
-    let out_len = resampled_len(input.len(), input_rate, output_rate);
-    if input.is_empty() || out_len == 0 {
-        return Vec::new();
-    }
-
-    let (rate_in, rate_out) = (u64::from(input_rate), u64::from(output_rate));
-    // Frequencies relative to the input rate (cycles per input sample).
-    let nyquist = rate_in.min(rate_out) as f64 / 2.0 / rate_in as f64;
-    let cutoff = CUTOFF * nyquist;
-    let transition = TRANSITION * nyquist;
-    let beta = 0.1102 * (ATTENUATION_DB - 8.7);
-    let taps = (ATTENUATION_DB - 8.0) / (2.285 * 2.0 * std::f64::consts::PI * transition);
-    let half_width = (taps / 2.0).ceil();
-    let i0_beta = bessel_i0(beta);
-    let kernel = |x: f64| -> f64 {
-        let ratio = x / half_width;
-        if ratio.abs() >= 1.0 {
-            return 0.0;
-        }
-        2.0 * cutoff * sinc(2.0 * cutoff * x) * bessel_i0(beta * (1.0 - ratio * ratio).sqrt()) / i0_beta
-    };
-
-    // Output sample k sits at input position k * rate_in / rate_out. Its fractional part
-    // takes one of `phases` values; precompute the normalized taps for each.
-    let g = gcd(rate_in, rate_out);
-    let phases = (rate_out / g) as usize;
-    let reach = half_width as i64;
-    let tables: Vec<Vec<f64>> = (0..phases)
-        .map(|phase| {
-            let fraction = phase as f64 * g as f64 / rate_out as f64;
-            let mut weights: Vec<f64> =
-                (-reach..=reach + 1).map(|offset| kernel(fraction - offset as f64)).collect();
-            let total: f64 = weights.iter().sum();
-            for weight in &mut weights {
-                *weight /= total;
-            }
-            weights
-        })
-        .collect();
-
-    let mut out = Vec::with_capacity(out_len * 2);
-    for k in 0..out_len as u64 {
-        let position = k * rate_in;
-        let base = (position / rate_out) as i64;
-        let phase = ((position % rate_out) / g) as usize;
-        let mut acc = 0.0;
-        for (tap, weight) in tables[phase].iter().enumerate() {
-            let index = base - reach + tap as i64;
-            if index >= 0 && (index as usize) < input.len() {
-                acc += input[index as usize] * weight;
-            }
-        }
-        let sample = acc.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
-        out.extend_from_slice(&sample.to_le_bytes());
-    }
+    let mut resampler = StreamingResampler::new(input_rate, output_rate);
+    let mut out = resampler.process(pcm);
+    out.extend(resampler.finish());
     out
+}
+
+/// Keeps the sinc kernel's lookahead and phase across arbitrary PCM chunk boundaries.
+pub struct StreamingResampler {
+    rate_in: u64,
+    rate_out: u64,
+    g: u64,
+    reach: i64,
+    tables: Vec<Vec<f64>>,
+    input: Vec<f64>,
+    offset: u64,
+    next_output: u64,
+}
+
+impl StreamingResampler {
+    pub fn new(input_rate: u32, output_rate: u32) -> Self {
+        assert!(input_rate > 0 && output_rate > 0, "sample rates must be positive");
+        let (rate_in, rate_out) = (u64::from(input_rate), u64::from(output_rate));
+        // Frequencies relative to the input rate (cycles per input sample).
+        let nyquist = rate_in.min(rate_out) as f64 / 2.0 / rate_in as f64;
+        let cutoff = CUTOFF * nyquist;
+        let transition = TRANSITION * nyquist;
+        let beta = 0.1102 * (ATTENUATION_DB - 8.7);
+        let taps = (ATTENUATION_DB - 8.0) / (2.285 * 2.0 * std::f64::consts::PI * transition);
+        let half_width = (taps / 2.0).ceil();
+        let i0_beta = bessel_i0(beta);
+        let kernel = |x: f64| -> f64 {
+            let ratio = x / half_width;
+            if ratio.abs() >= 1.0 {
+                return 0.0;
+            }
+            2.0 * cutoff * sinc(2.0 * cutoff * x) * bessel_i0(beta * (1.0 - ratio * ratio).sqrt()) / i0_beta
+        };
+
+        // Output sample k sits at input position k * rate_in / rate_out. Its fractional part
+        // takes one of `phases` values; precompute the normalized taps for each.
+        let g = gcd(rate_in, rate_out);
+        let phases = (rate_out / g) as usize;
+        let reach = half_width as i64;
+        let tables: Vec<Vec<f64>> = (0..phases)
+            .map(|phase| {
+                let fraction = phase as f64 * g as f64 / rate_out as f64;
+                let mut weights: Vec<f64> =
+                    (-reach..=reach + 1).map(|offset| kernel(fraction - offset as f64)).collect();
+                let total: f64 = weights.iter().sum();
+                for weight in &mut weights {
+                    *weight /= total;
+                }
+                weights
+            })
+            .collect();
+
+        Self { rate_in, rate_out, g, reach, tables, input: Vec::new(), offset: 0, next_output: 0 }
+    }
+
+    pub fn process(&mut self, pcm: &[u8]) -> Vec<u8> {
+        if self.rate_in == self.rate_out {
+            return pcm[..pcm.len() / 2 * 2].to_vec();
+        }
+        self.input.extend(pcm.chunks_exact(2).map(|s| f64::from(i16::from_le_bytes([s[0], s[1]]))));
+        self.emit(false)
+    }
+
+    pub fn finish(&mut self) -> Vec<u8> {
+        let out = self.emit(true);
+        self.input.clear();
+        self.offset = 0;
+        self.next_output = 0;
+        out
+    }
+
+    fn emit(&mut self, final_chunk: bool) -> Vec<u8> {
+        let end = self.offset + self.input.len() as u64;
+        let limit = resampled_len(end as usize, self.rate_in as u32, self.rate_out as u32) as u64;
+        let mut out = Vec::new();
+        while self.next_output < limit {
+            let position = self.next_output * self.rate_in;
+            let base = (position / self.rate_out) as i64;
+            if !final_chunk && base + self.reach + 1 >= end as i64 {
+                break;
+            }
+            let phase = ((position % self.rate_out) / self.g) as usize;
+            let mut acc = 0.0;
+            for (tap, weight) in self.tables[phase].iter().enumerate() {
+                let index = base - self.reach + tap as i64 - self.offset as i64;
+                if index >= 0 && (index as usize) < self.input.len() {
+                    acc += self.input[index as usize] * weight;
+                }
+            }
+            let sample = acc.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
+            out.extend_from_slice(&sample.to_le_bytes());
+            self.next_output += 1;
+        }
+        let next_base = self.next_output * self.rate_in / self.rate_out;
+        let keep_from = next_base.saturating_sub(self.reach as u64).min(end);
+        self.input.drain(..(keep_from - self.offset) as usize);
+        self.offset = keep_from;
+        out
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arbitrary_chunk_boundaries_preserve_phase_and_filter_history() {
+        for rate in [16000, 48000, 44100, 8000] {
+            let pcm = sine(1279.0, rate, 3957, 13500.0);
+            let expected = resample_to_device(&pcm, rate);
+            let mut streaming = StreamingResampler::new(rate, DEVICE_SAMPLE_RATE);
+            let mut actual = Vec::new();
+            for chunk in pcm.chunks(334) {
+                actual.extend(streaming.process(chunk));
+            }
+            actual.extend(streaming.finish());
+            assert_eq!(actual, expected, "rate {rate}");
+        }
+    }
 
     fn sine(frequency: f64, rate: u32, samples: usize, amplitude: f64) -> Vec<u8> {
         (0..samples)

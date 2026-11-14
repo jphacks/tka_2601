@@ -8,6 +8,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use futures::StreamExt;
 use rand::RngCore;
@@ -39,6 +40,10 @@ pub trait SpeechBackend: Send + Sync {
     fn resampler(&self) -> Box<dyn Resampler>;
     /// PCM at the TTS rate for one sentence, with the delayed tail trimmed.
     async fn synthesize(&self, sentence: &str) -> anyhow::Result<Vec<u8>>;
+    async fn synthesize_to(&self, sentence: &str, tx: tokio::sync::mpsc::Sender<Vec<u8>>) -> anyhow::Result<()> {
+        tx.send(self.synthesize(sentence).await?).await?;
+        Ok(())
+    }
     /// Zero PCM at the TTS rate that livekit puts after each synthesized segment
     /// (each StreamAdapter token, and once more at the end of the reply).
     fn segment_marker(&self) -> Vec<u8> {
@@ -110,6 +115,7 @@ struct Speaker<'a> {
     pcm: Vec<u8>,
     samples: usize,
     synthesized: bool,
+    started: Instant,
 }
 
 impl<'a> Speaker<'a> {
@@ -124,6 +130,7 @@ impl<'a> Speaker<'a> {
             pcm: Vec::new(),
             samples: 0,
             synthesized: false,
+            started: Instant::now(),
         }
     }
 
@@ -149,10 +156,33 @@ impl<'a> Speaker<'a> {
         if token.is_empty() {
             return Ok(());
         }
-        let mut pcm = self.speech.synthesize(&token).await?;
-        pcm.extend(self.speech.segment_marker());
+        tracing::info!(text_chars = token.chars().count(), elapsed_ms = self.started.elapsed().as_millis() as u64,
+            "voice_token_ready");
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let speech = self.speech;
+        // Both futures belong to the turn: a disconnect or write error also drops the HTTP body.
+        let producer = speech.synthesize_to(&token, tx);
+        let consumer = async {
+            while let Some(pcm) = rx.recv().await {
+                // A single SSE delta can contain seconds of audio. Convert incrementally even then.
+                for piece in pcm.chunks(4096) {
+                    self.resample_piece(piece).await?;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        };
+        tokio::try_join!(producer, consumer)?;
         self.synthesized = true;
-        let resampled = self.resampler.process(&pcm);
+        self.resample_piece(&speech.segment_marker()).await?;
+        let flushed = self.resampler.flush();
+        self.write(flushed).await
+    }
+
+    async fn resample_piece(&mut self, pcm: &[u8]) -> anyhow::Result<()> {
+        let resample_started = Instant::now();
+        let resampled = self.resampler.process(pcm);
+        tracing::debug!(elapsed_us = resample_started.elapsed().as_micros() as u64,
+            input_bytes = pcm.len(), output_bytes = resampled.len(), "voice_resample_complete");
         self.write(resampled).await
     }
 
@@ -160,6 +190,9 @@ impl<'a> Speaker<'a> {
         self.pcm.extend_from_slice(&pcm);
         while self.pcm.len() >= OUTPUT_FRAME_BYTES {
             let frame: Vec<u8> = self.pcm.drain(..OUTPUT_FRAME_BYTES).collect();
+            if self.samples == 0 {
+                tracing::info!(elapsed_ms = self.started.elapsed().as_millis() as u64, "voice_first_frame_ready");
+            }
             self.samples += frame.len() / 2;
             self.sink.write_audio(frame).await?;
         }
@@ -184,6 +217,9 @@ impl<'a> Speaker<'a> {
         self.write(flushed).await?;
         if !self.pcm.is_empty() {
             let frame = std::mem::take(&mut self.pcm);
+            if self.samples == 0 {
+                tracing::info!(elapsed_ms = self.started.elapsed().as_millis() as u64, "voice_first_frame_ready");
+            }
             self.samples += frame.len() / 2;
             self.sink.write_audio(frame).await?;
         }

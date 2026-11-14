@@ -18,6 +18,7 @@ use serde_json::{json, Map, Value};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use monban_policy::house_rules::build_house_rules;
 
@@ -29,7 +30,11 @@ use crate::persistence::history::{utc_now_iso, Utterance, VisitRecord};
 pub(crate) const FRAME_BYTES: usize = 640;
 pub(crate) const MAX_INPUT_FRAMES: u64 = 1500;
 pub(crate) const MAX_OUTPUT_SAMPLES: u64 = 16000 * 60;
-pub(crate) const OUTPUT_WINDOW: u64 = 10;
+/// Unacknowledged output frames in flight. The XIAO queues 64 frames and acknowledges up to
+/// 48 of them before they play (`PLAYBACK_QUEUE_FRAMES`, `PLAYBACK_CREDIT_FRAMES`), so 16 is
+/// the most it can always hold. One round trip delivers this many frames (320 ms of audio);
+/// with 10 the public Cloudflare path (~240 ms round trip) delivered slower than playback.
+pub(crate) const OUTPUT_WINDOW: u64 = 16;
 const MAX_TURNS: u64 = 20;
 const MAX_CONTROL_BYTES: usize = 1024;
 const MAX_TRANSCRIPT_CHARS: usize = 120;
@@ -445,6 +450,8 @@ impl OutputSink for DeviceSink {
             (core.output_frames == 0)
                 .then(|| json!({"type": "output_start", "turn_id": core.turn, "output_id": core.turn}))
         };
+        let first_frame = output_start.is_some();
+        let send_started = Instant::now();
         if let Some(output_start) = output_start {
             shared.send_json(output_start).await?;
         }
@@ -453,7 +460,11 @@ impl OutputSink for DeviceSink {
             core.output_frames += 1;
             core.output_samples += (pcm.len() / 2) as u64;
         }
-        shared.send(Message::Binary(pcm.into())).await
+        shared.send(Message::Binary(pcm.into())).await?;
+        if first_frame {
+            tracing::info!(elapsed_us = send_started.elapsed().as_micros() as u64, "voice_relay_first_frame_sent");
+        }
+        Ok(())
     }
 
     async fn finish_audio(&self) -> anyhow::Result<()> {
@@ -510,12 +521,16 @@ async fn sleep_until(deadline: Option<Instant>) {
 
 type Model = Option<JoinHandle<anyhow::Result<()>>>;
 
-fn spawn_model(runtime: Arc<dyn VoiceRuntime>, pcm: Option<Vec<u8>>) -> JoinHandle<anyhow::Result<()>> {
+fn spawn_model(runtime: Arc<dyn VoiceRuntime>, pcm: Option<Vec<u8>>, span: tracing::Span) -> JoinHandle<anyhow::Result<()>> {
     tokio::spawn(async move {
+        tracing::info!("voice_generate_started");
         match pcm {
             None => runtime.reply(None).await,
             Some(pcm) => {
+                let started = Instant::now();
                 let text = runtime.recognize(pcm).await?;
+                tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, heard = !text.is_empty(),
+                    "voice_recognition_complete");
                 if text.is_empty() {
                     Ok(())
                 } else {
@@ -523,7 +538,7 @@ fn spawn_model(runtime: Arc<dyn VoiceRuntime>, pcm: Option<Vec<u8>>) -> JoinHand
                 }
             }
         }
-    })
+    }.instrument(span))
 }
 
 async fn run(
@@ -536,10 +551,14 @@ async fn run(
     let Some(config) = config_for(state) else {
         return Err(Failure::Other("no voice runtime is registered".into()));
     };
+    let initialized = Instant::now();
+    tracing::info!(visit_id = %start.visit_id, "relay_initialization_started");
     let device = match &start.device_key {
         Some(device_key) => state.services.fetch_device_settings(device_key).await,
         None => None,
     };
+    tracing::info!(visit_id = %start.visit_id, elapsed_ms = initialized.elapsed().as_millis() as u64,
+        settings_loaded = device.is_some(), "relay_settings_complete");
     let house_rules = build_house_rules(
         start.mode,
         device.as_ref().map(|device| &device.house),
@@ -555,11 +574,16 @@ async fn run(
         Arc::new(DeviceSink { shared: Arc::downgrade(shared) }),
     );
     let _ = shared.runtime.set(runtime.clone());
+    let runtime_started = Instant::now();
     tokio::time::timeout(shared.timings.runtime_start, runtime.start())
         .await
         .map_err(|_| Failure::Other("TimeoutError: runtime start".into()))??;
+    tracing::info!(visit_id = %start.visit_id, elapsed_ms = runtime_started.elapsed().as_millis() as u64,
+        "relay_runtime_started");
     let ready = shared.core().mark_ready(Instant::now());
     shared.send_json(ready).await?;
+    tracing::info!(visit_id = %start.visit_id, elapsed_ms = initialized.elapsed().as_millis() as u64,
+        "relay_ready_sent");
 
     loop {
         let deadline = shared.core().effective_deadline();
@@ -603,7 +627,12 @@ async fn run(
                         if let Some(previous) = model.take() {
                             previous.abort();
                         }
-                        *model = Some(spawn_model(runtime.clone(), pcm));
+                        let turn_id = shared.core().turn;
+                        let span = tracing::info_span!("voice_turn", visit_id = %start.visit_id, turn_id);
+                        span.in_scope(|| tracing::info!(
+                            control = if pcm.is_some() { "input_end" } else { "call_started" },
+                            input_bytes = pcm.as_ref().map_or(0, Vec::len), "voice_generation_requested"));
+                        *model = Some(spawn_model(runtime.clone(), pcm, span));
                     }
                     Action::Wake => shared.changed.notify_waiters(),
                 }

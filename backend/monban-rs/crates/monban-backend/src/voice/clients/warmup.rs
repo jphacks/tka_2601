@@ -2,7 +2,8 @@
 //!
 //! [`warm_models`] probes ASR (0.8 s of silence), the LLM (`max_tokens: 1`, not streamed)
 //! and TTS (「はい。」) concurrently and never fails; [`schedule`] runs it in the
-//! background once per process, again only after a failed run.
+//! background once per process, again only after a failed run. [`CallWarmup`] runs it
+//! again when a call starts, because on-demand models stop after a minute without requests.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -97,11 +98,31 @@ pub async fn warm_models(settings: &Settings) -> bool {
             return false;
         }
     };
+    let clients = WarmClients { asr: http.clone(), llm: http.clone(), tts: http };
+    warm_models_with(settings, &clients).await
+}
+
+/// The HTTP clients the call itself uses. Warming through them also leaves their TLS
+/// connections open, so the visitor's first request skips the handshake (two round trips
+/// to Modal's us-east, about 0.5 s from Japan).
+#[derive(Clone)]
+pub struct WarmClients {
+    pub asr: reqwest::Client,
+    pub llm: reqwest::Client,
+    pub tts: reqwest::Client,
+}
+
+/// [`warm_models`] through the given clients.
+pub async fn warm_models_with(settings: &Settings, clients: &WarmClients) -> bool {
+    if !settings.warmup_enabled {
+        return true;
+    }
+    let limit = Duration::from_secs_f64(settings.warmup_timeout_seconds);
     let started = Instant::now();
     let (asr, llm, tts) = tokio::join!(
-        warm_asr(&http, settings, limit),
-        warm_llm(&http, settings, limit),
-        warm_tts(&http, settings, limit),
+        warm_asr(&clients.asr, settings, limit),
+        warm_llm(&clients.llm, settings, limit),
+        warm_tts(&clients.tts, settings, limit),
     );
     let mut ok = true;
     for (name, result) in [("asr", asr), ("llm", llm), ("tts", tts)] {
@@ -148,4 +169,72 @@ pub async fn shutdown() {
 /// Whether a scheduled warm-up has succeeded in this process.
 pub fn warmed() -> bool {
     WARMED_OK.load(Ordering::SeqCst)
+}
+
+/// A successful call-start warm-up this recent also covers the next call. Modal stops an
+/// idle inference container 60 s after its last request (`scaledown_window=60`).
+pub const CALL_WARMUP_FRESH: Duration = Duration::from_secs(30);
+
+/// Wakes ASR, the LLM and TTS in the background when a call starts, so a stopped
+/// on-demand model boots while the greeting plays and the visitor speaks, not after the
+/// visitor has finished. At most one runs at a time; a recent success skips the next.
+#[derive(Default)]
+pub struct CallWarmup {
+    state: Mutex<CallWarmupState>,
+    /// The call's own clients; without them a separate client is used.
+    clients: Option<WarmClients>,
+}
+
+#[derive(Default)]
+struct CallWarmupState {
+    task: Option<tokio::task::JoinHandle<()>>,
+    last_ok: Option<Instant>,
+}
+
+impl CallWarmup {
+    /// Warm through the clients the calls use, so their connections stay open.
+    pub fn with_clients(clients: WarmClients) -> Self {
+        Self { state: Mutex::default(), clients: Some(clients) }
+    }
+
+    /// Start a warm-up unless one is running or one started successfully within `fresh`.
+    /// Returns whether one was started. Never blocks the call.
+    pub fn wake(self: &Arc<Self>, settings: Arc<Settings>, fresh: Duration) -> bool {
+        if !settings.warmup_enabled {
+            return false;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return false };
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.task.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return false;
+        }
+        if state.last_ok.is_some_and(|started| started.elapsed() < fresh) {
+            return false;
+        }
+        let this = Arc::clone(self);
+        state.task = Some(runtime.spawn(async move {
+            let started = Instant::now();
+            tracing::info!("call_warmup_started");
+            let ok = match &this.clients {
+                Some(clients) => warm_models_with(&settings, clients).await,
+                None => warm_models(&settings).await,
+            };
+            if ok {
+                let mut state = this.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                state.last_ok = Some(started);
+            }
+        }));
+        true
+    }
+
+    /// Cancel a warm-up that is still running.
+    pub async fn shutdown(&self) {
+        let handle = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).task.take();
+        if let Some(handle) = handle {
+            if !handle.is_finished() {
+                handle.abort();
+                let _ = handle.await;
+            }
+        }
+    }
 }

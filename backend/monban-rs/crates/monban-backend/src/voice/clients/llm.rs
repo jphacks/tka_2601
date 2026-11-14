@@ -54,6 +54,11 @@ pub struct LlmClient {
 }
 
 impl LlmClient {
+    /// The HTTP client (a clone shares its connection pool), for the call-start warm-up.
+    pub fn http(&self) -> reqwest::Client {
+        self.http.clone()
+    }
+
     pub fn new(settings: Arc<Settings>) -> Self {
         let timeout = Duration::from_secs_f64(settings.llm_timeout_seconds);
         let http = reqwest::Client::builder()

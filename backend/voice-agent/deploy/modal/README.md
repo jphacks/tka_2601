@@ -2,8 +2,10 @@
 
 The Pi and Mac mini host only the Monban API and LiveKit Agent worker. Modal serves three
 versioned HTTPS endpoints: Ollama-compatible v20 chat, Kotoba-Whisper v2.1 transcription,
-and Irodori TTS v4.1 Small-MF. All endpoints require a bearer token. They scale to zero
-(`min_containers=0`) and keep a GPU for at most 60 seconds after the last request.
+and Irodori TTS v4.1 Small-MF. All endpoints require a bearer token. ASR and TTS keep one
+container warm at all times (`min_containers=1`, L4 or A10) so the first reply of a call does
+not wait for a cold start. The LLM scales to zero (`min_containers=0`) and keeps a GPU for
+at most 60 seconds after the last request; the API wakes it when a call starts.
 
 ## Deploy
 
