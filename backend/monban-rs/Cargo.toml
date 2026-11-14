@@ -11,14 +11,17 @@ publish = false
 [workspace.dependencies]
 monban-policy = { path = "crates/monban-policy" }
 anyhow = "1"
+async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
 base64 = "0.22"
 bytes = "1"
+caseless = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 chrono-tz = "0.10"
 fancy-regex = "0.14"
 futures = "0.3"
 hex = "0.4"
+http-body-util = "0.1"
 jsonwebtoken = "9"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
@@ -27,6 +30,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 subtle = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"

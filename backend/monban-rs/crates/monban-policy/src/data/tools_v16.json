@@ -1,0 +1,94 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "search_reservations",
+      "description": "指定された氏名と時刻の予約候補を検索する。読み取り専用。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customer_name": {
+            "type": "string"
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          }
+        },
+        "required": [
+          "customer_name",
+          "time"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "complete_arrival",
+      "description": "一意に照合された予約を最新状態で再確認し、来店受付とスタッフ向け一覧への記録を順に行う。各状態を別々に返す。外部通知は送信しない。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reservation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "request_staff",
+      "description": "確認や例外対応をスタッフへ依頼する。reasonは、列挙された内容に最も近い短いカテゴリを一つ選ぶ。自由文や原因の推測は入れない。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "その他スタッフ確認",
+              "メニュー確認",
+              "予約候補確認",
+              "予約変更相談",
+              "予約照合失敗",
+              "予約者本人確認",
+              "体調相談",
+              "傘預かり",
+              "取消条件確認",
+              "受付記録失敗",
+              "担当者伝言",
+              "持ち物確認",
+              "料金確認",
+              "施術内容相談",
+              "施設待機",
+              "早着待機",
+              "来店受付失敗",
+              "着替え場所",
+              "荷物置き場",
+              "衣類預かり",
+              "解錠依頼",
+              "設備貸出",
+              "追加料金確認",
+              "遅刻時受付",
+              "飛び込み受付"
+            ]
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+]
