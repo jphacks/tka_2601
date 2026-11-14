@@ -524,19 +524,20 @@ async fn large_output_is_bounded_by_ack_window_but_keepalive_works() {
     let h = harness().await;
     let mut ws = h.connect().await;
     ws.start().await;
-    h.factory.runtime().await.frames.store(15, Ordering::SeqCst);
+    // The XIAO holds 48 acknowledged plus 16 unacknowledged frames (its 64-frame queue).
+    h.factory.runtime().await.frames.store(21, Ordering::SeqCst);
     ws.send_json(json!({"type": "call_started", "turn_id": 0})).await;
     assert_eq!(ws.control().await["type"], "output_start");
-    for _ in 0..10 {
+    for _ in 0..16 {
         assert_eq!(ws.receive_bytes().await, pcm());
     }
     ws.send_json(json!({"type": "ping", "turn_id": 0, "seq": 1})).await;
     assert_eq!(ws.control().await["type"], "pong");
-    ws.send_json(json!({"type": "audio_ack", "turn_id": 0, "output_id": 0, "frames": 10})).await;
+    ws.send_json(json!({"type": "audio_ack", "turn_id": 0, "output_id": 0, "frames": 16})).await;
     for _ in 0..5 {
         assert_eq!(ws.receive_bytes().await, pcm());
     }
-    assert_eq!(ws.control().await["frames"], 15);
+    assert_eq!(ws.control().await["frames"], 21);
     ws.send_json(json!({"type": "cancel"})).await;
     assert_eq!(ws.closed().await, Some(1000));
     h.settle().await;
@@ -549,10 +550,10 @@ async fn ack_window_timeout_is_a_voice_processing_failure() {
     let h = harness_with(timings, &[]).await;
     let mut ws = h.connect().await;
     ws.start().await;
-    h.factory.runtime().await.frames.store(11, Ordering::SeqCst);
+    h.factory.runtime().await.frames.store(17, Ordering::SeqCst);
     ws.send_json(json!({"type": "call_started", "turn_id": 0})).await;
     assert_eq!(ws.control().await["type"], "output_start");
-    for _ in 0..10 {
+    for _ in 0..16 {
         ws.receive_bytes().await;
     }
     assert_eq!(

@@ -30,7 +30,11 @@ use crate::persistence::history::{utc_now_iso, Utterance, VisitRecord};
 pub(crate) const FRAME_BYTES: usize = 640;
 pub(crate) const MAX_INPUT_FRAMES: u64 = 1500;
 pub(crate) const MAX_OUTPUT_SAMPLES: u64 = 16000 * 60;
-pub(crate) const OUTPUT_WINDOW: u64 = 10;
+/// Unacknowledged output frames in flight. The XIAO queues 64 frames and acknowledges up to
+/// 48 of them before they play (`PLAYBACK_QUEUE_FRAMES`, `PLAYBACK_CREDIT_FRAMES`), so 16 is
+/// the most it can always hold. One round trip delivers this many frames (320 ms of audio);
+/// with 10 the public Cloudflare path (~240 ms round trip) delivered slower than playback.
+pub(crate) const OUTPUT_WINDOW: u64 = 16;
 const MAX_TURNS: u64 = 20;
 const MAX_CONTROL_BYTES: usize = 1024;
 const MAX_TRANSCRIPT_CHARS: usize = 120;
