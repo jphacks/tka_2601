@@ -58,6 +58,11 @@ rm "$src/device_config.h"
 for t in calibration_test exact_servo_test end_direction_test servo_call_test pusher_assignment_test; do
   "${CXX[@]}" "$src/servo_control.cpp" "$src/servo_pwm.cpp" "$src/$t.cpp" -o "$work/$t"; run "$t"
 done
+# Bench-only pulse profile. Other tests use the board defaults.
+cp profiles/j2-probe/servo_config.example.h "$src/servo_config.h"
+"${CXX[@]}" "$src/servo_control.cpp" "$src/servo_pwm.cpp" "$src/j2_step_test.cpp" -o "$work/j2_step"; run j2_step
+rm "$src/servo_config.h"
+"${CXX[@]}" "$src/servo_probe.cpp" "$src/j2_probe_test.cpp" -o "$work/j2_probe"; run j2_probe
 "${CXX[@]}" "$src/tune.cpp" "$src/tune_test.cpp" -o "$work/tune"; run tune
 
 echo "--- Python and page tests"

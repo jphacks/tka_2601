@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <string>
@@ -27,6 +28,13 @@ class Preferences {
     return !fake::failStorage && !(readOnly && fake::readOnlyNamespaceMissing);
   }
   void end() {}
+  uint8_t getUChar(const char* key, uint8_t fallback) {
+    uint8_t value = 0;
+    return getBytes(key, &value, sizeof value) == sizeof value ? value : fallback;
+  }
+  size_t putUChar(const char* key, uint8_t value) {
+    return putBytes(key, &value, sizeof value);
+  }
   size_t getBytesLength(const char* key) { return bytes(key).size(); }
   size_t getBytes(const char* key, void* out, size_t capacity) {
     if (fake::failReadKey == key) return 0;
