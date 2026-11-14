@@ -1,6 +1,7 @@
 #include "console.h"
 #include "net_task.h"
 #include "servo_control.h"
+#include "servo_probe.h"
 #include "tune.h"
 #include "voice_stream.h"
 #include "xlog.h"
@@ -35,6 +36,7 @@ void micStatus() {
 }
 void execute(const char* text) {
   if (text[0] == '@') {
+    if (servo_probe_command(text)) return;
     if (!strcmp(text, "@net")) net_report_calibration();
     else if (!strncmp(text, "@tune ", 6)) tune_command(text);
     else {
