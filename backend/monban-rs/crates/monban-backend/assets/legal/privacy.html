@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー — Monban</title>
+<style>
+:root { color-scheme: light dark; --fg: #1f2328; --muted: #59636e; --bg: #ffffff; --line: #d1d9e0; --link: #0969da; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e6edf3; --muted: #9198a1; --bg: #0d1117; --line: #30363d; --link: #4493f8; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.8 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; }
+h1 { font-size: 1.75rem; line-height: 1.4; margin: 0 0 4px; }
+h2 { font-size: 1.15rem; margin: 32px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+p, li { overflow-wrap: anywhere; }
+.muted { color: var(--muted); font-size: .9rem; }
+a { color: var(--link); }
+nav { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); font-size: .9rem; }
+nav a { margin-right: 16px; }
+</style>
+</head>
+<body>
+<main>
+<h1>プライバシーポリシー</h1>
+<p class="muted">最終更新日: 2026年11月14日</p>
+<p>Monban（以下「本サービス」）は、利用者と来訪者の情報を次のとおり取り扱います。</p>
+
+<h2>1. 取得する情報</h2>
+<ul>
+<li><strong>アカウント情報</strong>: メールアドレス、表示名、ログインに使う外部アカウントの識別子</li>
+<li><strong>家・店舗の設定</strong>: 店名、営業時間、メニュー、応対の設定、AIへの追加の指示</li>
+<li><strong>予約</strong>: お客様の氏名、電話番号、メニュー、日時、来店の記録</li>
+<li><strong>来客の記録</strong>: 来訪の日時、用件の分類、会話の文字起こし（文字のみ。音声と画像は保存しません）</li>
+<li><strong>通知用の情報</strong>: スマートフォンの通知トークン</li>
+<li><strong>Googleアカウントの情報</strong>: 次の章のとおり</li>
+</ul>
+
+<h2>2. Googleユーザーデータの取り扱い</h2>
+<p>店舗の利用者がGoogleカレンダーとの連携を許可した場合に限り、次の権限を使います。</p>
+<ul>
+<li><code>calendar.calendarlist.readonly</code>: 連携するカレンダーを選んでいただくため、カレンダーの一覧を読み取ります。</li>
+<li><code>calendar.events</code>: 選んだカレンダーの予定を予約として読み込み、本サービスで受けた予約の作成・変更・取り消しを同じカレンダーに書き込みます。</li>
+<li><code>openid</code>、<code>email</code>: 連携したGoogleアカウントのメールアドレスを、連携先の表示に使います。</li>
+</ul>
+<p>Googleの更新トークンは暗号化して保存し、上記の目的にだけ使います。Googleユーザーデータを広告に使うこと、第三者に販売すること、人が閲覧することはありません（法令上必要な場合と、利用者の同意を得て不具合を調べる場合を除きます）。AIモデルの学習にも使いません。</p>
+<p>本サービスによるGoogle APIから受け取った情報の使用と他のアプリへの転送は、<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API サービスのユーザーデータに関するポリシー</a>（限定使用の要件を含む）に従います。</p>
+<p>連携はアプリからいつでも解除できます。解除すると、Google側の許可を取り消し、保存した更新トークンを削除します。<a href="https://myaccount.google.com/permissions">Googleアカウントの設定</a>からも取り消せます。</p>
+
+<h2>3. 利用目的</h2>
+<ul>
+<li>来訪者への応対、予約の照合と来店受付</li>
+<li>利用者への通知と、来客・予約の記録の表示</li>
+<li>本サービスの提供、不正利用の防止、障害の調査</li>
+</ul>
+
+<h2>4. 保存場所と委託先</h2>
+<p>情報は、データベースと認証の提供元であるSupabaseに保存します。音声の認識・合成とAIの応答の生成は、本サービスが管理する推論サーバーで行い、会話の音声は処理後に保存しません。通知の送信にはExpoの通知サービスを使います。これらの委託先には、サービスの提供に必要な範囲でのみ情報を渡します。</p>
+
+<h2>5. 第三者への提供</h2>
+<p>法令に基づく場合を除き、本人の同意なく第三者に提供しません。</p>
+
+<h2>6. 保存期間と削除</h2>
+<p>情報は、利用者がアカウントや記録を削除するまで、またはサービスの終了まで保存します。来客の記録はアプリから1件ずつ削除できます。アカウントの削除やデータの開示・訂正・削除のご依頼は、下記までご連絡ください。</p>
+
+<h2>7. 安全管理</h2>
+<p>通信は暗号化し、データベースは利用者ごとにアクセスを制限しています。Googleの更新トークンは暗号化して保存します。</p>
+
+<h2>8. 改定</h2>
+<p>本ポリシーを変更した場合は、このページで最終更新日とともにお知らせします。</p>
+
+<h2>9. お問い合わせ</h2>
+<p><a href="mailto:shionfilms@gmail.com">shionfilms@gmail.com</a></p>
+<nav><a href="/about">Monbanについて</a><a href="/privacy">プライバシーポリシー</a><a href="/terms">利用規約</a></nav>
+</main>
+</body>
+</html>
