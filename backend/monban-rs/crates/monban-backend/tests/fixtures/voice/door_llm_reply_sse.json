@@ -173,7 +173,8 @@
      "bytes": 17280
     },
     {
-     "type": "finish"
+     "type": "finish",
+     "end_after_reply": false
     },
     {
      "type": "transcript",
@@ -202,7 +203,8 @@
      "bytes": 41600
     },
     {
-     "type": "finish"
+     "type": "finish",
+     "end_after_reply": false
     },
     {
      "type": "transcript",
@@ -231,7 +233,8 @@
      "bytes": 41600
     },
     {
-     "type": "finish"
+     "type": "finish",
+     "end_after_reply": false
     },
     {
      "type": "transcript",

@@ -3,3 +3,7 @@
 
 pub mod clients;
 pub mod chat;
+pub mod agents;
+pub mod session;
+pub mod runtime;
+pub mod adapters;

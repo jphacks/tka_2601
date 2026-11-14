@@ -19,6 +19,7 @@ base64.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
+fancy-regex.workspace = true
 futures.workspace = true
 hex.workspace = true
 http-body-util.workspace = true
@@ -38,5 +39,6 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+sha2.workspace = true
 tokio-tungstenite.workspace = true
 tower = { workspace = true }

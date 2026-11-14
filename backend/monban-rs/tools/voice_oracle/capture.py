@@ -241,7 +241,8 @@ async def run(name: str, scenario: dict) -> dict:
         events.append({"type": "audio_frame", "bytes": len(chunk)})
 
     async def finish() -> None:
-        events.append({"type": "finish"})
+        # The relay computes output_end.end_call at this moment (relay/v2.py finish_audio).
+        events.append({"type": "finish", "end_after_reply": agent.end_after_reply()})
         asyncio.get_running_loop().call_soon(agent.played)
 
     async def transcript(speaker: str, text: str) -> None:
@@ -382,6 +383,13 @@ SCENARIOS = {
         "asr": ["ガスの点検に来ました。", "では、また改めてご連絡します。"],
         "llm": [{"text": "恐れ入りますが、改めてご連絡いただけますか。"}, {"text": "承知しました。失礼いたします。"}],
         "utterance_frames": [30, 20],
+    },
+    "door_closing_delivery": {
+        "mode": "normal",
+        "with_turn_hook": True,
+        "asr": ["佐川急便です。お荷物です。", "はい、置いておきます。", "ありがとうございました。"],
+        "llm": [{"text": "失礼いたします。"}, {"text": "失礼いたします。"}, {"text": "失礼いたします。"}],
+        "utterance_frames": [20, 20, 20],
     },
     "door_llm_question_sse": {
         "mode": "normal",

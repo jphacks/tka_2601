@@ -12,7 +12,7 @@ publish = false
 monban-policy = { path = "crates/monban-policy" }
 anyhow = "1"
 async-trait = "0.1"
-axum = { version = "0.8", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
 base64 = "0.22"
 bytes = "1"
 caseless = "0.2"
@@ -27,6 +27,7 @@ rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
 subtle = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
