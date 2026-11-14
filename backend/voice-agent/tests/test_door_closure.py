@@ -169,6 +169,19 @@ class ClosureRegressions(unittest.TestCase):
         self.assertFalse(fresh.placed)
         self.assertFalse(fresh.closing)
 
+    def test_a_promise_to_come_back_later_still_ends_the_call(self):
+        # These ended the call before the contextual closure change; keep them ending it.
+        for text in ("あとでまた来ます", "あとで伺います", "また後で来ます", "失礼します。また来ます",
+                     "ありがとうございました。また伺います"):
+            with self.subTest(text=text):
+                self.assertTrue(state(text).closing)
+
+    def test_a_later_request_or_question_keeps_the_call_open(self):
+        for text in ("あと、サインをお願いします", "あとひとつ確認したいです", "失礼します。あとで何時に来ればいいですか",
+                     "ありがとうございました。あとサインは要りますか"):
+            with self.subTest(text=text):
+                self.assertFalse(state(text).closing)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -16,12 +16,14 @@ import {
   SQUARE_SCOPES,
 } from "../_shared/square.ts";
 import { encryptToken } from "../_shared/token_crypto.ts";
-import { isAllowedReturnUrl, STATE_TTL_MS } from "./google.ts";
+import { STATE_TTL_MS } from "./google.ts";
+import { isAllowedReturnUrl } from "./return_url.ts";
 import { type CompletingMember, holdTokens, takeTokens } from "./oauth_pending.ts";
 
 export type SquareDeps = {
   store: CalendarStore;
   squareConfig?: SquareConfig | null;
+  webOrigins?: readonly string[];
   squareClient?: (connection: SquareConnection, config: SquareConfig) => Pick<SquareClient, "customers" | "serviceNames">;
   notify(notification: NewNotification): Promise<void>;
   // Webhook で使う。失敗を投げて Square に送り直してもらう
@@ -37,7 +39,7 @@ function requireConfig(config: SquareConfig | null | undefined): SquareConfig {
 
 export async function startSquareOAuth(deps: SquareDeps, householdId: string, userId: string, returnUrl: unknown): Promise<string> {
   const config = requireConfig(deps.squareConfig);
-  if (!isAllowedReturnUrl(returnUrl)) throw new ProviderError(400, "return_url が正しくありません");
+  if (!isAllowedReturnUrl(returnUrl, deps.webOrigins)) throw new ProviderError(400, "return_url が正しくありません");
   const state = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
   await deps.store.saveState({ state, household_id: householdId, user_id: userId, return_url: returnUrl, provider: "square" });
   return `${config.baseUrl}/oauth2/authorize?${new URLSearchParams({

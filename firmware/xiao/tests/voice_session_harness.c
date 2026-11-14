@@ -58,9 +58,6 @@ void net_sleep_ms(uint32_t ms)
     }
 }
 void net_random(void *out, size_t length) { memset(out, 0x11, length); }
-/* The queue and sender are covered by visit_report_test; here only the call site. */
-static unsigned mode_off_records;
-void visit_report_record_mode_off(void) { ++mode_off_records; }
 bool net_voice_ready(void) { return network_ready; }
 uint32_t tune_voice_gate(void) { return 600u; }
 static bool post_ok;
@@ -810,31 +807,26 @@ static void test_stop_mode_answers_nothing(void)
         assert(device_mode_apply(DEVICE_MODE_NORMAL));
         if (manual) { voice_stream_request_call(); assert(start_requested); }
         else { chime_on_next_task_sleep = true; task_sleeps_to_skip = 1u; }
-        mode_off_records = 0u;
         poll_task_once();
-        assert(server_opened && mode_off_records == 0u); /* an accepted mode starts the call, as before */
+        assert(server_opened); /* an accepted mode starts the call, as before */
         /* Stop mode: nothing is opened, pressed, queued, or put in cooldown. */
         fresh_call(); network_ready = true;
         assert(device_mode_apply(DEVICE_MODE_OFF));
         if (manual) { voice_stream_request_call(); assert(start_requested); }
         else { chime_on_next_task_sleep = true; task_sleeps_to_skip = 1u; }
-        mode_off_records = 0u;
         poll_task_once();
-        /* The visitor is recorded exactly once, even for a chime plus a manual request. */
-        assert(mode_off_records == 1u);
         assert(!server_opened && !busy && !start_requested && !cooldown_active);
         assert(call_presses == 0u && end_presses == 0u && opens == 0u && mailbox.voice_call_active == 0u);
         /* Back to an accepted mode: the dropped request does not replay. */
         assert(device_mode_apply(DEVICE_MODE_AWAY));
         poll_task_once();
-        assert(!server_opened && call_presses == 0u && mode_off_records == 1u);
+        assert(!server_opened && call_presses == 0u);
     }
     /* Diagnostics are not calls: the API probe still works in stop mode. */
     fresh_call(); network_ready = true; assert(device_mode_apply(DEVICE_MODE_OFF));
     server_in[server_used++]=packet(VOICE_READY,0,0); server_in[server_used++]=packet(VOICE_PONG,0,1);
-    mode_off_records = 0u;
     probe_requested = PROBE_API; poll_task_once();
-    assert(server_opened && count_sent(VOICE_CALL_START) == 0 && mode_off_records == 0u);
+    assert(server_opened && count_sent(VOICE_CALL_START) == 0);
     assert(device_mode_apply(DEVICE_MODE_OMAKASE));
 }
 int main(void)

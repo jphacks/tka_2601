@@ -135,13 +135,13 @@
 | `POST /reservations/<id>/arrive` | なし | `{"reservation": {...}}`。2回目は時刻を変えない |
 | `GET /reservations/provider` | なし | `{"provider": "...", "capabilities": {"create"}, "google": {"connected", "account_email", "calendar_id", "calendar_name", "status", "last_error"}, "square": {"connected", "merchant_name", "status", "last_error"}}` |
 | `PUT /reservations/provider` | `{"provider": "monban" \| "google_calendar" \| "square" \| "hotpepper"}` | 同上。Google は接続とカレンダーの選択が済むまで 409（`google_not_connected`）、Square は接続が済むまで 409（`square_not_connected`） |
-| `POST /reservations/google/start` | `{"return_url": "tka2601://..."}` | `{"url": "..."}`。設定がなければ 503（`google_not_configured`） |
+| `POST /reservations/google/start` | `{"return_url": "tka2601://..."}`。Web 版は `https://<APP_WEB_ORIGINS のオリジン>/...` か `http://localhost:<port>/...` | `{"url": "..."}`。設定がなければ 503（`google_not_configured`）、戻り先が許されていなければ 400 |
 | `GET /reservations/google/callback` | Google が呼ぶ | トークンを暗号化して保留にし、`return_url?google=pending&code=...`（`cancelled`、`error`）へ転送する |
 | `POST /reservations/google/complete` | `{"code": "..."}` | 始めた本人なら接続を確定し、`provider` の GET と同じ形を返す。他人は 403（`oauth_user_mismatch`）、期限切れや不明は 404（`oauth_code_invalid`） |
 | `GET /reservations/google/calendars` | なし | `{"calendars": [{"id", "name", "primary"}]}`。書き込めるものだけ |
 | `PUT /reservations/google/calendar` | `{"calendar_id": "..."}` | `GET /reservations/provider` と同じ。予約先は変えない |
 | `DELETE /reservations/google` | なし | 同上。接続を消し、予約先を予約帳に戻す |
-| `POST /reservations/square/start` | `{"return_url": "tka2601://..."}` | `{"url": "<Square の同意画面>"}`。設定がなければ 503（`square_not_configured`） |
+| `POST /reservations/square/start` | `{"return_url": "tka2601://..."}`。Web 版は Google と同じ | `{"url": "<Square の同意画面>"}`。設定がなければ 503（`square_not_configured`） |
 | `GET /reservations/square/callback` | Square が呼ぶ | トークンを暗号化して保留にし、`return_url?square=pending&code=...`（`cancelled`、`error`）へ転送する |
 | `POST /reservations/square/complete` | `{"code": "..."}` | Google と同じ。別の店で使われているアカウントは 409（`square_merchant_in_use`） |
 | `DELETE /reservations/square` | なし | `GET /reservations/provider` と同じ。接続を消し、予約先が Square なら予約帳に戻す |
