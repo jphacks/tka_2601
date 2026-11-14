@@ -8,6 +8,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use futures::StreamExt;
 use rand::RngCore;
@@ -110,6 +111,7 @@ struct Speaker<'a> {
     pcm: Vec<u8>,
     samples: usize,
     synthesized: bool,
+    started: Instant,
 }
 
 impl<'a> Speaker<'a> {
@@ -124,6 +126,7 @@ impl<'a> Speaker<'a> {
             pcm: Vec::new(),
             samples: 0,
             synthesized: false,
+            started: Instant::now(),
         }
     }
 
@@ -149,10 +152,15 @@ impl<'a> Speaker<'a> {
         if token.is_empty() {
             return Ok(());
         }
+        tracing::info!(text_chars = token.chars().count(), elapsed_ms = self.started.elapsed().as_millis() as u64,
+            "voice_token_ready");
         let mut pcm = self.speech.synthesize(&token).await?;
         pcm.extend(self.speech.segment_marker());
         self.synthesized = true;
+        let resample_started = Instant::now();
         let resampled = self.resampler.process(&pcm);
+        tracing::info!(elapsed_us = resample_started.elapsed().as_micros() as u64,
+            input_bytes = pcm.len(), output_bytes = resampled.len(), "voice_resample_complete");
         self.write(resampled).await
     }
 
@@ -160,6 +168,9 @@ impl<'a> Speaker<'a> {
         self.pcm.extend_from_slice(&pcm);
         while self.pcm.len() >= OUTPUT_FRAME_BYTES {
             let frame: Vec<u8> = self.pcm.drain(..OUTPUT_FRAME_BYTES).collect();
+            if self.samples == 0 {
+                tracing::info!(elapsed_ms = self.started.elapsed().as_millis() as u64, "voice_first_frame_ready");
+            }
             self.samples += frame.len() / 2;
             self.sink.write_audio(frame).await?;
         }
@@ -184,6 +195,9 @@ impl<'a> Speaker<'a> {
         self.write(flushed).await?;
         if !self.pcm.is_empty() {
             let frame = std::mem::take(&mut self.pcm);
+            if self.samples == 0 {
+                tracing::info!(elapsed_ms = self.started.elapsed().as_millis() as u64, "voice_first_frame_ready");
+            }
             self.samples += frame.len() / 2;
             self.sink.write_audio(frame).await?;
         }

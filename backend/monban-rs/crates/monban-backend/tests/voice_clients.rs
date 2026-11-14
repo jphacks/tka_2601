@@ -1027,3 +1027,6 @@ async fn warm_up_schedule_runs_once_after_success() {
     assert_eq!(server.requests().len(), 3);
     warmup::shutdown().await;
 }
+
+#[path = "support/relay_latency.rs"]
+mod relay_latency;

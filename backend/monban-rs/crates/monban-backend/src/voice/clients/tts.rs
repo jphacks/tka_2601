@@ -10,7 +10,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use futures::StreamExt;
@@ -120,7 +120,12 @@ impl SpeechCppTts {
             _ => None,
         };
         if let Some(entry) = entry {
-            return entry.get_or_try_init(|| self.synthesize_uncached(text)).await.cloned();
+            let started = Instant::now();
+            let cache_hit = entry.get().is_some();
+            let result = entry.get_or_try_init(|| self.synthesize_uncached(text)).await.cloned();
+            tracing::info!(cache_hit, elapsed_ms = started.elapsed().as_millis() as u64,
+                ok = result.is_ok(), "tts_fixed_greeting_complete");
+            return result;
         }
         self.synthesize_uncached(text).await
     }
@@ -131,6 +136,7 @@ impl SpeechCppTts {
         if sentences.is_empty() && !stripped.is_empty() {
             sentences = vec![stripped.to_string()];
         }
+        tracing::info!(text_chars = text.chars().count(), sentences = sentences.len(), "tts_text_split");
         let mut attempt = 0;
         loop {
             match self.synthesize_once(&sentences).await {
@@ -167,6 +173,8 @@ impl SpeechCppTts {
 
     async fn sentence_pcm(&self, sentence: &str) -> Result<Vec<u8>, ClientError> {
         let settings = &self.settings;
+        let started = Instant::now();
+        tracing::info!(text_chars = sentence.chars().count(), "tts_api_post");
         let error = |e| ClientError::from_reqwest(Service::Tts, e);
         let response = self
             .http
@@ -178,12 +186,14 @@ impl SpeechCppTts {
             .await
             .map_err(error)?;
         let status = response.status().as_u16();
+        tracing::info!(status, elapsed_ms = started.elapsed().as_millis() as u64, "tts_api_headers");
         if status != 200 {
             return Err(ClientError::Status { service: Service::Tts, status });
         }
         let media_type = content_type(&response);
         let mut stream = response.bytes_stream();
         let mut pcm = Vec::new();
+        let mut first_pcm = false;
         match media_type.as_str() {
             "text/event-stream" => {
                 let mut lines = LineSplitter::default();
@@ -204,7 +214,13 @@ impl SpeechCppTts {
                                 completed = true;
                                 break 'read;
                             }
-                            SpeechEvent::Audio(audio) => pcm.extend_from_slice(&audio),
+                            SpeechEvent::Audio(audio) => {
+                                if !first_pcm && !audio.is_empty() {
+                                    first_pcm = true;
+                                    tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, "tts_first_pcm");
+                                }
+                                pcm.extend_from_slice(&audio);
+                            }
                         }
                     }
                 }
@@ -214,7 +230,12 @@ impl SpeechCppTts {
             }
             "audio/pcm" | "application/octet-stream" => {
                 while let Some(chunk) = stream.next().await {
-                    pcm.extend_from_slice(&chunk.map_err(error)?);
+                    let chunk = chunk.map_err(error)?;
+                    if !first_pcm && !chunk.is_empty() {
+                        first_pcm = true;
+                        tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, "tts_first_pcm");
+                    }
+                    pcm.extend_from_slice(&chunk);
                 }
             }
             _ => {
@@ -224,6 +245,7 @@ impl SpeechCppTts {
         if pcm.len() % 2 != 0 {
             return Err(ClientError::protocol(Service::Tts, "incomplete PCM sample"));
         }
+        tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, pcm_bytes = pcm.len(), "tts_pcm_complete");
         Ok(pcm)
     }
 }
