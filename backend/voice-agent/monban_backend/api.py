@@ -9,135 +9,78 @@ import secrets
 import time
 import wave
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Literal
 
 import aiohttp
 from fastapi import FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import FileResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
-from starlette.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import Response
 from livekit import api
 from pydantic import BaseModel, Field
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import relay
+from . import legal, relay
 from .config import settings
+from .core import warmup
+from .core.house_rules import Mode, build_house_rules
+from .core.http_limits import CapacityLimiter, RequestBodyLimitMiddleware
+from .core.services import (
+    dispatch_agent as _dispatch_agent,
+)
+from .core.services import (
+    livekit_available as _livekit_available,
+)
+from .core.services import (
+    llm_available as _llm_available,
+)
+from .core.services import (
+    model_available as _model_available,
+)
+from .persistence.device_api import fetch_device_settings
 
 logger = logging.getLogger("door-api")
-AGENT_NAME = settings.livekit_agent_name
 PREVIEW_TEXTS = {
     "thanks": "ありがとうございます。",
-    "compound": "ありがとうございます。それでは、お荷物と置き場所の写真を撮ってください。",
+    "compound": "ありがとうございます。それでは、お荷物は玄関前にお願いいたします。",
 }
-
-
-class RequestBodyLimitMiddleware:
-    """Bound API request bodies, including requests without Content-Length."""
-
-    def __init__(self, app, max_bytes: int):
-        self.app = app
-        self.max_bytes = max_bytes
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or not scope.get("path", "").startswith("/api/"):
-            await self.app(scope, receive, send)
-            return
-
-        headers = {key.lower(): value for key, value in scope.get("headers", [])}
-        content_length = headers.get(b"content-length")
-        if content_length:
-            try:
-                too_large = int(content_length) > self.max_bytes
-            except ValueError:
-                too_large = False
-            if too_large:
-                await Response("Request body is too large", status_code=413)(scope, receive, send)
-                return
-
-        buffered = []
-        size = 0
-        while True:
-            message = await receive()
-            if message["type"] == "http.disconnect":
-                buffered.append(message)
-                break
-            if message["type"] == "http.request":
-                size += len(message.get("body", b""))
-                if size > self.max_bytes:
-                    await Response("Request body is too large", status_code=413)(scope, receive, send)
-                    return
-                buffered.append(message)
-                if not message.get("more_body", False):
-                    break
-
-        index = 0
-
-        async def replay_receive():
-            nonlocal index
-            if index < len(buffered):
-                message = buffered[index]
-                index += 1
-                return message
-            return await receive()
-
-        await self.app(scope, replay_receive, send)
-
-
-class CapacityLimiter:
-    """Bound active work and the number/time of requests waiting for capacity."""
-
-    def __init__(self, active_limit: int, queue_limit: int, wait_seconds: float):
-        self.active_limit = active_limit
-        self.queue_limit = queue_limit
-        self.wait_seconds = wait_seconds
-        self._active = 0
-        self._waiting = 0
-        self._condition = asyncio.Condition()
-
-    async def acquire(self) -> bool:
-        async with self._condition:
-            if self._active < self.active_limit:
-                self._active += 1
-                return True
-            if self._waiting >= self.queue_limit:
-                return False
-            self._waiting += 1
-            try:
-                await asyncio.wait_for(
-                    self._condition.wait_for(lambda: self._active < self.active_limit),
-                    timeout=self.wait_seconds,
-                )
-            except asyncio.TimeoutError:
-                self._waiting -= 1
-                return False
-            except asyncio.CancelledError:
-                self._waiting -= 1
-                raise
-            self._waiting -= 1
-            self._active += 1
-            return True
-
-    async def release(self) -> None:
-        async with self._condition:
-            self._active -= 1
-            self._condition.notify(1)
+# Production exposes only the status check; voice uses the WSS /api/relay. The direct
+# WebRTC /api/connect answers 409 there so a misconfigured client gets a clear reason.
+PRODUCTION_API = {
+    ("GET", "/api/status"),
+    ("POST", "/api/connect"),
+}
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logging.basicConfig(level=settings.log_level)
-    yield
+    relay.configure_event_log()
+    try:
+        yield
+    finally:
+        await warmup.shutdown()
 
 
 app = FastAPI(
-    title="Door Voice Backend",
-    version="1.0.0",
+    title="Monban Voice Backend",
+    description=(
+        "Monbanの玄関・店舗受付の音声バックエンドです。"
+        "アカウント、家・店舗、予約、Googleカレンダー連携、来客履歴はSupabaseが管理し、"
+        "このAPIは音声会話だけを扱います。`/api/*` はAPIキーのBearer認証です。"
+        "PSoC 6用のWebSocket `/api/relay` はOpenAPIには表示されません。"
+    ),
+    version="2.0.0",
+    openapi_tags=[
+        {"name": "status", "description": "サービスとモデルの準備状態"},
+        {"name": "voice", "description": "開発用のWebRTC音声通話とTTS確認"},
+    ],
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
 
 
 def _openapi_schema():
@@ -146,7 +89,13 @@ def _openapi_schema():
     schema = get_openapi(
         title=app.title,
         version=app.version,
+        description=app.description,
         routes=app.routes,
+        tags=app.openapi_tags,
+        servers=app.servers,
+        terms_of_service=app.terms_of_service,
+        contact=app.contact,
+        license_info=app.license_info,
     )
     schema.setdefault("components", {}).setdefault("securitySchemes", {})[
         "BearerAuth"
@@ -161,10 +110,22 @@ def _openapi_schema():
 
 
 app.openapi = _openapi_schema
-WEB_UI_DIR = Path(__file__).with_name("web_ui")
-app.mount("/assets", StaticFiles(directory=WEB_UI_DIR / "assets"), name="web-ui-assets")
+app.include_router(legal.router)
+@app.get("/healthz", include_in_schema=False)
+async def healthz() -> dict[str, str]:
+    """Container liveness probe; dependency readiness is reported by /api/status."""
+    return {"status": "ok"}
+
+
 app.add_middleware(RequestBodyLimitMiddleware, max_bytes=settings.max_api_request_bytes)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
+if settings.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.cors_origins),
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
 _request_window_started = time.monotonic()
 _request_window_count = 0
@@ -200,8 +161,16 @@ def _take_request_slot() -> bool:
 @app.middleware("http")
 async def protect_api(request: Request, call_next):
     if request.url.path.startswith("/api/"):
-        if settings.environment == "production" and request.url.scheme != "https":
+        if settings.environment == "production" and request.url.scheme != "https" and not settings.allow_tailnet_http:
             return Response("HTTPS is required", status_code=400)
+        if not _take_request_slot():
+            return Response(
+                "Too Many Requests",
+                status_code=429,
+                headers={"Retry-After": "60", "Cache-Control": "no-store"},
+            )
+        if settings.environment == "production" and (request.method, request.url.path) not in PRODUCTION_API:
+            return Response(status_code=404, headers={"Cache-Control": "no-store"})
         if not _valid_api_key(request.headers.get("authorization", "")):
             return Response(
                 "Unauthorized",
@@ -217,12 +186,6 @@ async def protect_api(request: Request, call_next):
             except ValueError:
                 return Response("Invalid Content-Length", status_code=400)
 
-        if not _take_request_slot():
-            return Response(
-                "Too Many Requests",
-                status_code=429,
-                headers={"Retry-After": "60", "Cache-Control": "no-store"},
-            )
 
     if request.url.path in {"/api/status", "/api/connect", "/api/tts-check"}:
         if not await _api_capacity.acquire():
@@ -244,18 +207,16 @@ async def protect_api(request: Request, call_next):
 
 
 @app.get("/", include_in_schema=False)
-async def root(request: Request) -> Response:
-    if settings.environment == "production" and request.url.scheme != "https":
-        return Response("HTTPS is required", status_code=400)
-    if (request.url.hostname or "").lower() == settings.ui_hostname:
-        return FileResponse(WEB_UI_DIR / "index.html", headers={"Cache-Control": "no-store"})
-    if settings.environment == "production":
-        raise HTTPException(status_code=404)
-    return RedirectResponse(url="/docs")
+async def root() -> dict[str, str]:
+    return {"service": "monban-api", "docs": "/docs", "health": "/healthz"}
 
 
 class ConnectRequest(BaseModel):
     house_rules: str | None = Field(default=None, max_length=settings.max_house_rules_chars)
+    # With a device key the call uses that device's Supabase settings, as /api/relay does:
+    # a shop gets the reception agent, a home gets mode-specific house rules.
+    device_key: str | None = Field(default=None, min_length=1, max_length=512, pattern=r"^[\x21-\x7e]+$")
+    mode: Mode = "normal"
 
 
 class ConnectResponse(BaseModel):
@@ -264,92 +225,66 @@ class ConnectResponse(BaseModel):
     room: str
 
 
-async def _model_available(
-    http: aiohttp.ClientSession, base_url: str, expected_model: str, voice: str | None = None
-) -> bool:
-    try:
-        async with http.get(f"{base_url.rstrip('/')}/v1/models") as response:
-            if response.status != 200:
-                return False
-            data = await response.json()
-        match = next((model for model in data.get("data", []) if model.get("id") == expected_model), None)
-        if match is None:
-            return False
-        if voice:
-            voices = match.get("speech", {}).get("voices", [])
-            return any(item.get("name") == voice for item in voices)
-        return True
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError):
-        return False
-
-
-async def _llm_available(http: aiohttp.ClientSession) -> bool:
-    try:
-        async with http.get(f"{settings.ollama_base_url}/api/tags") as response:
-            if response.status != 200:
-                return False
-            data = await response.json()
-        return any(
-            item.get("name") == settings.llm_model or item.get("model") == settings.llm_model
-            for item in data.get("models", [])
-        )
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError):
-        return False
-
-
-async def _livekit_available() -> bool:
-    try:
-        async with api.LiveKitAPI(
-            url=settings.livekit_url,
-            api_key=settings.livekit_api_key,
-            api_secret=settings.livekit_api_secret,
-        ) as client:
-            await client.room.list_rooms(api.ListRoomsRequest())
-        return True
-    except Exception as exc:
-        logger.info("livekit health check failed: %s", type(exc).__name__)
-        return False
-
-
-async def _dispatch_agent(room: str, house_rules: str) -> None:
-    async with api.LiveKitAPI(
-        url=settings.livekit_url,
-        api_key=settings.livekit_api_key,
-        api_secret=settings.livekit_api_secret,
-    ) as client:
-        await client.agent_dispatch.create_dispatch(
-            api.CreateAgentDispatchRequest(
-                agent_name=AGENT_NAME,
-                room=room,
-                metadata=json.dumps({"house_rules": house_rules}, ensure_ascii=False),
-            )
-        )
-
-
-@app.get("/api/status")
+@app.get("/api/status", tags=["status"], summary="サービス状態を取得する")
 async def status() -> dict:
     timeout = aiohttp.ClientTimeout(total=2)
     async with aiohttp.ClientSession(timeout=timeout) as http:
-        asr_ready, tts_ready, llm_ready = await asyncio.gather(
-            _model_available(http, settings.asr_base_url, settings.asr_model),
-            _model_available(http, settings.tts_base_url, settings.tts_model, settings.tts_voice),
-            _llm_available(http),
-        )
+        if settings.inference_on_demand:
+            asr_ready = tts_ready = llm_ready = None
+        else:
+            asr_ready, tts_ready, llm_ready = await asyncio.gather(
+                _model_available(http, settings.asr_base_url, settings.asr_model, api_key=settings.asr_api_key),
+                _model_available(http, settings.tts_base_url, settings.tts_model, settings.tts_voice, settings.tts_api_key),
+                _llm_available(http),
+            )
     livekit_ready = await _livekit_available()
     components = {
         "livekit": {"ready": livekit_ready},
         "asr": {"model": settings.asr_model, "ready": asr_ready},
         "tts": {"model": settings.tts_model, "voice": settings.tts_voice, "ready": tts_ready},
         "llm": {"model": settings.llm_model, "ready": llm_ready},
+        "inference_mode": "on-demand" if settings.inference_on_demand else "always-on",
     }
-    return {**components, "ready": all(item["ready"] for item in components.values())}
+    on_demand_configured = all(
+        (
+            settings.ollama_base_url,
+            settings.llm_api_key,
+            settings.asr_base_url,
+            settings.asr_api_key,
+            settings.tts_base_url,
+            settings.tts_api_key,
+        )
+    )
+    ready = livekit_ready and (
+        on_demand_configured
+        if settings.inference_on_demand
+        else tts_ready is True and asr_ready is True and llm_ready is True
+    )
+    return {
+        **components,
+        "ready": ready,
+        "supabase_configured": settings.supabase_configured,
+    }
 
 
-@app.post("/api/connect", response_model=ConnectResponse)
+@app.post("/api/connect", response_model=ConnectResponse, tags=["voice"], summary="音声通話の接続情報を発行する")
 async def connect(body: ConnectRequest | None = None) -> ConnectResponse:
+    if settings.environment == "production":
+        raise HTTPException(
+            status_code=409,
+            detail="一般インターネットの音声はWSS /api/relayを使用してください。直接WebRTCは公開していません。",
+        )
     room = f"door-{secrets.token_hex(5)}"
     identity = f"visitor-{secrets.token_hex(4)}"
-    house_rules = body.house_rules.strip() if body and body.house_rules is not None else settings.house_rules
+    reception = None
+    if body and body.device_key is not None:
+        device = await fetch_device_settings(body.device_key)
+        if device is None:
+            raise HTTPException(status_code=502, detail="Supabaseから端末の設定を取得できません。")
+        house_rules = build_house_rules(body.mode, device.house, settings.max_house_rules_chars)
+        reception = relay.reception_metadata(body.device_key, device)
+    else:
+        house_rules = body.house_rules.strip() if body and body.house_rules is not None else settings.house_rules
     if len(house_rules) > settings.max_house_rules_chars:
         raise HTTPException(status_code=422, detail="住人ルールが長すぎます。")
 
@@ -368,7 +303,7 @@ async def connect(body: ConnectRequest | None = None) -> ConnectResponse:
         .to_jwt()
     )
     try:
-        await _dispatch_agent(room, house_rules)
+        await _dispatch_agent(room, house_rules, reception)
     except Exception as exc:
         logger.warning("agent dispatch failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="音声エージェントを開始できません。") from exc
@@ -397,7 +332,10 @@ async def _synthesize_preview(text: str) -> bytes:
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as http:
-            async with http.post(f"{settings.tts_base_url}/v1/audio/speech", json=body) as response:
+            async with http.post(
+                f"{settings.tts_base_url}/v1/audio/speech", json=body,
+                headers={"Authorization": f"Bearer {settings.tts_api_key}"},
+            ) as response:
                 if response.status != 200:
                     raise HTTPException(status_code=503, detail="音声モデルに接続できません。")
                 if response.content_type == "text/event-stream":
@@ -421,7 +359,7 @@ async def _synthesize_preview(text: str) -> bytes:
                         append_pcm(chunk)
                 else:
                     raise HTTPException(status_code=503, detail="音声モデルの応答形式に対応していません。")
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+    except (TimeoutError, aiohttp.ClientError, ValueError) as exc:
         raise HTTPException(status_code=503, detail="音声モデルに接続できません。") from exc
 
     if not pcm or len(pcm) % 2:
@@ -435,7 +373,7 @@ async def _synthesize_preview(text: str) -> bytes:
     return output.getvalue()
 
 
-@app.post("/api/tts-check")
+@app.post("/api/tts-check", tags=["voice"], summary="固定文のTTSプレビューを取得する")
 async def tts_check(scenario: Literal["thanks", "compound"] = "thanks") -> Response:
     wav = await _synthesize_preview(PREVIEW_TEXTS[scenario])
     return Response(
@@ -447,10 +385,12 @@ async def tts_check(scenario: Literal["thanks", "compound"] = "thanks") -> Respo
 
 @app.websocket("/api/relay")
 async def psoc_relay(websocket: WebSocket) -> None:
-    """PSoC 6 relay (spec.md 5.4). Authenticated with the same Bearer key as the HTTP API."""
+    """Bridge PCM audio over WSS for devices that cannot use direct WebRTC."""
     global _relay_sessions
-    if (settings.environment == "production" and websocket.url.scheme != "wss") or not _valid_api_key(
-        websocket.headers.get("authorization", "")
+    relay.logger.info("relay websocket request secure=%s", websocket.url.scheme == "wss")
+    if (
+        (settings.environment == "production" and websocket.url.scheme != "wss" and not settings.allow_tailnet_http)
+        or not _valid_api_key(websocket.headers.get("authorization", ""))
     ):
         await websocket.close(relay.CLOSE_POLICY)
         return

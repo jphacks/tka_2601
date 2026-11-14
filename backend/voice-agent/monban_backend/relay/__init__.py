@@ -11,18 +11,22 @@ import asyncio
 import json
 import logging
 import secrets
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from datetime import UTC, datetime
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
-import aiohttp
 from fastapi import WebSocket
 from livekit import api, rtc
 from pydantic import BaseModel, Field, ValidationError
 from starlette.websockets import WebSocketDisconnect
 
-from .config import settings
-from .house_rules import HouseSettings, Mode, build_house_rules
+from ..config import settings
+from ..core.house_rules import Mode, build_house_rules
+from ..persistence.device_api import DeviceSettings, fetch_device_settings
+from ..persistence.supabase_history import write_visit
 
 logger = logging.getLogger("door-relay")
 
@@ -30,7 +34,6 @@ SAMPLE_RATE = 16000
 FRAME_MS = 20
 FRAME_BYTES = SAMPLE_RATE * FRAME_MS // 1000 * 2
 MAX_AUDIO_MESSAGE_BYTES = FRAME_BYTES * 5
-MAX_SETTINGS_RESPONSE_BYTES = 64 * 1024
 TRANSCRIPTION_TOPIC = "lk.transcription"
 AGENT_SESSION_TOPIC = "lk.agent.session"
 ATTRIBUTE_TRANSCRIPTION_FINAL = "lk.transcription_final"
@@ -45,7 +48,23 @@ CLOSE_TRY_AGAIN_LATER = 1013
 
 # Items the LiveKit side hands to the WebSocket side.
 Outbound = tuple[Literal["audio", "json", "closed"], Any]
-Dispatch = Callable[[str, str], Awaitable[None]]
+# (room, house_rules, reception) -> dispatch the LiveKit agent. ``reception`` is set only
+# for a device whose household is a shop; see reception_metadata().
+Dispatch = Callable[[str, str, dict[str, Any] | None], Awaitable[None]]
+
+
+def configure_event_log() -> None:
+    if not settings.relay_log_path:
+        return
+    path = Path(settings.relay_log_path).resolve()
+    if any(isinstance(handler, RotatingFileHandler) and handler.baseFilename == str(path)
+           for handler in logger.handlers):
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(path, maxBytes=1024 * 1024, backupCount=2, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 class RelayError(Exception):
@@ -58,9 +77,12 @@ class RelayError(Exception):
 
 class StartMessage(BaseModel):
     type: Literal["start"]
+    protocol_version: Literal[1, 2] = 1
     visit_id: UUID
     mode: Mode
-    device_key: str = Field(min_length=1, max_length=512, pattern=r"^[\x21-\x7e]+$")
+    # Diagnostic calls before device pairing have no resident key. They still
+    # authenticate the WebSocket with the API key, but skip resident data/history.
+    device_key: str | None = Field(default=None, min_length=1, max_length=512, pattern=r"^[\x21-\x7e]+$")
 
 
 class AgentLink(Protocol):
@@ -74,6 +96,7 @@ class LiveKitLink:
 
     def __init__(self, outbox: asyncio.Queue[Outbound]) -> None:
         self._outbox = outbox
+        self.utterances: list[dict[str, str]] = []
         self._room = rtc.Room()
         self._source = rtc.AudioSource(SAMPLE_RATE, 1)
         self._track_sid: str | None = None
@@ -165,6 +188,13 @@ class LiveKitLink:
             return
         if text:
             speaker = "visitor" if visitor else "ai"
+            utterance = {
+                "speaker": speaker,
+                "text": text,
+                "spoken_at": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            }
+            if hasattr(self, "utterances"):
+                self.utterances.append(utterance)
             self._outbox.put_nowait(("json", {"type": "transcript", "speaker": speaker, "text": text}))
 
     def _discard_stream(self, reader: rtc.ByteStreamReader, _participant_identity: str) -> None:
@@ -212,36 +242,11 @@ async def delete_room(room: str) -> None:
         logger.info("room cleanup failed: %s", type(exc).__name__)
 
 
-async def fetch_house_settings(device_key: str) -> HouseSettings | None:
-    """Read the resident's settings once with the device key. Any failure means no settings."""
-    if not settings.supabase_url:
-        logger.warning("DOOR_SUPABASE_URL is not set; using rules without house settings")
+def reception_metadata(device_key: str | None, device: DeviceSettings | None) -> dict[str, Any] | None:
+    """Shop devices get the reception agent; homes and unpaired devices get the door agent."""
+    if device_key is None or device is None or device.shop is None:
         return None
-    timeout = aiohttp.ClientTimeout(total=settings.house_settings_timeout_seconds)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as http:
-            async with http.get(
-                f"{settings.supabase_url}/functions/v1/device/settings",
-                headers={"Authorization": f"Bearer {device_key}"},
-            ) as response:
-                if response.status != 200:
-                    logger.warning("house settings request failed: status=%s", response.status)
-                    return None
-                body = bytearray()
-                async for chunk in response.content.iter_chunked(8192):
-                    body.extend(chunk)
-                    if len(body) > MAX_SETTINGS_RESPONSE_BYTES:
-                        raise ValueError("response is too large")
-        data = json.loads(body)
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-        logger.warning("house settings request failed: %s", type(exc).__name__)
-        return None
-    away = data.get("away_leave_at_door") if isinstance(data, dict) else None
-    extra = data.get("extra_instructions") if isinstance(data, dict) else None
-    if not isinstance(away, bool) or not isinstance(extra, str):
-        logger.warning("house settings response has an unexpected shape")
-        return None
-    return HouseSettings(away_leave_at_door=away, extra_instructions=extra)
+    return {"device_key": device_key, "shop": device.shop.to_json()}
 
 
 async def _receive_start(websocket: WebSocket) -> StartMessage:
@@ -254,8 +259,18 @@ async def _receive_start(websocket: WebSocket) -> StartMessage:
     if message["type"] == "websocket.disconnect":
         raise WebSocketDisconnect(message.get("code", CLOSE_NORMAL))
     try:
-        return StartMessage.model_validate_json(message.get("text") or "")
+        start = StartMessage.model_validate_json(message.get("text") or "")
+        # This exact non-secret sentinel is emitted by E84's unpaired diagnostic
+        # client. It is not a registered household key.
+        if start.device_key == "e84-diagnostic-unpaired":
+            start.device_key = None
+        return start
     except ValidationError as exc:
+        fields = [
+            {"field": ".".join(str(part) for part in error["loc"]), "reason": error["type"]}
+            for error in exc.errors()
+        ]
+        logger.warning("relay invalid start fields=%s", fields)
         raise RelayError("invalid_start", "開始の JSON の形が違います。") from exc
 
 
@@ -334,32 +349,60 @@ async def serve(websocket: WebSocket, dispatch: Dispatch) -> None:
     link: AgentLink | None = None
     room = f"door-{secrets.token_hex(5)}"
     house_task: asyncio.Task | None = None
+    started_at: str | None = None
+    answered_at: str | None = None
+    end_code: str | None = None
     try:
         start = await _receive_start(websocket)
+        logger.info("relay accepted protocol=%s", start.protocol_version)
+        if start.protocol_version == 2:
+            from .v2 import serve_v2
+
+            await serve_v2(websocket, start)
+            return
+        started_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         logger.info("relay start visit=%s mode=%s room=%s", start.visit_id, start.mode, room)
         outbox: asyncio.Queue[Outbound] = asyncio.Queue()
         # Read the settings while joining the room; the agent is dispatched once both are done.
-        house_task = asyncio.create_task(fetch_house_settings(start.device_key))
+        house_task = (
+            asyncio.create_task(fetch_device_settings(start.device_key))
+            if start.device_key is not None
+            else None
+        )
         try:
             link = await connect_agent_room(room, f"visitor-{secrets.token_hex(4)}", outbox)
-            house = await house_task
-            await dispatch(room, build_house_rules(start.mode, house, settings.max_house_rules_chars))
+            device = await house_task if house_task is not None else None
+            rules = build_house_rules(start.mode, device.house if device else None, settings.max_house_rules_chars)
+            await dispatch(room, rules, reception_metadata(start.device_key, device))
         except Exception as exc:
             logger.warning("relay could not start the agent: %s", type(exc).__name__)
             raise RelayError(
                 "agent_unavailable", "音声エージェントを開始できません。", CLOSE_SERVER_ERROR
             ) from exc
         await websocket.send_json({"type": "ready"})
+        answered_at = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         await _converse(websocket, link, outbox)
     except RelayError as error:
+        end_code = error.code
         logger.info("relay error code=%s room=%s", error.code, room)
         await _send_error(websocket, error)
     except WebSocketDisconnect:
+        end_code = "disconnected"
         pass
     finally:
         if house_task is not None and not house_task.done():
             house_task.cancel()
         if link is not None:
+            if start.device_key is not None and started_at is not None and answered_at is not None:
+                try:
+                    await write_visit(
+                        settings, start.device_key, start.visit_id, start.mode,
+                        chimed_at=started_at, answered_at=answered_at,
+                        utterances=getattr(link, "utterances", []),
+                        end_code=end_code, end_json=None,
+                    )
+                except Exception as exc:
+                    logger.warning("visit history write failed: %s", type(exc).__name__)
             await link.aclose()
             await delete_room(room)
         logger.info("relay closed room=%s", room)

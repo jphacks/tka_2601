@@ -36,6 +36,13 @@ def _positive_float(name: str, default: float) -> float:
     return parsed
 
 
+def _flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _required_secret(
     name: str, *, development_default: str | None = None, minimum_bytes: int = 32
 ) -> str:
@@ -70,21 +77,30 @@ class Settings:
         if host.strip()
     )
     livekit_agent_name: str = os.getenv("LIVEKIT_AGENT_NAME", "door-voice-agent")
-    ui_hostname: str = os.getenv("DOOR_UI_HOSTNAME", "door-ui.shionkk.f5.si").lower()
+    public_api_hostname: str = os.getenv("DOOR_PUBLIC_API_HOSTNAME", "localhost").lower()
     allowed_hosts: tuple[str, ...] = tuple(
         host.strip().lower()
         for host in os.getenv(
             "DOOR_ALLOWED_HOSTS",
-            f"localhost,127.0.0.1,testserver,{os.getenv('DOOR_UI_HOSTNAME', 'door-ui.shionkk.f5.si')}",
+            f"localhost,127.0.0.1,testserver,{os.getenv('DOOR_PUBLIC_API_HOSTNAME', 'localhost')}",
         ).split(",")
         if host.strip()
     )
+    cors_origins: tuple[str, ...] = tuple(
+        origin.strip().rstrip("/")
+        for origin in os.getenv("DOOR_CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    )
+    allow_tailnet_http: bool = _flag("DOOR_ALLOW_TAILNET_HTTP", False)
 
     ollama_base_url: str = os.getenv("DOOR_OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/").removesuffix("/v1")
+    llm_api_key: str = os.getenv("DOOR_LLM_API_KEY", "ollama")
     llm_model: str = os.getenv("DOOR_LLM_MODEL", "gemma4:latest")
     asr_base_url: str = os.getenv("DOOR_ASR_BASE_URL", "http://127.0.0.1:18095").rstrip("/")
+    asr_api_key: str = os.getenv("DOOR_ASR_API_KEY", "local")
     asr_model: str = os.getenv("DOOR_ASR_API_MODEL", "kotoba-tech/kotoba-whisper-v2.1")
     tts_base_url: str = os.getenv("DOOR_TTS_BASE_URL", "http://127.0.0.1:18094").rstrip("/")
+    tts_api_key: str = os.getenv("DOOR_TTS_API_KEY", "local")
     tts_model: str = os.getenv("DOOR_TTS_API_MODEL", "Irodori-TTS-v4.1-Small-MF")
     tts_voice: str = os.getenv("DOOR_TTS_VOICE", "door_neutral")
     tts_sample_rate: int = _integer("DOOR_TTS_SAMPLE_RATE", 48000)
@@ -95,7 +111,7 @@ class Settings:
     )
     house_rules: str = os.getenv(
         "DOOR_HOUSE_RULES",
-        "宅配ボックスを優先し、入らない場合は玄関前に置いてください。荷物と置き場所の写真を撮ってください。",
+        "宅配ボックスを優先し、入らない場合は玄関前に置いてください。",
     )
     max_house_rules_chars: int = _integer("DOOR_MAX_HOUSE_RULES_CHARS", 800)
     max_tts_response_bytes: int = _integer("DOOR_MAX_TTS_RESPONSE_BYTES", 5 * 1024 * 1024)
@@ -107,6 +123,23 @@ class Settings:
     turn_detector: str = os.getenv("DOOR_TURN_DETECTOR", "vad").lower()
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
+    # LLM request bounds. max_tokens keeps replies to the spec 5.6 two-sentence limit so
+    # the model cannot ramble or get cut off mid-sentence; the timeout stops a stuck
+    # Ollama call from holding a conversation open.
+    llm_max_tokens: int = _integer("DOOR_LLM_MAX_TOKENS", 96)
+    llm_timeout_seconds: float = _positive_float("DOOR_LLM_TIMEOUT_SECONDS", 30)
+    # Ollama unloads an idle model after its keep_alive window. Replies pause for seconds
+    # while it reloads, so keep the model resident and refresh it in warm-up.
+    llm_keep_alive: str = os.getenv("DOOR_LLM_KEEP_ALIVE", "30m")
+    # Load the ASR and LLM models in the background before the visitor's first utterance.
+    warmup_enabled: bool = _flag("DOOR_WARMUP", True)
+    warmup_timeout_seconds: float = _positive_float("DOOR_WARMUP_TIMEOUT_SECONDS", 90)
+    inference_on_demand: bool = _flag("DOOR_INFERENCE_ON_DEMAND", False)
+    # Reuse today's reservation list (Supabase) for this many seconds. A shorter value
+    # tracks cancellations sooner; a longer value avoids waiting on Supabase mid-call.
+    calendar_cache_seconds: float = _positive_float("DOOR_CALENDAR_CACHE_SECONDS", 30)
+    reservation_timeout_seconds: float = _positive_float("DOOR_RESERVATION_TIMEOUT_SECONDS", 5.0)
+
     # PSoC 6 relay (/api/relay)
     relay_livekit_url: str = os.getenv(
         "DOOR_RELAY_LIVEKIT_URL",
@@ -114,9 +147,25 @@ class Settings:
     ).rstrip("/")
     max_relay_sessions: int = _integer("DOOR_MAX_RELAY_SESSIONS", 4)
     relay_start_timeout_seconds: float = _positive_float("DOOR_RELAY_START_TIMEOUT_SECONDS", 5.0)
+    relay_log_path: str = os.getenv("DOOR_RELAY_LOG_PATH", "")
     relay_max_session_seconds: float = _positive_float("DOOR_RELAY_MAX_SESSION_SECONDS", 120.0)
-    supabase_url: str = os.getenv("DOOR_SUPABASE_URL", "").rstrip("/")
+    # Supabase owns accounts, households/shops, reservations and visit history. The public
+    # URL/key reach only the Edge Function "device"; the device key goes in Authorization.
+    # Never configure a service-role or secret key here.
+    supabase_url: str = (
+        os.getenv("DOOR_SUPABASE_URL") or os.getenv("SUPABASE_URL", "")
+    ).rstrip("/")
+    supabase_anon_key: str = (
+        os.getenv("DOOR_SUPABASE_ANON_KEY")
+        or os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+    ).strip()
     house_settings_timeout_seconds: float = _positive_float("DOOR_HOUSE_SETTINGS_TIMEOUT_SECONDS", 1.5)
+    visit_write_timeout_seconds: float = _positive_float("DOOR_VISIT_WRITE_TIMEOUT_SECONDS", 3.0)
+
+    @property
+    def supabase_configured(self) -> bool:
+        return bool(self.supabase_url and self.supabase_anon_key)
 
 
 settings = Settings()
@@ -127,8 +176,8 @@ if not settings.livekit_api_key:
 if settings.environment == "production":
     if "*" in settings.allowed_hosts:
         raise ValueError("Production DOOR_ALLOWED_HOSTS must not contain '*'")
-    if settings.ui_hostname not in settings.allowed_hosts:
-        raise ValueError("Production DOOR_ALLOWED_HOSTS must include DOOR_UI_HOSTNAME")
+    if settings.public_api_hostname not in settings.allowed_hosts:
+        raise ValueError("Production DOOR_ALLOWED_HOSTS must include DOOR_PUBLIC_API_HOSTNAME")
     if settings.livekit_api_key == "devkey" or settings.livekit_api_secret == "secret":
         raise ValueError("Production requires unique LiveKit credentials; development defaults are forbidden")
     if settings.api_key in {settings.livekit_api_key, settings.livekit_api_secret}:
@@ -136,23 +185,39 @@ if settings.environment == "production":
     livekit_api_url = urlsplit(settings.livekit_url)
     local_livekit_http = False
     if livekit_api_url.scheme == "http" and livekit_api_url.hostname:
-        try:
-            address = ipaddress.ip_address(livekit_api_url.hostname)
-            local_livekit_http = address.is_loopback or (
-                livekit_api_url.hostname in settings.trusted_livekit_http_hosts
-                and address in ipaddress.ip_network("100.64.0.0/10")
-            )
-        except ValueError:
-            local_livekit_http = livekit_api_url.hostname.lower() == "localhost"
+        if livekit_api_url.hostname.lower() == "livekit":
+            local_livekit_http = True
+        else:
+            try:
+                address = ipaddress.ip_address(livekit_api_url.hostname)
+                local_livekit_http = address.is_loopback or (
+                    livekit_api_url.hostname in settings.trusted_livekit_http_hosts
+                    and address in ipaddress.ip_network("100.64.0.0/10")
+                )
+            except ValueError:
+                local_livekit_http = livekit_api_url.hostname.lower() == "localhost"
     if livekit_api_url.scheme != "https" and not local_livekit_http:
         raise ValueError(
             "Production LIVEKIT_URL must use HTTPS, loopback HTTP, or an explicitly trusted Tailscale IP"
         )
-    if urlsplit(settings.livekit_ws_url).scheme != "wss":
-        raise ValueError("Production LIVEKIT_WS_URL must use WSS")
+    livekit_ws_url = urlsplit(settings.livekit_ws_url)
+    trusted_tailnet_http = (
+        settings.allow_tailnet_http
+        and livekit_api_url.scheme == "http"
+        and livekit_ws_url.scheme == "ws"
+        and livekit_api_url.hostname == livekit_ws_url.hostname
+        and livekit_api_url.hostname in settings.trusted_livekit_http_hosts
+    )
+    internal_livekit_ws = (
+        livekit_api_url.hostname == "livekit"
+        and livekit_ws_url.scheme == "ws"
+        and livekit_ws_url.hostname == "livekit"
+    )
+    if livekit_ws_url.scheme != "wss" and not (trusted_tailnet_http or internal_livekit_ws):
+        raise ValueError("Production LIVEKIT_WS_URL must use WSS unless explicit trusted Tailnet HTTP is enabled")
     relay_livekit_url = urlsplit(settings.relay_livekit_url)
     if relay_livekit_url.scheme != "wss" and not (
-        local_livekit_http and relay_livekit_url.hostname == livekit_api_url.hostname
+        (local_livekit_http or trusted_tailnet_http) and relay_livekit_url.hostname == livekit_api_url.hostname
     ):
         raise ValueError(
             "Production DOOR_RELAY_LIVEKIT_URL must use WSS or the same local host as LIVEKIT_URL"

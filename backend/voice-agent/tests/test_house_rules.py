@@ -1,4 +1,4 @@
-from door_backend.house_rules import (
+from monban_backend.core.house_rules import (
     DELIVERY_AWAY,
     DELIVERY_AWAY_LEAVE_AT_DOOR,
     DELIVERY_HOME,
