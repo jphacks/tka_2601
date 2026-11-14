@@ -88,7 +88,8 @@ _DEPARTURE_TURN = re.compile(
 )
 _FOLLOW_UP = re.compile(
     r"(?:どう(?!も)|どこ|何|なに|ですか|でしょうか|違う|ちがう|教えて|質問|確認したい)|"
-    r"(?:あと|それと|それから|もう一つ|ついでに|まだ).+|"
+    # 「あとで」 is a time (「あとでまた来ます」), not 「あと、…」 introducing another request.
+    r"(?:あと(?!で)|それと|それから|もう一つ|ついでに|まだ).+|"
     r"(?:サイン|署名|受領印|支払|印鑑).{0,16}(?:必要|お願|ください|いただ|もら|して)"
 )
 _PLACED = re.compile(
@@ -101,6 +102,7 @@ _NOT_PLACED = re.compile(
     r"(?:は|も)?(?:いませんでした|おりませんでした|いなかった|いません|おりません|いない|ません|なかった|ない)|"
     r"(?:置いた|入れた|設置した)(?:わけ|こと|覚え|つもり|の)(?:では|じゃ|は|が|も)?(?:ありません|ない|なかった)"
 )
+_REVISIT = re.compile(r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)")
 _REPORTED_LANGUAGE = re.compile(r"引用|復唱|読み上げ|(?:と|って)(?:言|伝え|聞|書|話)")
 
 
@@ -118,7 +120,8 @@ def _visitor_is_leaving(text: str) -> bool:
     return bool(
         _DEPARTURE_TURN.fullmatch(value)
         or _DEPARTURE_TURN.fullmatch(final_clause)
-        or re.fullmatch(r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)", value)
+        or _REVISIT.fullmatch(value)
+        or _REVISIT.fullmatch(final_clause)
     )
 
 
