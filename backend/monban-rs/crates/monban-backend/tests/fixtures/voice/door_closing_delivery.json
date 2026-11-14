@@ -153,7 +153,7 @@
    "content_type": "application/json",
    "body": {
     "model": "Irodori-TTS-v4.1-Small-MF",
-    "input": "はい、よろしくお願いいたします。",
+    "input": "失礼いたします。",
     "voice": "door_neutral",
     "language": "ja",
     "seed": 11,
@@ -260,8 +260,8 @@
     },
     {
      "type": "audio",
-     "frames": 33,
-     "bytes": 21120
+     "frames": 17,
+     "bytes": 10880
     },
     {
      "type": "finish",
@@ -270,13 +270,13 @@
     {
      "type": "transcript",
      "speaker": "ai",
-     "text": "はい、よろしくお願いいたします。"
+     "text": "失礼いたします。"
     }
    ],
-   "pcm_samples": 10560,
-   "pcm_sha256": "508f33b357155fdf973cb55edcaec0a7aef0d12e9b4cfa99c984ba4ec1c5e526",
+   "pcm_samples": 5440,
+   "pcm_sha256": "7c49fb1756f689703b0181e7e75aba250ae4ab191413bd19008f2896ca518583",
    "pcm_base64": null,
-   "end_after_reply": false,
+   "end_after_reply": true,
    "staff_requested": false
   }
  ]

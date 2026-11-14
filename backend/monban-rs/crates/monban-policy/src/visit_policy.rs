@@ -11,7 +11,7 @@ py_regex!(
 py_regex!(
     CLOSE_ACK,
     r"^(?:はい|ええ|うん|そう|そうですね|そうですか|わかりました|分かりました|かしこまりました|",
-    r"大丈夫です|大丈夫|ありがとうございます|ありがとう|どうも|お願いします|失礼します|失礼いたします|",
+    r"大丈夫です|大丈夫|ありがとうございます|ありがとうございました|ありがとう|どうも|お願いします|失礼します|失礼いたします|",
     r"じゃあ|では|それでは)+$"
 );
 py_regex!(
@@ -123,19 +123,44 @@ py_regex!(
     r"玄関(?:の)?前|置いていただけ|宅配ボックス|不在票"
 );
 py_regex!(SLIP_REQUEST_WORDS, r"(?:入れ|お願|ください)");
+// Match an actual final turn, not a quoted farewell or a polite introduction.
+// Present-tense thanks alone are an acknowledgement while the visit continues.
+py_regex!(
+    DEPARTURE_TURN,
+    r"(?:(?:はい|ええ|うん|では|それでは|じゃあ|どうも|承知しました|承知いたしました|",
+    r"わかりました|分かりました|かしこまりました|ありがとうございます|ありがとう))*",
+    r"(?:失礼(?:いた)?します|さようなら|さよなら|帰ります|おいとまします|ありがとうございました)",
+    r"(?:(?:ありがとうございました|ありがとうございます|ありがとう|どうも|失礼(?:いた)?します))*"
+);
 py_regex!(
     FOLLOW_UP,
-    r"(?:というか|どう|どこ|何|なに|ですか|でしょうか|大丈夫)"
+    r"(?:どう(?!も)|どこ|何|なに|ですか|でしょうか|違う|ちがう|教えて|質問|確認したい)|",
+    // 「あとで」 is a time (「あとでまた来ます」), not 「あと、…」 introducing another request.
+    r"(?:あと(?!で)|それと|それから|もう一つ|ついでに|まだ).+|",
+    r"(?:サイン|署名|受領印|支払|印鑑).{0,16}(?:必要|お願|ください|いただ|もら|して)"
 );
 py_regex!(
-    LEAVING,
-    r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)|失礼します|さようなら|帰ります"
+    PLACED_NOW,
+    r"置(?:きました|き終わりました|き終えました|いた|いておきました|いてきました|",
+    r"いてあります|かせていただきました)|",
+    r"入れ(?:ました|た|ておきました|てきました|てあります)|設置(?:しました|済み)"
 );
+py_regex!(
+    NOT_PLACED,
+    r"(?:置(?:いておき|いてあり|いて|け|か|き)|入れ(?:て|られ)?|設置(?:して|できて)?)",
+    r"(?:は|も)?(?:いませんでした|おりませんでした|いなかった|いません|おりません|いない|ません|なかった|ない)|",
+    r"(?:置いた|入れた|設置した)(?:わけ|こと|覚え|つもり|の)(?:では|じゃ|は|が|も)?(?:ありません|ない|なかった)"
+);
+py_regex!(REVISIT, r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)");
+py_regex!(REPORTED_LANGUAGE, r"引用|復唱|読み上げ|(?:と|って)(?:言|伝え|聞|書|話)");
+py_regex!(QUESTION_MARK, r"[?？]");
+py_regex!(QUOTED, r#"「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*""#);
+py_regex!(
+    NOT_A_REPORT_AFTER,
+    r"(?:か|っけ|ら|り|場合|こと|わけ|覚え|つもり|のでは|のじゃ|とは|と言|って|という|と書)"
+);
+py_regex!(PARCEL_WORDS, r"お?荷物|宅配|配達|配送");
 py_regex!(REFLECTED_NAME, r"[一-龯々ぁ-んァ-ヶー]{1,8}(?:さん|様)");
-py_regex!(
-    PLACED,
-    r"(?:置きました|置いて(?:おき)?ました|置いた(?!ら|り|場合)|入れました|入れて(?:おき)?ました|入れた(?!ら|り|場合)|設置しました)"
-);
 py_regex!(
     PHOTO_TAKEN,
     r"写真.*(?:撮りました|撮った|撮影しました|撮影済み)"
@@ -152,10 +177,6 @@ py_regex!(
 py_regex!(
     INCOMPLETE,
     r"(?:たら|なら|じゃなくて|ではなくて|ではなく|じゃなく)$"
-);
-py_regex!(
-    PLACED_QUESTION,
-    r"(?:どう|どこ|何|なに|ですか|でしょうか|大丈夫|違う|ちがう|教えて)"
 );
 py_regex!(
     STORE_DELIVERY_RULE,
@@ -190,6 +211,53 @@ const FAREWELL_STRIP: &str = " 。.!！\t\r\n";
 pub fn compact(text: &str) -> String {
     let normalized = nfkc(text).to_lowercase();
     COMPACT_STRIP.sub("", &normalized)
+}
+
+/// `_has_follow_up`.
+pub fn has_follow_up(text: &str) -> bool {
+    QUESTION_MARK.is_match(text) || FOLLOW_UP.is_match(&compact(text)) || REPORTED_LANGUAGE.is_match(text)
+}
+
+/// `_visitor_is_leaving`.
+pub fn visitor_is_leaving(text: &str) -> bool {
+    if has_follow_up(text) {
+        return false;
+    }
+    let value = compact(text);
+    // ASR may supply punctuation between a completed task and the final goodbye.
+    let final_clause = text
+        .split(['。', '.', '!', '！', '\n'])
+        .rfind(|part| !py_strip(part).is_empty())
+        .map(compact)
+        .unwrap_or_else(|| value.clone());
+    DEPARTURE_TURN.is_full_match(&value)
+        || DEPARTURE_TURN.is_full_match(&final_clause)
+        || REVISIT.is_full_match(&value)
+        || REVISIT.is_full_match(&final_clause)
+}
+
+/// `_placement_result`: Some(true) placed, Some(false) not placed, None unknown.
+pub fn placement_result(text: &str) -> Option<bool> {
+    // A quoted/reporting expression is not the visitor reporting their own action.
+    if REPORTED_LANGUAGE.is_match(text) {
+        return None;
+    }
+    let value = compact(&QUOTED.sub("", text));
+    let negatives = NOT_PLACED.find_iter(&value);
+    let last_negative = negatives.last().map(|m| m.end as i64).unwrap_or(-1);
+    let completed: Vec<_> = PLACED_NOW
+        .find_iter(&value)
+        .into_iter()
+        .filter(|m| !NOT_A_REPORT_AFTER.is_prefix_match(&from(&value, m.end)))
+        .collect();
+    if completed.last().is_some_and(|m| m.start as i64 >= last_negative) {
+        return Some(true);
+    }
+    if negatives.is_empty() {
+        None
+    } else {
+        Some(false)
+    }
 }
 
 /// `_is_filler`.
@@ -404,8 +472,7 @@ impl VisitState {
             }
             let answered_photo_question = state.pending_question == Some(PendingQuestion::Photo);
             state.pending_question = None;
-            let asks_follow_up = FOLLOW_UP.is_match(&value);
-            state.closing = !asks_follow_up && LEAVING.is_match(&value);
+            state.closing = visitor_is_leaving(text);
             let denied = DELIVERY_DENIED.is_match(&value);
             if denied {
                 state.no_parcel = true;
@@ -417,7 +484,18 @@ impl VisitState {
                 }
             }
 
-            let topic = purpose_from_text(&value);
+            let mut topic = purpose_from_text(&value);
+            let placement = placement_result(text);
+            if topic == Purpose::Unknown
+                && state.purpose == Purpose::Unknown
+                && !denied
+                && placement == Some(true)
+                && PARCEL_WORDS.is_match(&value)
+            {
+                // An earlier introduction may have been mistranscribed. An explicit
+                // parcel completion is sufficient evidence of the delivery topic.
+                topic = Purpose::Delivery;
+            }
             let previous_asked_about_name_and_purpose = REFLECTED_NAME
                 .is_match(&previous_assistant)
                 && ASKED_PURPOSE.is_match(&previous_assistant);
@@ -484,8 +562,8 @@ impl VisitState {
                 if WILL_PLACE.is_match(&value) {
                     state.visitor_will_place = true;
                 }
-                if PLACED.is_match(&value) {
-                    state.placed = true;
+                if let Some(placed) = placement {
+                    state.placed = placed;
                 }
                 if PHOTO_TAKEN.is_match(&value)
                     || (answered_photo_question && PHOTO_DONE.is_match(&value))
@@ -571,6 +649,9 @@ impl VisitState {
         let value = compact(&self.latest_user_text);
         let location = self.requested_delivery_location;
         let fixed = |text: &str| Some(text.to_string());
+        if self.closing {
+            return fixed("失礼いたします。");
+        }
         if self.repetition_complaint {
             if self.purpose == Purpose::CircularBoard && self.circular_board_placed {
                 return fixed("申し訳ありません。回覧板はポストに入れてくださったのですね。同じお願いを繰り返して失礼しました。");
@@ -629,7 +710,7 @@ impl VisitState {
             return None;
         }
         if self.placed {
-            if !PLACED_QUESTION.is_match(&value) {
+            if !has_follow_up(&self.latest_user_text) {
                 return fixed("失礼いたします。");
             }
             return None;
@@ -700,8 +781,11 @@ impl VisitState {
             }
             _ => {}
         }
-        if self.placed {
+        if self.placed && !has_follow_up(&self.latest_user_text) {
             return fixed("失礼いたします。");
+        }
+        if self.placed && has_follow_up(&self.latest_user_text) {
+            return fixed("恐れ入りますが、追加で必要な対応をお聞かせください。");
         }
         if self.name_confirmation {
             return fixed("失礼しました。お名前の確認ありがとうございます。");
@@ -753,6 +837,9 @@ impl VisitState {
                 return false;
             }
             if !(self.closing || self.placed) {
+                return false;
+            }
+            if !self.closing && has_follow_up(&self.latest_user_text) {
                 return false;
             }
         }

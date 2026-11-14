@@ -158,10 +158,9 @@ fn recognizes_asr_variant_of_delivery_announcement_and_confirmation() {
         ],
         "",
     );
-    assert_eq!(
-        reply(&acknowledgement).as_deref(),
-        Some("はい、よろしくお願いいたします。")
-    );
+    // Standalone past-tense thanks requests departure; present-tense thanks stays open.
+    assert!(acknowledgement.closing);
+    assert_eq!(reply(&acknowledgement).as_deref(), Some("失礼いたします。"));
 }
 
 #[test]
