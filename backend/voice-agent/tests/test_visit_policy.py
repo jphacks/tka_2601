@@ -116,7 +116,7 @@ def test_recognizes_asr_variant_of_delivery_announcement_and_confirmation():
             ("user", "ありがとうございました"),
         ]
     )
-    # Standalone past-tense thanks requests departure; present-tense thanks stays open.
+    # 過去形のお礼だけなら退出とみなす。現在形のお礼なら会話を続ける。
     assert acknowledgement.closing
     assert acknowledgement.deterministic_reply == "失礼いたします。"
 

@@ -51,6 +51,8 @@ void storage_worker_step(void)
         xlog("[AUDIO] Storage format %s.\n", ok ? "complete; enter e to register" : "FAILED");
     } else if (audio_jobs.model_busy) {
         bool ok = audio_store_save_model(&store, &audio_jobs.model_to_save);
+        audio_jobs.model_save_failed = !ok;
+        audio_link_release();
         audio_jobs.model_busy = false;
         xlog("[SETUP] Model persistence %s.\n", ok ? "verified" : "FAILED; current model is RAM-only");
     } else if (audio_jobs.clip_saving) {

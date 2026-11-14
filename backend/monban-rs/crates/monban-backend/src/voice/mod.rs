@@ -7,3 +7,5 @@ pub mod agents;
 pub mod session;
 pub mod runtime;
 pub mod adapters;
+#[cfg(test)]
+mod fallback_tests;

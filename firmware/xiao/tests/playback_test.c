@@ -39,9 +39,13 @@ static void completed_playback(void)
     frames(0,PLAYBACK_PREBUFFER_FRAMES-1,640);
     run(5);
     assert(starts==0 && writes==0); /* not enough prebuffer */
+    assert(playback_started_ms()==0u); /* no sound yet: [TIMING] playback_start must wait */
     assert(playback_credit()==PLAYBACK_PREBUFFER_FRAMES-1);
     frames(PLAYBACK_PREBUFFER_FRAMES-1,1,640);
     run(1); assert(starts==1);
+    assert(playback_started_ms()==now); /* the speaker started on this step */
+    uint32_t started=now; now+=20; run(1);
+    assert(playback_started_ms()==started); /* later steps do not move it */
     run(PLAYBACK_PREBUFFER_FRAMES);
     assert(writes==PLAYBACK_PREBUFFER_FRAMES && last_first==PLAYBACK_PREBUFFER_FRAMES-1);
     /* Drained input without END is never completion. */
@@ -55,6 +59,7 @@ static void completed_playback(void)
     assert(playback_idle());
     assert(playback_credit()==PLAYBACK_PREBUFFER_FRAMES);
     assert(playback_open(now) && !playback_done());
+    assert(playback_started_ms()==0u); /* a new response starts over */
     playback_abort(); run(1); assert(playback_idle());
 }
 static void backpressure_and_credit(void)

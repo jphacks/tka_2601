@@ -4,6 +4,7 @@
 #include "net_task.h"
 #include "playback.h"
 #include "servo_control.h"
+#include "servo_probe.h"
 #include "storage_worker.h"
 #include "tune.h"
 #include "voice_stream.h"
@@ -71,6 +72,7 @@ void setup() {
   Serial.setTxTimeoutMs(20);
   xlog("[BOOT] MONBAN XIAO ESP32S3\n");
   servo_begin();
+  servo_probe_begin();
   device_mode_init(); // Last good mode from NVS, before any task can see a chime.
   tune_begin();
   audioCommands = xQueueCreate(4, sizeof(char));
@@ -98,5 +100,6 @@ void setup() {
 void loop() {
   console_poll();
   servo_poll();
+  servo_probe_poll();
   delay(2);
 }

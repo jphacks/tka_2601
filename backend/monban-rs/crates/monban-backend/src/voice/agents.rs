@@ -105,6 +105,8 @@ pub trait Agent: Send {
         model: &dyn ChatModel,
     ) -> anyhow::Result<NodeStream>;
     async fn call_tool(&mut self, name: &str, arguments: &Value) -> ToolResult;
+    /// What to say when the model fails before saying anything (the call goes on).
+    async fn model_failure_reply(&mut self, context: &ChatContext) -> String;
     fn staff_requested(&self) -> bool {
         false
     }
@@ -187,11 +189,23 @@ impl Agent for DoorAgent {
     async fn call_tool(&mut self, name: &str, _arguments: &Value) -> ToolResult {
         ToolResult { output: format!("unknown tool `{name}`"), is_error: true }
     }
+
+    /// The visit state's own safe reply, as used when a model reply fails validation.
+    async fn model_failure_reply(&mut self, context: &ChatContext) -> String {
+        self.state(&context.messages()).fallback()
+    }
 }
 
 // ---------------------------------------------------------------------------------------
 // Shop reception
 // ---------------------------------------------------------------------------------------
+
+/// Staff reason recorded when the model cannot answer (a code from `reason_codes`).
+const MODEL_FAILURE_REASON: &str = "その他スタッフ確認";
+const MODEL_FAILURE_HANDOFF_REPLY: &str =
+    "申し訳ありません。ただいま受付で応答できないため、スタッフに確認を依頼しました。少々お待ちください。";
+const MODEL_FAILURE_NO_HANDOFF_REPLY: &str =
+    "申し訳ありません。ただいま受付で応答できません。恐れ入りますが、店内のスタッフにお声がけください。";
 
 const CHECKED_IN: [&str; 2] = ["checked_in", "already_arrived"];
 const REQUESTED: [&str; 2] = ["requested", "already_requested"];
@@ -716,6 +730,15 @@ impl Agent for ReceptionAgent {
             other => return ToolResult { output: format!("unknown tool `{other}`"), is_error: true },
         };
         ToolResult { output, is_error: false }
+    }
+
+    /// Hand the visitor to staff; the reply says whether the request was recorded.
+    async fn model_failure_reply(&mut self, _context: &ChatContext) -> String {
+        if self.record_failure_handoff(MODEL_FAILURE_REASON).await {
+            MODEL_FAILURE_HANDOFF_REPLY.to_string()
+        } else {
+            MODEL_FAILURE_NO_HANDOFF_REPLY.to_string()
+        }
     }
 
     fn staff_requested(&self) -> bool {

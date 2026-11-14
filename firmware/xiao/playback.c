@@ -11,7 +11,7 @@ typedef struct { int16_t pcm[PLAYBACK_FRAME_SAMPLES]; uint16_t samples; } frame_
 
 static const playback_sink_t *sink;
 static frame_t frames[PLAYBACK_QUEUE_FRAMES];
-static atomic_uint state, write_seq, read_seq, last_output_ms;
+static atomic_uint state, write_seq, read_seq, last_output_ms, started_ms;
 static atomic_bool finished, abort_requested;
 static const char *_Atomic failure;
 static bool sink_started;
@@ -27,7 +27,7 @@ bool playback_idle(void) { return terminal(atomic_load(&state)); }
 bool playback_open(uint32_t now_ms)
 {
     if (!playback_idle()) return false;
-    atomic_store(&write_seq, 0u); atomic_store(&read_seq, 0u);
+    atomic_store(&write_seq, 0u); atomic_store(&read_seq, 0u); atomic_store(&started_ms, 0u);
     atomic_store(&finished, false); atomic_store(&abort_requested, false);
     atomic_store(&failure, NULL);
     atomic_store(&last_output_ms, now_ms);
@@ -59,6 +59,7 @@ uint32_t playback_credit(void)
     return write < credit ? write : credit;
 }
 bool playback_done(void) { return atomic_load(&state) == DONE; }
+uint32_t playback_started_ms(void) { return atomic_load(&started_ms); }
 const char *playback_error(void) { return atomic_load(&failure); }
 void playback_abort(void) { atomic_store(&abort_requested, true); }
 
@@ -97,6 +98,8 @@ bool playback_step(uint32_t now_ms)
         if (!sink_started) {
             if (!sink->start()) return fail("speaker_start_failed");
             sink_started = true;
+            /* 0 means "not yet", so a start at exactly 0 ms is reported as 1 ms. */
+            atomic_store(&started_ms, now_ms ? now_ms : 1u);
         }
         progress_ms = now_ms;
         atomic_store(&state, PLAYING);

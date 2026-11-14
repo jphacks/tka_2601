@@ -1,4 +1,4 @@
-"""Offline regressions for the deployed DoorAgent policy; no model/service calls."""
+"""本番の DoorAgent の判定をオフラインで確かめる回帰試験。モデルや外部サービスは呼ばない。"""
 from __future__ import annotations
 
 import ast
@@ -16,7 +16,7 @@ def state(text, *, previous=None):
 
 
 def actual_door_reply(messages):
-    """Run the actual DoorAgent class AST, replacing only its network/model boundary."""
+    """実際の DoorAgent クラスを AST から実行する。通信とモデル呼び出しの部分だけを差し替える。"""
     model_calls = []
 
     class FakeAgent:
@@ -86,6 +86,23 @@ class ClosureRegressions(unittest.TestCase):
             "ありがとうございましたと伝えてください", "夜分に失礼いたします。宅急便です。",
             "夜分に失礼いたします", "さようならと言われました。", "配達員の発言を引用します。ありがとうございました。",
         ]:
+            with self.subTest(text=text):
+                self.assertFalse(state(text).closing)
+
+    def test_promise_to_return_later_closes_like_main(self):
+        # main で終話していた発話。「あとで」を追加の用件の「あと」と読み違えてはいけない。
+        for text in [
+            "あとでまた来ます", "あとで伺います", "失礼します。また来ます", "失礼しますまた来ます",
+            "また来ます", "改めて伺います", "後でまた来ます", "ありがとうございました。また来ます",
+            "じゃあまた来ますね", "失礼しますね",
+        ]:
+            with self.subTest(text=text):
+                result = state(text)
+                self.assertTrue(result.closing)
+                self.assertEqual(result.deterministic_reply, "失礼いたします。")
+
+    def test_after_and_desune_still_mark_a_follow_up(self):
+        for text in ["ありがとうございました。あとですね、サインをお願いします。", "あと、伝票にサインをお願いします。"]:
             with self.subTest(text=text):
                 self.assertFalse(state(text).closing)
 

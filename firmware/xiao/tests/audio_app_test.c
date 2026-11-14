@@ -20,6 +20,7 @@ static uint32_t clock_ms;
 static unsigned margin=100u;
 static bool call_busy, network_ready, upload_ok, upload_configured;
 static unsigned uploads;
+static bool fail_model_write;
 uint32_t tune_chime_margin(void) { return margin; }
 uint32_t tune_voice_gate(void) { return 600u; }
 uint32_t tune_speaker_volume(void) { return 70u; }
@@ -36,7 +37,7 @@ static bool flash_read(uint32_t off, void *out, size_t n)
 { if (off>sizeof(flash)||n>sizeof(flash)-off) return false; memcpy(out,flash+off,n); return true; }
 static bool flash_write(uint32_t off, const void *data, size_t n)
 {
-    if (off>sizeof(flash)||n>sizeof(flash)-off) return false;
+    if (fail_model_write || off>sizeof(flash)||n>sizeof(flash)-off) return false;
     const uint8_t *p=data;
     for (size_t i=0;i<n;++i) { assert((flash[off+i]&p[i])==p[i]); flash[off+i]&=p[i]; }
     return true;
@@ -100,7 +101,24 @@ static void enroll(void)
     assert(!audio_jobs.clip_busy);
     assert(audio_jobs.model_busy && audio_app_enroll_status().phase == AUDIO_ENROLL_SAVING);
     storage_worker_step();
-    assert(!audio_jobs.model_busy && audio_app_enroll_status().phase == AUDIO_ENROLL_DONE);
+    assert(!audio_jobs.model_busy);
+    if (fail_model_write) {
+        assert(audio_app_enroll_status().phase == AUDIO_ENROLL_FAILED);
+        assert(audio_app_enroll_status().reason == CHIME_REASON_NO_PCM);
+    } else assert(audio_app_enroll_status().phase == AUDIO_ENROLL_DONE);
+}
+static void test_failed_model_persistence_is_not_done(void)
+{
+    start(false);
+    audio_app_command('F'); storage_worker_step();
+    fail_model_write=true;
+    enroll();
+    assert(audio_app_model_valid()); /* usable in RAM, but never reported as saved */
+    fail_model_write=false;
+    /* A new attempt clears the failed save result and can complete. */
+    audio_app_command('e'); silence(100); ring_bell(50,8000,false); silence(100);
+    storage_worker_step();
+    assert(audio_app_enroll_status().phase == AUDIO_ENROLL_DONE);
 }
 static void test_enroll_detect_and_restore(void)
 {
@@ -371,6 +389,7 @@ static void test_loopback_and_meter(void)
 }
 int main(void)
 {
+    test_failed_model_persistence_is_not_done();
     test_enroll_detect_and_restore();
     test_recording_is_opt_in();
     test_clip_saved_uploaded_and_deferred();

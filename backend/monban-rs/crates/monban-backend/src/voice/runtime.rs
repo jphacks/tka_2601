@@ -77,7 +77,15 @@ impl VoiceRuntime for DeviceRuntime {
     }
 
     async fn recognize(&self, pcm: Vec<u8>) -> anyhow::Result<String> {
-        let text = self.models.recognizer.recognize(pcm).await?.trim().to_string();
+        // A failed recognition (after the client's own retry) is treated as nothing heard:
+        // the relay answers no_reply and the device listens again instead of hanging up.
+        let text = match self.models.recognizer.recognize(pcm).await {
+            Ok(text) => text.trim().to_string(),
+            Err(error) => {
+                tracing::warn!("speech recognition failed; treating the turn as unheard: {error:#}");
+                String::new()
+            }
+        };
         if !text.is_empty() {
             self.sink.transcript("visitor", &text).await?;
         }

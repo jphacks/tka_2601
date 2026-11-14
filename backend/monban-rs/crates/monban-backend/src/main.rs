@@ -44,10 +44,60 @@ async fn main() -> anyhow::Result<()> {
     let address: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!("listening on {address}");
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+    axum::serve(listener, router(state.clone()))
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
+    drain_relay_sessions(&state).await;
     Ok(())
+}
+
+/// SIGTERM (docker stop, compose up) or Ctrl+C.
+async fn shutdown_signal() {
+    let interrupt = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(error) => {
+                tracing::warn!("SIGTERM handler unavailable: {error}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = interrupt => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown requested; no new connections are accepted");
+}
+
+/// Upgraded WebSockets outlive `axum::serve`. Let calls in progress finish (each is bounded
+/// by its own deadlines) for up to MONBAN_SHUTDOWN_GRACE_SECONDS, which stays below the
+/// compose stop_grace_period so the device gets a clean close rather than a kill.
+async fn drain_relay_sessions(state: &monban_backend::app::AppState) {
+    use std::sync::atomic::Ordering;
+    let grace = std::env::var("MONBAN_SHUTDOWN_GRACE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(25);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(grace);
+    loop {
+        let active = state.relay_sessions.load(Ordering::SeqCst);
+        if active == 0 {
+            tracing::info!("no calls in progress; exiting");
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            tracing::warn!("{active} call(s) still in progress after {grace} s; exiting");
+            return;
+        }
+        tracing::info!("waiting for {active} call(s) to finish");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
 }

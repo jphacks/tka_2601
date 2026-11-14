@@ -14,6 +14,11 @@
 #include "servo_config.example.h"
 #endif
 
+#ifndef XIAO_SERVO_P1_MAX_US
+#define XIAO_SERVO_P1_MAX_US XIAO_SERVO_MAX_US
+#endif
+static_assert(XIAO_SERVO_P1_MAX_US > XIAO_SERVO_MIN_US && XIAO_SERVO_P1_MAX_US <= 2500, "Invalid P1 servo pulse range");
+
 namespace {
 #if __has_include("device_config.h")
 constexpr bool kCloudProvisioned = true;
@@ -317,10 +322,12 @@ void calibrationReply(const char* error = nullptr) {
     pushers.call_start, pushers.call_end, manualRequired ? "true" : "false", pusherPending ? "true" : "false");
 }
 
-uint32_t servoDuty(unsigned angle) {
-  const uint32_t pulse = XIAO_SERVO_MIN_US +
-    static_cast<uint32_t>(XIAO_SERVO_MAX_US - XIAO_SERVO_MIN_US) * angle / 180u;
-  return pulse * monban_servo::kDutySteps / 20000u;
+unsigned pulseUs(PusherId target, unsigned angle) {
+  const unsigned maxUs = target == PusherId::P1 ? XIAO_SERVO_P1_MAX_US : XIAO_SERVO_MAX_US;
+  return XIAO_SERVO_MIN_US + (maxUs - XIAO_SERVO_MIN_US) * angle / 180u;
+}
+uint32_t servoDuty(PusherId target, unsigned angle) {
+  return pulseUs(target, angle) * monban_servo::kDutySteps / 20000u;
 }
 
 bool elapsed(uint32_t now, uint32_t then, uint32_t period) {
@@ -334,8 +341,8 @@ void logServoConfiguration() {
   xlog("[SERVO] Active source=%s CALL: GPIO=%d press=%u rest=%u; END: GPIO=%d press=%u rest=%u; UNLOCK: GPIO=%d press=%u rest=%u\n",
     settingsSource(), PIN_SERVO_CALL, angles.callPress, angles.callRest,
     PIN_SERVO_END, angles.endPress, angles.endRest, PIN_SERVO_UNLOCK, angles.unlockPress, angles.unlockRest);
-  xlog("[SERVO] Settings PWM=50Hz range_us=%d..%d press_ms=%d return_ms=%d\n",
-    XIAO_SERVO_MIN_US, XIAO_SERVO_MAX_US, angles.callPressMs, angles.returnMs);
+  xlog("[SERVO] Settings PWM=50Hz range_us=%d..%d p1_max_us=%d press_ms=%d return_ms=%d\n",
+    XIAO_SERVO_MIN_US, XIAO_SERVO_MAX_US, XIAO_SERVO_P1_MAX_US, angles.callPressMs, angles.returnMs);
   xlog("[SERVO] Saved CALL wait=%u ms hold=%u ms; END hold=%u ms; UNLOCK hold=%u ms; return=%u ms\n",
     angles.callDelayMs, angles.callPressMs, angles.endPressMs, angles.unlockPressMs, angles.returnMs);
 }
@@ -367,7 +374,7 @@ void neutralServo() {
   // its timer while the same return operation is already running.
   if (servoPhase == ServoPhase::Return) return;
   if (servoAttached) {
-    if (!monban_servo::write(pinFor(activePusher), servoDuty(motion.rest))) {
+    if (!monban_servo::write(pinFor(activePusher), servoDuty(activePusher, motion.rest))) {
       monban_servo::detach(pinFor(activePusher));
       servoFailure("servo_return_failed"); return;
     }
@@ -385,13 +392,13 @@ bool attachAndPressServo(PusherId target) {
   if (!servoAttached) return false;
   captureMotion(target);
   const unsigned pressAngle = motion.press;
-  if (!monban_servo::write(pinFor(target), servoDuty(pressAngle))) return false;
+  if (!monban_servo::write(pinFor(target), servoDuty(target, pressAngle))) return false;
   commandedAngle = pressAngle;
   servoPhase = ServoPhase::Press;
   servoAt = millis();
   xlog("[SERVO] %s press once: %u degrees for %u ms; source=%s rest=%u pulse_us=%u at_ms=%lu\n",
     nameFor(target), pressAngle, motion.holdMs, motionSource, motion.rest,
-    XIAO_SERVO_MIN_US + (XIAO_SERVO_MAX_US-XIAO_SERVO_MIN_US)*pressAngle/180u, (unsigned long)servoAt);
+    pulseUs(target, pressAngle), (unsigned long)servoAt);
   return true;
 }
 bool beginPhysicalServo() {
@@ -865,7 +872,7 @@ void servo_calibration_command(const char* command) {
     if (sharedMarked) manualRequired = true;
     calibrationReply("pwm_unavailable"); return;
   }
-  if (!monban_servo::write(pin, servoDuty(static_cast<unsigned>(angle)))) {
+  if (!monban_servo::write(pin, servoDuty(target, static_cast<unsigned>(angle)))) {
     captureMotion(target);
     if (sharedMarked) manualRequired = true;
     neutralServo(); calibrationReply("pwm_write_failed"); return;
