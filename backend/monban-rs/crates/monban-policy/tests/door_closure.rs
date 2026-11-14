@@ -174,3 +174,24 @@ fn a_later_request_or_question_keeps_the_call_open() {
         assert!(!state(text, &[]).closing, "{text}");
     }
 }
+
+#[test]
+fn promise_to_return_later_closes_like_main() {
+    // 「あとで」を追加の用件の「あと」と読み違えてはいけない。
+    for text in [
+        "あとでまた来ます", "あとで伺います", "失礼します。また来ます", "失礼しますまた来ます",
+        "また来ます", "改めて伺います", "後でまた来ます", "ありがとうございました。また来ます",
+        "じゃあまた来ますね", "失礼しますね",
+    ] {
+        let result = state(text, &[]);
+        assert!(result.closing, "{text}");
+        assert_eq!(result.deterministic_reply().as_deref(), Some(FAREWELL), "{text}");
+    }
+}
+
+#[test]
+fn after_and_desune_still_mark_a_follow_up() {
+    for text in ["ありがとうございました。あとですね、サインをお願いします。", "あと、伝票にサインをお願いします。"] {
+        assert!(!state(text, &[]).closing, "{text}");
+    }
+}

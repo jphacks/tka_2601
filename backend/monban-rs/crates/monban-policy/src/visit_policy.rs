@@ -123,20 +123,29 @@ py_regex!(
     r"玄関(?:の)?前|置いていただけ|宅配ボックス|不在票"
 );
 py_regex!(SLIP_REQUEST_WORDS, r"(?:入れ|お願|ください)");
-// Match an actual final turn, not a quoted farewell or a polite introduction.
-// Present-tense thanks alone are an acknowledgement while the visit continues.
+// 来訪者が実際に会話を終える発話だけに一致させる（visit_policy.py の `_LEAVE` と `_DEPARTURE_TURN`）。
+macro_rules! leave {
+    () => {
+        concat!(
+            r"(?:失礼(?:いた)?します|さようなら|さよなら|帰ります|おいとまします|ありがとうございました|",
+            r"(?:また|改めて|後で|あとで).*?(?:来ます|伺います|きます))(?:ね|よ)?"
+        )
+    };
+}
 py_regex!(
     DEPARTURE_TURN,
     r"(?:(?:はい|ええ|うん|では|それでは|じゃあ|どうも|承知しました|承知いたしました|",
     r"わかりました|分かりました|かしこまりました|ありがとうございます|ありがとう))*",
-    r"(?:失礼(?:いた)?します|さようなら|さよなら|帰ります|おいとまします|ありがとうございました)",
-    r"(?:(?:ありがとうございました|ありがとうございます|ありがとう|どうも|失礼(?:いた)?します))*"
+    leave!(),
+    r"(?:",
+    leave!(),
+    r"|ありがとうございます|ありがとう|どうも)*"
 );
 py_regex!(
     FOLLOW_UP,
     r"(?:どう(?!も)|どこ|何|なに|ですか|でしょうか|違う|ちがう|教えて|質問|確認したい)|",
-    // 「あとで」 is a time (「あとでまた来ます」), not 「あと、…」 introducing another request.
-    r"(?:あと(?!で)|それと|それから|もう一つ|ついでに|まだ).+|",
+    // 「あと」は追加の用件の切り出しだが、「あとで」（後で）は違う。「あとですね」は追加の用件として扱う。
+    r"(?:あと(?!で(?!す))|それと|それから|もう一つ|ついでに|まだ).+|",
     r"(?:サイン|署名|受領印|支払|印鑑).{0,16}(?:必要|お願|ください|いただ|もら|して)"
 );
 py_regex!(
@@ -151,7 +160,6 @@ py_regex!(
     r"(?:は|も)?(?:いませんでした|おりませんでした|いなかった|いません|おりません|いない|ません|なかった|ない)|",
     r"(?:置いた|入れた|設置した)(?:わけ|こと|覚え|つもり|の)(?:では|じゃ|は|が|も)?(?:ありません|ない|なかった)"
 );
-py_regex!(REVISIT, r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)");
 py_regex!(REPORTED_LANGUAGE, r"引用|復唱|読み上げ|(?:と|って)(?:言|伝え|聞|書|話)");
 py_regex!(QUESTION_MARK, r"[?？]");
 py_regex!(QUOTED, r#"「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*""#);
@@ -230,10 +238,7 @@ pub fn visitor_is_leaving(text: &str) -> bool {
         .rfind(|part| !py_strip(part).is_empty())
         .map(compact)
         .unwrap_or_else(|| value.clone());
-    DEPARTURE_TURN.is_full_match(&value)
-        || DEPARTURE_TURN.is_full_match(&final_clause)
-        || REVISIT.is_full_match(&value)
-        || REVISIT.is_full_match(&final_clause)
+    DEPARTURE_TURN.is_full_match(&value) || DEPARTURE_TURN.is_full_match(&final_clause)
 }
 
 /// `_placement_result`: Some(true) placed, Some(false) not placed, None unknown.
