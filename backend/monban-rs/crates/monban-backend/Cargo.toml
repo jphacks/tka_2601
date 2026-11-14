@@ -10,6 +10,10 @@ publish.workspace = true
 name = "monban-api"
 path = "src/main.rs"
 
+[[bin]]
+name = "monban-relay-probe"
+path = "src/bin/monban-relay-probe.rs"
+
 [dependencies]
 monban-policy.workspace = true
 anyhow.workspace = true
@@ -37,8 +41,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
+tokio-tungstenite.workspace = true
 
 [dev-dependencies]
 sha2.workspace = true
-tokio-tungstenite.workspace = true
 tower = { workspace = true }

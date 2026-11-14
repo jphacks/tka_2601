@@ -4,7 +4,7 @@ FROM rust:1.92-slim-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN cargo build --release --locked -p monban-backend --bin monban-api
+RUN cargo build --release --locked -p monban-backend --bin monban-api --bin monban-relay-probe
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
@@ -12,7 +12,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 monban \
     && useradd --system --uid 10001 --gid monban --home-dir /nonexistent --shell /usr/sbin/nologin monban
-COPY --from=build /src/target/release/monban-api /usr/local/bin/monban-api
+COPY --from=build /src/target/release/monban-api /src/target/release/monban-relay-probe /usr/local/bin/
 ENV MONBAN_HOST=0.0.0.0 \
     MONBAN_PORT=8093
 USER 10001:10001
