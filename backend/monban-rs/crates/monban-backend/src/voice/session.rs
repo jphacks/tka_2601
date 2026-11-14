@@ -253,17 +253,43 @@ impl Session {
         let mut step = 1;
         loop {
             let group = new_id("step");
-            let mut stream = self.agent.llm_node(context.clone(), tool_choice, model).await?;
+            // A model failure must not end the call: the agent answers with its own safe
+            // reply instead. Audio and device errors still propagate.
+            let mut model_failure: Option<anyhow::Error> = None;
+            let mut stream = match self.agent.llm_node(context.clone(), tool_choice, model).await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    model_failure = Some(error);
+                    futures::stream::empty().boxed()
+                }
+            };
             let mut text_out = String::new();
             let mut calls: Vec<(String, String, String)> = Vec::new();
             while let Some(event) = stream.next().await {
-                match event? {
-                    NodeEvent::Text(chunk) => {
+                match event {
+                    Ok(NodeEvent::Text(chunk)) => {
                         text_out.push_str(&chunk);
                         speaker.push(&chunk).await?;
                     }
-                    NodeEvent::ToolCall { call_id, name, arguments } => calls.push((call_id, name, arguments)),
+                    Ok(NodeEvent::ToolCall { call_id, name, arguments }) => calls.push((call_id, name, arguments)),
+                    Err(error) => {
+                        model_failure = Some(error);
+                        break;
+                    }
                 }
+            }
+            if let Some(error) = model_failure.take() {
+                tracing::warn!("model failed during a reply; using the agent's fallback: {error:#}");
+                calls.clear(); // never run tool calls from a broken stream
+                if text_out.is_empty() {
+                    let fallback = self.agent.model_failure_reply(&context).await;
+                    speaker.push(&fallback).await?;
+                    text_out = fallback;
+                }
+                drop(stream);
+                committed.push(ChatItem::Message { id: group.clone(), role: Role::Assistant, text: text_out.clone() });
+                replies.push(text_out);
+                break;
             }
             drop(stream);
             if !text_out.is_empty() {
