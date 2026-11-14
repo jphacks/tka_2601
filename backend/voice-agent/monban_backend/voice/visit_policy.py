@@ -78,18 +78,25 @@ _DELIVERY_LOCATION_BLOCKED = re.compile(
     r"(?:いっぱい|満杯|空きがない|入らない|故障|使えない|壊れ).{0,12}(?:宅配ボックス|ボックス|箱)"
 )
 
-# Match an actual final turn, not a quoted farewell or a polite introduction.
-# Present-tense thanks alone are an acknowledgement while the visit continues.
+# 来訪者が実際に会話を終える発話だけに一致させる。引用した別れの言葉や、
+# 挨拶の前置き（「夜分に失礼いたします」など）には一致させない。
+# 現在形のお礼（「ありがとうございます」）だけなら相づちとみなし、会話を続ける。
+# 「また来ます」「あとで伺います」のように出直しを告げる発話も退出として扱う。
+# 同じ発話で別れの挨拶の後に続く場合（「失礼します。また来ます」）も含める。
+_LEAVE = (
+    r"(?:失礼(?:いた)?します|さようなら|さよなら|帰ります|おいとまします|ありがとうございました|"
+    r"(?:また|改めて|後で|あとで).*?(?:来ます|伺います|きます))(?:ね|よ)?"
+)
 _DEPARTURE_TURN = re.compile(
     r"(?:(?:はい|ええ|うん|では|それでは|じゃあ|どうも|承知しました|承知いたしました|"
     r"わかりました|分かりました|かしこまりました|ありがとうございます|ありがとう))*"
-    r"(?:失礼(?:いた)?します|さようなら|さよなら|帰ります|おいとまします|ありがとうございました)"
-    r"(?:(?:ありがとうございました|ありがとうございます|ありがとう|どうも|失礼(?:いた)?します))*"
+    + _LEAVE
+    + r"(?:" + _LEAVE + r"|ありがとうございます|ありがとう|どうも)*"
 )
 _FOLLOW_UP = re.compile(
     r"(?:どう(?!も)|どこ|何|なに|ですか|でしょうか|違う|ちがう|教えて|質問|確認したい)|"
-    # 「あとで」 is a time (「あとでまた来ます」), not 「あと、…」 introducing another request.
-    r"(?:あと(?!で)|それと|それから|もう一つ|ついでに|まだ).+|"
+    # 「あと」は追加の用件の切り出しだが、「あとで」（後で）は違う。「あとですね」は追加の用件として扱う。
+    r"(?:あと(?!で(?!す))|それと|それから|もう一つ|ついでに|まだ).+|"
     r"(?:サイン|署名|受領印|支払|印鑑).{0,16}(?:必要|お願|ください|いただ|もら|して)"
 )
 _PLACED = re.compile(
@@ -102,7 +109,6 @@ _NOT_PLACED = re.compile(
     r"(?:は|も)?(?:いませんでした|おりませんでした|いなかった|いません|おりません|いない|ません|なかった|ない)|"
     r"(?:置いた|入れた|設置した)(?:わけ|こと|覚え|つもり|の)(?:では|じゃ|は|が|も)?(?:ありません|ない|なかった)"
 )
-_REVISIT = re.compile(r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)")
 _REPORTED_LANGUAGE = re.compile(r"引用|復唱|読み上げ|(?:と|って)(?:言|伝え|聞|書|話)")
 
 
@@ -114,19 +120,14 @@ def _visitor_is_leaving(text: str) -> bool:
     if _has_follow_up(text):
         return False
     value = _compact(text)
-    # ASR may supply punctuation between a completed task and the final goodbye.
+    # 音声認識が、作業完了の報告と最後の挨拶の間に句読点を入れることがある。
     clauses = [part for part in re.split(r"[。.!！\n]+", text) if part.strip()]
     final_clause = _compact(clauses[-1]) if clauses else value
-    return bool(
-        _DEPARTURE_TURN.fullmatch(value)
-        or _DEPARTURE_TURN.fullmatch(final_clause)
-        or _REVISIT.fullmatch(value)
-        or _REVISIT.fullmatch(final_clause)
-    )
+    return bool(_DEPARTURE_TURN.fullmatch(value) or _DEPARTURE_TURN.fullmatch(final_clause))
 
 
 def _placement_result(text: str) -> bool | None:
-    # A quoted/reporting expression is not the visitor reporting their own action.
+    # 引用や伝聞の表現は、来訪者自身が行ったことの報告ではない。
     if _REPORTED_LANGUAGE.search(text):
         return None
     unquoted = re.sub(r'「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"', "", text)
@@ -261,8 +262,8 @@ class VisitState:
                 topic == "unknown" and state.purpose == "unknown" and not denied
                 and placement_result is True and re.search(r"お?荷物|宅配|配達|配送", value)
             ):
-                # An earlier introduction may have been mistranscribed. An explicit
-                # parcel completion is sufficient evidence of the delivery topic.
+                # 最初の名乗りを聞き違えた可能性がある。荷物を置いたとはっきり
+                # 報告していれば、配達の用件とみなしてよい。
                 topic = "delivery"
             previous_asked_about_name_and_purpose = bool(
                 re.search(r"[一-龯々ぁ-んァ-ヶー]{1,8}(?:さん|様)", previous_assistant)
