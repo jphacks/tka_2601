@@ -90,6 +90,8 @@ void playback_finish(void) { ++playback_finishes; }
 bool playback_full(void) { return fake_full; }
 uint32_t playback_credit(void) { return fake_credit; }
 bool playback_done(void) { return fake_done; }
+static uint32_t fake_started;
+uint32_t playback_started_ms(void) { return fake_started; }
 const char *playback_error(void) { return fake_error; }
 void playback_abort(void) { ++playback_aborts; }
 bool playback_idle(void) { return fake_idle; }
@@ -135,6 +137,7 @@ static void reset(void)
     memset(&mailbox, 0, sizeof(mailbox));
     memset(sent, 0, sizeof(sent));
     tick = 1000u;
+    fake_started = 0u;
     network_ready = server_connects = auto_ack = servo_open_ok = post_ok = true;
     call_completes = end_completes = cancel_completes = true;
     stop_on_start = busy = start_requested = stop_requested = recovery_required = recovery_confirm_requested = false;
@@ -194,8 +197,11 @@ static void test_wait_for_actual_playback_done(void)
     assert(playback_opens == 1u && pushed_frames == 2u && playback_finishes == 1u);
     assert(!from_server(VOICE_LISTEN, 2u, 0u));
     assert(playback_progress() && call.state == PLAYING && count_sent(VOICE_AUDIO_ACK) == 0u);
+    assert(!call.playback_start_marked); /* speaker not started yet */
+    fake_started = 1234u;
     fake_credit = 2u;
     assert(playback_progress());
+    assert(call.playback_start_marked); /* [TIMING] playback_start, once per response */
     assert(count_sent(VOICE_AUDIO_ACK) == 1u && call.output_ack == 2u);
     assert(playback_progress() && count_sent(VOICE_AUDIO_ACK) == 1u); /* only new credit */
     assert(call.state == PLAYING && mailbox.voice_record_enabled == 0u);
