@@ -1,0 +1,120 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "search_reservations",
+      "description": "予約候補を読み取り専用で検索する。本人の氏名と時刻を使う。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customer_name": {
+            "type": "string"
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          }
+        },
+        "required": [
+          "customer_name",
+          "time"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "check_in",
+      "description": "一意に照合された予約を最新状態で再確認して来店受付を記録する。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reservation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "notify_staff",
+      "description": "来店受付後、スタッフ向け受付一覧へ記録する。外部通知や既読確認ではない。reasonは「予約客の来店」。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reservation_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "予約客の来店"
+            ]
+          }
+        },
+        "required": [
+          "reservation_id",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "request_staff",
+      "description": "確認や例外対応をスタッフへ依頼する。reasonは列挙された短いカテゴリから選ぶ。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "その他スタッフ確認",
+              "メニュー確認",
+              "予約候補確認",
+              "予約変更相談",
+              "予約照合失敗",
+              "予約者本人確認",
+              "体調相談",
+              "傘預かり",
+              "取消条件確認",
+              "受付記録失敗",
+              "担当者伝言",
+              "持ち物確認",
+              "料金確認",
+              "施術内容相談",
+              "施設待機",
+              "早着待機",
+              "来店受付失敗",
+              "着替え場所",
+              "荷物置き場",
+              "衣類預かり",
+              "解錠依頼",
+              "設備貸出",
+              "追加料金確認",
+              "遅刻時受付",
+              "飛び込み受付"
+            ]
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+]

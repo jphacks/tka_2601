@@ -1,0 +1,210 @@
+{
+ "name": "door_delivery",
+ "scenario": {
+  "mode": "normal",
+  "asr": [
+   "ヤマト運輸です。お荷物のお届けです。",
+   "わかりました。置いておきます。"
+  ],
+  "llm": [
+   {
+    "text": "承知しました。よろしくお願いいたします。"
+   },
+   {
+    "text": "ありがとうございます。失礼いたします。"
+   }
+  ],
+  "utterance_frames": [
+   40,
+   25
+  ]
+ },
+ "settings": {
+  "tts_sample_rate": 16000,
+  "llm_model": "monban-oracle-llm",
+  "llm_max_tokens": 96,
+  "llm_keep_alive": "30m"
+ },
+ "house_rules": "あなたは住宅のインターホンで来客に応答する受付係です。次を必ず守ってください。\n1. 住人の名前、在宅か不在か、帰宅時間、家族構成を言わない。「留守」「誰もいない」と言わない。名前を聞かれても肯定も否定もしない。\n2. 宅配なら「玄関の前に置いていただけますか」と頼む。クール便、代引き、着払い、サインが必要などで置けないと言われたら、不在票を入れるよう頼む。\n3. 営業や勧誘は丁寧に断り、資料があればポストに入れるよう頼む。\n4. 点検や工事を名乗る人には、その場で日時を約束せず、改めて連絡するよう頼む。\n5. 鍵やドアを開ける、玄関に出る、といった約束をしない。\n6. 警察や消防、火事など緊急の用件なら「ただいま家の者に連絡します」と伝える。\n7. 1回の返答は2文以内とし、ゆっくり丁寧な敬語で話す。\n8. 用件が済んだら、最後に必ず「失礼いたします」と言う。",
+ "requests": [
+  {
+   "method": "POST",
+   "path": "/v1/audio/speech",
+   "query": {},
+   "authorization": "Bearer tts-key",
+   "apikey": null,
+   "content_type": "application/json",
+   "body": {
+    "model": "Irodori-TTS-v4.1-Small-MF",
+    "input": "はい、どちら様でしょうか。",
+    "voice": "door_neutral",
+    "language": "ja",
+    "seed": 11,
+    "response_format": "pcm",
+    "stream_format": "sse",
+    "instructions": "落ち着いた穏やかな口調で、感情を強調せず、自然で丁寧に読み上げてください。"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/v1/audio/transcriptions",
+   "query": {},
+   "authorization": "Bearer asr-key",
+   "apikey": null,
+   "content_type": "multipart/form-data",
+   "body": {
+    "model": "kotoba-tech/kotoba-whisper-v2.1",
+    "language": "ja",
+    "response_format": "json",
+    "file": {
+     "filename": "file.wav",
+     "content_type": "audio/wav",
+     "bytes": 25644,
+     "sha256": "062ff3894b4290b86b72086585a1d464fd43e60b6d34a07c12bfe16deff6c45d"
+    }
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/v1/audio/speech",
+   "query": {},
+   "authorization": "Bearer tts-key",
+   "apikey": null,
+   "content_type": "application/json",
+   "body": {
+    "model": "Irodori-TTS-v4.1-Small-MF",
+    "input": "恐れ入りますが、玄関の前に置いていただけますか。",
+    "voice": "door_neutral",
+    "language": "ja",
+    "seed": 11,
+    "response_format": "pcm",
+    "stream_format": "sse",
+    "instructions": "落ち着いた穏やかな口調で、感情を強調せず、自然で丁寧に読み上げてください。"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/v1/audio/transcriptions",
+   "query": {},
+   "authorization": "Bearer asr-key",
+   "apikey": null,
+   "content_type": "multipart/form-data",
+   "body": {
+    "model": "kotoba-tech/kotoba-whisper-v2.1",
+    "language": "ja",
+    "response_format": "json",
+    "file": {
+     "filename": "file.wav",
+     "content_type": "audio/wav",
+     "bytes": 16044,
+     "sha256": "56750644818154d152eca041e621a95e2b0ad4f338b503ac6a025c3c80b0d2bb"
+    }
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/v1/audio/speech",
+   "query": {},
+   "authorization": "Bearer tts-key",
+   "apikey": null,
+   "content_type": "application/json",
+   "body": {
+    "model": "Irodori-TTS-v4.1-Small-MF",
+    "input": "はい、玄関の前にお願いいたします。",
+    "voice": "door_neutral",
+    "language": "ja",
+    "seed": 11,
+    "response_format": "pcm",
+    "stream_format": "sse",
+    "instructions": "落ち着いた穏やかな口調で、感情を強調せず、自然で丁寧に読み上げてください。"
+   }
+  }
+ ],
+ "turns": [
+  {
+   "turn": 0,
+   "recognized": null,
+   "events": [
+    {
+     "type": "audio",
+     "frames": 27,
+     "bytes": 17280
+    },
+    {
+     "type": "finish",
+     "end_after_reply": false
+    },
+    {
+     "type": "transcript",
+     "speaker": "ai",
+     "text": "はい、どちら様でしょうか。"
+    }
+   ],
+   "pcm_samples": 8640,
+   "pcm_sha256": "03c7cf76fec440b3109c49d30a0349534fb3b9782c433cf3d7be160bacd51d41",
+   "pcm_base64": null,
+   "end_after_reply": false,
+   "staff_requested": false
+  },
+  {
+   "turn": 1,
+   "recognized": "ヤマト運輸です。お荷物のお届けです。",
+   "events": [
+    {
+     "type": "transcript",
+     "speaker": "visitor",
+     "text": "ヤマト運輸です。お荷物のお届けです。"
+    },
+    {
+     "type": "audio",
+     "frames": 49,
+     "bytes": 31360
+    },
+    {
+     "type": "finish",
+     "end_after_reply": false
+    },
+    {
+     "type": "transcript",
+     "speaker": "ai",
+     "text": "恐れ入りますが、玄関の前に置いていただけますか。"
+    }
+   ],
+   "pcm_samples": 15680,
+   "pcm_sha256": "b3e565003f90d74f12f8141f697a68528fc4bdac920aaaa5d247950e9e8cb0c2",
+   "pcm_base64": null,
+   "end_after_reply": false,
+   "staff_requested": false
+  },
+  {
+   "turn": 2,
+   "recognized": "わかりました。置いておきます。",
+   "events": [
+    {
+     "type": "transcript",
+     "speaker": "visitor",
+     "text": "わかりました。置いておきます。"
+    },
+    {
+     "type": "audio",
+     "frames": 35,
+     "bytes": 22400
+    },
+    {
+     "type": "finish",
+     "end_after_reply": false
+    },
+    {
+     "type": "transcript",
+     "speaker": "ai",
+     "text": "はい、玄関の前にお願いいたします。"
+    }
+   ],
+   "pcm_samples": 11200,
+   "pcm_sha256": "0424cba3ec1ed5742de4a39c023db305bd67248259918e53a3a163d9d4039d21",
+   "pcm_base64": null,
+   "end_after_reply": false,
+   "staff_requested": false
+  }
+ ]
+}

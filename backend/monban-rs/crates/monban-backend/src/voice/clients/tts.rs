@@ -1,0 +1,285 @@
+//! speech.cpp TTS client (port of `voice/speech_tts.py` `SpeechCppTTS`).
+//!
+//! One call synthesizes one reply text (already passed through
+//! [`super::text::TtsTextFilter`]): it is split with [`split_sentences`], each sentence is
+//! one `POST /v1/audio/speech`, each sentence's audio gets [`trim_delayed_audio_tail`], and
+//! the result is the concatenation (mono s16le at `tts_sample_rate`).
+//!
+//! The whole call is retried like livekit's `ChunkedStream` with the session's default
+//! `APIConnectOptions()` (3 retries after 0.1 s, 2 s, 2 s, only for retryable errors).
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use base64::Engine;
+use futures::StreamExt;
+use serde_json::{json, Value};
+
+use super::error::{livekit_retry_interval, ClientError, Service};
+use super::text::{py_strip, split_sentences, trim_delayed_audio_tail};
+use crate::config::Settings;
+use crate::services::{content_type, LineSplitter};
+
+/// aiohttp `ClientTimeout(total=45, connect=conn_options.timeout, sock_read=30)` with the
+/// default `APIConnectOptions().timeout` of 10 s.
+const TOTAL_TIMEOUT: Duration = Duration::from_secs(45);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// `APIConnectOptions()` defaults used for the session's TTS.
+const MAX_RETRY: usize = 3;
+const RETRY_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Silence livekit-agents appends to a reply spoken as one `StreamAdapter` token, in
+/// samples at the TTS rate: the TTS `AudioEmitter` and the `StreamAdapter` around it each
+/// end their segment with a 10 ms zero "final" marker frame (`sample_rate // 100`
+/// samples). The adapter's blingfire tokenizer merges sentences until a token has at least
+/// 20 code points; each token is one synthesize call followed by one marker, and the reply
+/// ends with one more (see [`livekit_marker_bytes`]).
+pub fn livekit_end_marker_samples(sample_rate: u32) -> usize {
+    2 * (sample_rate as usize / 100)
+}
+
+/// Bytes of one livekit 10 ms zero marker frame (`sample_rate // 100` samples, s16le).
+/// livekit adds one after each `StreamAdapter` token's synthesis and one more at the end
+/// of the reply.
+pub fn livekit_marker_bytes(sample_rate: u32) -> usize {
+    (sample_rate as usize / 100) * 2
+}
+
+pub struct SpeechCppTts {
+    http: reqwest::Client,
+    settings: Arc<Settings>,
+}
+
+impl SpeechCppTts {
+    pub fn new(settings: Arc<Settings>) -> Self {
+        let http = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .read_timeout(READ_TIMEOUT)
+            .build()
+            .expect("HTTP client for TTS");
+        Self { http, settings }
+    }
+
+    /// The PCM sample rate of [`synthesize`](Self::synthesize)'s output.
+    pub fn sample_rate(&self) -> u32 {
+        self.settings.tts_sample_rate
+    }
+
+    /// The JSON body for one sentence.
+    pub fn request_body(&self, sentence: &str) -> Value {
+        speech_body(&self.settings, sentence)
+    }
+
+    /// Synthesize one reply: mono s16le PCM at [`sample_rate`](Self::sample_rate). Empty
+    /// for a blank text.
+    pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, ClientError> {
+        let mut sentences = split_sentences(text);
+        let stripped = py_strip(text);
+        if sentences.is_empty() && !stripped.is_empty() {
+            sentences = vec![stripped.to_string()];
+        }
+        let mut attempt = 0;
+        loop {
+            match self.synthesize_once(&sentences).await {
+                Ok(pcm) if pcm.is_empty() && !stripped.is_empty() => {
+                    // ChunkedStream: "no audio frames were pushed" (a retryable APIError).
+                    let error = ClientError::protocol(Service::Tts, "no audio frames were pushed");
+                    if attempt >= MAX_RETRY {
+                        return Err(error);
+                    }
+                }
+                Ok(pcm) => return Ok(pcm),
+                Err(error) => {
+                    if !error.retryable() || attempt >= MAX_RETRY {
+                        return Err(error);
+                    }
+                    tracing::warn!("failed to synthesize speech: {error}, retrying");
+                }
+            }
+            tokio::time::sleep(livekit_retry_interval(attempt, RETRY_INTERVAL)).await;
+            attempt += 1;
+        }
+    }
+
+    async fn synthesize_once(&self, sentences: &[String]) -> Result<Vec<u8>, ClientError> {
+        let mut audio = Vec::new();
+        for sentence in sentences {
+            let pcm = self.sentence_pcm(sentence).await?;
+            if !pcm.is_empty() {
+                audio.extend_from_slice(trim_delayed_audio_tail(&pcm, self.settings.tts_sample_rate, sentence));
+            }
+        }
+        Ok(audio)
+    }
+
+    async fn sentence_pcm(&self, sentence: &str) -> Result<Vec<u8>, ClientError> {
+        let settings = &self.settings;
+        let error = |e| ClientError::from_reqwest(Service::Tts, e);
+        let response = self
+            .http
+            .post(format!("{}/v1/audio/speech", settings.tts_base_url))
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", settings.tts_api_key))
+            .json(&self.request_body(sentence))
+            .timeout(TOTAL_TIMEOUT)
+            .send()
+            .await
+            .map_err(error)?;
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(ClientError::Status { service: Service::Tts, status });
+        }
+        let media_type = content_type(&response);
+        let mut stream = response.bytes_stream();
+        let mut pcm = Vec::new();
+        match media_type.as_str() {
+            "text/event-stream" => {
+                let mut lines = LineSplitter::default();
+                let mut ended = false;
+                let mut completed = false;
+                'read: while !ended {
+                    let batch = match stream.next().await {
+                        Some(chunk) => lines.push(&chunk.map_err(error)?),
+                        None => {
+                            ended = true;
+                            lines.finish().into_iter().collect()
+                        }
+                    };
+                    for raw in batch {
+                        match parse_speech_event(&raw)? {
+                            SpeechEvent::Skip => {}
+                            SpeechEvent::Done => {
+                                completed = true;
+                                break 'read;
+                            }
+                            SpeechEvent::Audio(audio) => pcm.extend_from_slice(&audio),
+                        }
+                    }
+                }
+                if !completed {
+                    return Err(ClientError::protocol(Service::Tts, "speech stream ended before completion"));
+                }
+            }
+            "audio/pcm" | "application/octet-stream" => {
+                while let Some(chunk) = stream.next().await {
+                    pcm.extend_from_slice(&chunk.map_err(error)?);
+                }
+            }
+            _ => {
+                return Err(ClientError::protocol(Service::Tts, "unsupported content type"));
+            }
+        }
+        if pcm.len() % 2 != 0 {
+            return Err(ClientError::protocol(Service::Tts, "incomplete PCM sample"));
+        }
+        Ok(pcm)
+    }
+}
+
+/// The speech.cpp request body (`speech_tts.py`, also the warm-up probe).
+pub(crate) fn speech_body(settings: &Settings, input: &str) -> Value {
+    let mut body = json!({
+        "model": settings.tts_model,
+        "input": input,
+        "voice": settings.tts_voice,
+        "language": "ja",
+        "seed": settings.tts_seed,
+        "response_format": "pcm",
+        "stream_format": "sse",
+    });
+    if !settings.tts_instructions.is_empty() {
+        body["instructions"] = settings.tts_instructions.clone().into();
+    }
+    body
+}
+
+#[derive(Debug)]
+enum SpeechEvent {
+    Skip,
+    Done,
+    Audio(Vec<u8>),
+}
+
+fn not_retryable(detail: &str) -> ClientError {
+    ClientError::Protocol { service: Service::Tts, detail: detail.to_string(), retryable: false }
+}
+
+/// One line of the speech.cpp SSE stream, as `SpeechCppStream._run` reads it. Invalid JSON
+/// and invalid base64 raise plain Python exceptions there, which livekit does not retry.
+fn parse_speech_event(raw: &[u8]) -> Result<SpeechEvent, ClientError> {
+    let line = String::from_utf8_lossy(raw);
+    let line = py_strip(&line);
+    let Some(data) = line.strip_prefix("data:") else { return Ok(SpeechEvent::Skip) };
+    let data = py_strip(data);
+    if data == "[DONE]" {
+        return Ok(SpeechEvent::Done);
+    }
+    let event: Value = serde_json::from_str(data).map_err(|_| not_retryable("invalid speech event JSON"))?;
+    let Some(event) = event.as_object() else { return Err(not_retryable("speech event is not an object")) };
+    match event.get("type").and_then(Value::as_str) {
+        Some("speech.audio.delta") => {
+            // Python: event.get("delta") or event.get("audio") or ""
+            let encoded = [event.get("delta"), event.get("audio")]
+                .into_iter()
+                .flatten()
+                .find(|value| py_truthy(value))
+                .cloned()
+                .unwrap_or(Value::String(String::new()));
+            let Some(encoded) = encoded.as_str() else {
+                return Err(not_retryable("speech audio is not a string"));
+            };
+            let audio = base64::engine::general_purpose::STANDARD
+                .decode(encoded.as_bytes())
+                .map_err(|_| not_retryable("invalid base64 audio"))?;
+            if audio.len() % 2 != 0 {
+                return Err(ClientError::protocol(Service::Tts, "incomplete PCM sample"));
+            }
+            Ok(SpeechEvent::Audio(audio))
+        }
+        Some("error") | Some("speech.audio.error") => {
+            Err(ClientError::protocol(Service::Tts, "speech synthesis failed"))
+        }
+        Some("speech.audio.done") => Ok(SpeechEvent::Done),
+        _ => Ok(SpeechEvent::Skip),
+    }
+}
+
+fn py_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64() != Some(0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speech_events() {
+        assert!(matches!(parse_speech_event(b"data: [DONE]\n").unwrap(), SpeechEvent::Done));
+        assert!(matches!(parse_speech_event(b": ping\n").unwrap(), SpeechEvent::Skip));
+        assert!(matches!(
+            parse_speech_event(br#"data: {"type": "speech.audio.done"}"#).unwrap(),
+            SpeechEvent::Done
+        ));
+        match parse_speech_event(br#"data: {"type": "speech.audio.delta", "delta": "", "audio": "AQA="}"#).unwrap() {
+            SpeechEvent::Audio(audio) => assert_eq!(audio, vec![1, 0]),
+            _ => panic!("expected audio"),
+        }
+        let odd = parse_speech_event(br#"data: {"type": "speech.audio.delta", "delta": "AQ=="}"#);
+        assert!(odd.unwrap_err().retryable());
+        assert!(!parse_speech_event(b"data: {oops").unwrap_err().retryable());
+        assert!(parse_speech_event(br#"data: {"type": "error"}"#).unwrap_err().retryable());
+    }
+
+    #[test]
+    fn end_markers() {
+        assert_eq!(livekit_end_marker_samples(16000), 320);
+        assert_eq!(livekit_end_marker_samples(48000), 960);
+    }
+}
