@@ -8,12 +8,16 @@
 //! The whole call is retried like livekit's `ChunkedStream` with the session's default
 //! `APIConnectOptions()` (3 retries after 0.1 s, 2 s, 2 s, only for retryable errors).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
 use futures::StreamExt;
 use serde_json::{json, Value};
+use tokio::sync::OnceCell;
+
+use monban_policy::agent_rules::{DOOR_GREETING, RECEPTION_GREETING};
 
 use super::error::{livekit_retry_interval, ClientError, Service};
 use super::text::{py_strip, split_sentences, trim_delayed_audio_tail};
@@ -46,9 +50,20 @@ pub fn livekit_marker_bytes(sample_rate: u32) -> usize {
     (sample_rate as usize / 100) * 2
 }
 
+#[derive(Default)]
+struct FixedGreetings {
+    door: OnceCell<Vec<u8>>,
+    reception: OnceCell<Vec<u8>>,
+    prewarm_scheduled: AtomicBool,
+}
+
+/// Clones share the two fixed greetings and the exact immutable audio settings.
+/// A different client/settings instance gets its own cache, never another voice's PCM.
+#[derive(Clone)]
 pub struct SpeechCppTts {
     http: reqwest::Client,
     settings: Arc<Settings>,
+    greetings: Arc<FixedGreetings>,
 }
 
 impl SpeechCppTts {
@@ -58,7 +73,32 @@ impl SpeechCppTts {
             .read_timeout(READ_TIMEOUT)
             .build()
             .expect("HTTP client for TTS");
-        Self { http, settings }
+        Self { http, settings, greetings: Arc::default() }
+    }
+
+    /// Fill only the two standard greeting entries without delaying server startup.
+    /// Calls arriving during prewarm join the same single-flight initialization.
+    /// Failures/timeouts leave the entry empty so an on-demand call can retry.
+    pub fn schedule_greeting_prewarm(&self) {
+        if !self.settings.warmup_enabled {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        if self.greetings.prewarm_scheduled.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let tts = self.clone();
+        runtime.spawn(async move {
+            // Serial requests also avoid two cold syntheses competing for one TTS worker.
+            let limit = Duration::from_secs_f64(tts.settings.warmup_timeout_seconds);
+            for text in [DOOR_GREETING, RECEPTION_GREETING] {
+                match tokio::time::timeout(limit, tts.synthesize(text)).await {
+                    Ok(Ok(_)) => {},
+                    Ok(Err(error)) => tracing::warn!("fixed greeting prewarm failed: {error}"),
+                    Err(_) => tracing::warn!("fixed greeting prewarm timed out"),
+                }
+            }
+        });
     }
 
     /// The PCM sample rate of [`synthesize`](Self::synthesize)'s output.
@@ -74,6 +114,18 @@ impl SpeechCppTts {
     /// Synthesize one reply: mono s16le PCM at [`sample_rate`](Self::sample_rate). Empty
     /// for a blank text.
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, ClientError> {
+        let entry = match text {
+            DOOR_GREETING => Some(&self.greetings.door),
+            RECEPTION_GREETING => Some(&self.greetings.reception),
+            _ => None,
+        };
+        if let Some(entry) = entry {
+            return entry.get_or_try_init(|| self.synthesize_uncached(text)).await.cloned();
+        }
+        self.synthesize_uncached(text).await
+    }
+
+    async fn synthesize_uncached(&self, text: &str) -> Result<Vec<u8>, ClientError> {
         let mut sentences = split_sentences(text);
         let stripped = py_strip(text);
         if sentences.is_empty() && !stripped.is_empty() {
