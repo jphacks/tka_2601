@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-usage="Usage: bash run.sh build | test | eval | wav ENROLL.wav TARGET.wav | e2e | browser | bench | qemu [ui] | upload PORT"
+usage="Usage: bash run.sh build | test | eval | wav ENROLL.wav TARGET.wav | e2e | e2e-rust | browser | bench | qemu [ui] | upload PORT"
 fqbn="esp32:esp32:XIAO_ESP32S3:PSRAM=opi,PartitionScheme=default_8MB"
 
 build() {
@@ -46,6 +46,8 @@ case "${1:-build}" in
     .host-build/chime_eval_wav "$2" "$3"
     ;;
   e2e) bash tests/e2e.sh ;;
+  # The same host end-to-end test against the Rust backend (backend/monban-rs).
+  e2e-rust) bash tests/e2e.sh rust ;;
   browser) bash tests/browser.sh ;;
   bench) bash tests/e2e.sh bench ;;
   qemu) bash tests/qemu.sh "${2:-}" ;;

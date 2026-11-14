@@ -1,10 +1,19 @@
 #!/bin/bash
 # Real backend relay code <-> real firmware call code on this Mac. See tests/e2e_relay.py.
 # "bench" instead runs the bench page against the same firmware; see tests/bench_host.py.
+# "rust" runs the same tests against the Rust backend's relay; see tests/e2e_relay_rust.py.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python_bin="${XIAO_E2E_PYTHON:-}"
-if [ -z "$python_bin" ]; then
+if [ "${1:-}" = rust ]; then
+  # The Rust test uses only the standard library; the server is a cargo example.
+  python_bin="${python_bin:-python3}"
+  manifest="$PWD/../../backend/monban-rs/Cargo.toml"
+  cargo build --manifest-path "$manifest" -p monban-backend --example e2e_server
+  target_dir="$(cargo metadata --manifest-path "$manifest" --format-version 1 --no-deps \
+    | "$python_bin" -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
+  e2e_server="$target_dir/debug/examples/e2e_server"
+elif [ -z "$python_bin" ]; then
   venv="$PWD/.host-build/e2e-venv"
   python_bin="$venv/bin/python"
   if [ ! -f "$venv/.installed" ]; then
@@ -34,6 +43,8 @@ done
 clang++ -std=c++17 -Wall -Wextra "${flags[@]}" "$src"/*.cpp "${objects[@]}" -o "$work/host_firmware"
 if [ "${1:-}" = bench ]; then
   "$python_bin" tests/bench_host.py "$work/host_firmware"
+elif [ "${1:-}" = rust ]; then
+  "$python_bin" tests/e2e_relay_rust.py "$work/host_firmware" "$e2e_server"
 else
   "$python_bin" tests/e2e_relay.py "$work/host_firmware"
 fi
