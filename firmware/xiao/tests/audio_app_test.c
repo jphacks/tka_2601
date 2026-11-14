@@ -8,6 +8,7 @@
 #include "tune.h"
 #include "voice_capture.h"
 #include "voice_stream.h"
+#include "voice_noise.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -369,6 +370,44 @@ static void test_loopback_and_meter(void)
     silence(1);
     assert(link->audio_status==1u);
 }
+static void test_optin_noise_mailbox(void)
+{
+    start(false);
+    volatile audio_link_t *link=audio_link();
+    audio_app_command('N');
+    /* Profile from raw idle only, while the chime PCM and level meter stay raw. */
+    uint32_t seed=31337;
+    for(unsigned f=0;f<25;++f){audio_app_noise_background(frame,false);step(false);}
+    voice_noise_status_t d;voice_noise_status(&d);
+    assert(d.quiet_frames==0u && d.profiles==0u && !d.ready); /* External servo/calibration interlock. */
+    for(unsigned f=0;f<25;++f) {
+        for(unsigned i=0;i<AUDIO_FRAME;++i){seed=seed*1664525u+1013904223u;frame[i]=(int16_t)((int)(seed>>16)%41-20);}
+        int16_t original[AUDIO_FRAME];memcpy(original,frame,sizeof(original));
+        audio_app_noise_background(frame,true);assert(!memcmp(original,frame,sizeof(original)));
+        step(false);
+    }
+    voice_noise_status(&d);assert(d.enabled && d.ready);
+    link->voice_call_active=1u;audio_app_service();assert(peer_listen(1u));
+    assert(voice_noise_active());
+    audio_app_command('n');voice_noise_status(&d);assert(d.enabled); /* Cannot change mid-call. */
+    for(unsigned f=0;f<VOICE_CAPTURE_MAX_FRAMES+12u;++f) {
+        for(unsigned i=0;i<AUDIO_FRAME;++i)frame[i]=(int16_t)(1000+i);
+        step(false);link->voice_read_seq=link->voice_write_seq;
+    }
+    assert(link->voice_end_reason==VOICE_CAPTURE_END_LIMIT);
+    assert(link->voice_write_seq==VOICE_CAPTURE_MAX_FRAMES); /* Includes the2 tail frames, still30s. */
+    assert(link->voice_samples==VOICE_CAPTURE_MAX_FRAMES*AUDIO_FRAME);
+    assert(!voice_noise_active());
+    link->voice_record_enabled=link->voice_call_active=0;audio_app_service();
+    audio_app_command('n');voice_noise_status(&d);assert(!d.enabled);
+    /* Not enough clean idle: ordinary, byte-identical speech has no delay. */
+    start(false);audio_app_command('N');link=audio_link();
+    link->voice_call_active=1u;audio_app_service();assert(peer_listen(1u));assert(!voice_noise_active());
+    for(unsigned f=0;f<3;++f){for(unsigned i=0;i<AUDIO_FRAME;++i)frame[i]=(int16_t)(1000+i);step(false);}
+    assert(link->voice_write_seq==3u);
+    for(unsigned i=0;i<AUDIO_FRAME;++i)assert(link->voice_pcm[0][i]==frame[i]);
+    link->voice_record_enabled=link->voice_call_active=0;audio_app_service();
+}
 int main(void)
 {
     test_enroll_detect_and_restore();
@@ -376,6 +415,7 @@ int main(void)
     test_clip_saved_uploaded_and_deferred();
     test_call_mailbox();
     test_loopback_and_meter();
+    test_optin_noise_mailbox();
     puts("PASS: one-ring enrollment and its failures, streaming detection, restore, recording opt-in, upload retry, call mailbox, loopback");
     return 0;
 }

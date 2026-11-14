@@ -7,6 +7,7 @@
 #include "storage_worker.h"
 #include "tune.h"
 #include "voice_stream.h"
+#include "voice_noise_config.h"
 #include "xlog.h"
 extern "C" {
 #include "audio_app.h"
@@ -19,6 +20,7 @@ extern "C" {
 
 namespace {
 QueueHandle_t audioCommands;
+uint32_t audioNoiseClock(){return micros();}
 
 void audioTask(void*) {
   static int16_t pcm[AUDIO_FRAME];
@@ -38,6 +40,8 @@ void audioTask(void*) {
     const bool frame = hw_mic_read(pcm, &gap);
     // A call can change while blocked on the microphone. Apply its gate first.
     audio_app_service();
+    if(frame && !gap)audio_app_noise_background(pcm,playback_idle() &&
+        !voice_stream_busy() && !servo_motion_busy() && !servo_test_busy() && !servo_calibration_active());
     if (frame) audio_app_frame(pcm, gap);
     else audio_app_no_frame();
   }
@@ -81,11 +85,13 @@ void setup() {
     return;
   }
   audio_app_init(ring, pending, audio_upload_configured());
+  audio_app_noise_clock(audioNoiseClock);
   audio_flash_t flash = {};
   const bool available = flash_store_driver(&flash);
   storage_worker_begin(flash, available);
   if (!hw_speaker_init()) xlog("[ERROR] I2S speaker initialization failed.\n");
   playback_init(hw_speaker_sink());
+  voice_noise_config_begin();
   console_begin();
   // Real-time audio stays on core 1; Wi-Fi, TLS and flash work stay on core 0.
   startTask(speakerTask, "Speaker", 4096, 7, 1);

@@ -33,6 +33,7 @@ echo "--- chime_eval_wav"
 grep -q '^1 detection(s)' "$work/wav.log" || { cat "$work/wav.log"; exit 1; }
 tail -n 1 "$work/wav.log"
 "${C[@]}" $(s voice_capture.c voice_capture_harness.c) -lm -o "$work/capture"; run capture
+"${C[@]}" $(s voice_noise.c voice_noise_core.c voice_noise_test.c) -lm -o "$work/noise"; run noise
 "${C[@]}" $(s relay_protocol.c voice_protocol.c relay_protocol_harness.c xlog_host.c) -o "$work/relay"; run relay
 "${C[@]}" $(s relay_protocol.c voice_protocol.c relay_legacy_harness.c xlog_host.c) -o "$work/relay_legacy"; run relay_legacy
 "${C[@]}" $(s voice_transport.c device_mode.c device_mode_store_fake.c relay_protocol.c voice_protocol.c voice_transport_harness.c xlog_host.c) -o "$work/transport"; run transport
@@ -40,7 +41,7 @@ tail -n 1 "$work/wav.log"
 "${C[@]}" $(s voice_session_harness.c device_mode.c device_mode_store_fake.c relay_protocol.c voice_protocol.c xlog_host.c) -lm -o "$work/session"; run session
 "${C[@]}" -DVOICE_RELAY_PROTOCOL=1 $(s voice_session_harness.c device_mode.c device_mode_store_fake.c relay_protocol.c voice_protocol.c xlog_host.c) -lm -o "$work/session_v1"; run session_v1
 "${C[@]}" $(s playback.c playback_test.c xlog_host.c) -o "$work/playback"; run playback
-"${C[@]}" $(s audio_core.c chime_detector.c audio_store.c voice_capture.c audio_link.c audio_app.c storage_worker.c audio_app_test.c xlog_host.c) -lm -o "$work/audio_app"; run audio_app
+"${C[@]}" $(s audio_core.c chime_detector.c audio_store.c voice_capture.c voice_noise.c voice_noise_core.c audio_link.c audio_app.c storage_worker.c audio_app_test.c xlog_host.c) -lm -o "$work/audio_app"; run audio_app
 "${C[@]}" $(s audio_core.c audio_store.c door_server.c voice_protocol.c door_server_test.c xlog_host.c) -lm -o "$work/door_server"; run door_server
 "${C[@]}" $(s pusher_protocol.c pusher_protocol_test.c) -o "$work/pusher_protocol"; run pusher_protocol
 "${C[@]}" -c "$src/pusher_protocol.c" -o "$work/pusher_protocol.o"
@@ -61,6 +62,7 @@ for t in calibration_test exact_servo_test end_direction_test servo_call_test pu
   "${CXX[@]}" "$src/servo_control.cpp" "$src/servo_pwm.cpp" "$src/$t.cpp" -o "$work/$t"; run "$t"
 done
 "${CXX[@]}" "$src/tune.cpp" "$src/tune_test.cpp" -o "$work/tune"; run tune
+"${CXX[@]}" "$src/voice_noise_config.cpp" "$src/voice_noise_config_test.cpp" -o "$work/noise_config"; run noise_config
 
 echo "--- Python and page tests"
 python3 -m unittest tests/test_receiver.py 2>&1 | tail -n 1

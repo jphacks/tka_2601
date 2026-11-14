@@ -4,6 +4,7 @@
 #include "audio_upload.h"
 #include "tune.h"
 #include "voice_capture.h"
+#include "voice_noise.h"
 #include "xlog.h"
 #include <math.h>
 #include <string.h>
@@ -29,6 +30,9 @@ static float score;
 static voice_capture_t voice_capture;
 static bool voice_call_active;
 static uint32_t voice_listen_sequence, voice_turn, voice_call_listen_baseline;
+static uint32_t voice_write_baseline;
+static int16_t noise_output[AUDIO_FRAME];
+static bool publish_voice_frame(void *context,const int16_t pcm[AUDIO_FRAME]);
 
 void audio_app_init(audio_ring_t *ring, int16_t *pending, bool record_clips)
 {
@@ -39,6 +43,7 @@ void audio_app_init(audio_ring_t *ring, int16_t *pending, bool record_clips)
     clips_enabled = record_clips;
     audio_dsp_init(&dsp);
     voice_capture_init(&voice_capture);
+    voice_noise_init();
     memset(&model, 0, sizeof(model));
     detector_ready = false;
     mode = NORMAL;
@@ -47,6 +52,7 @@ void audio_app_init(audio_ring_t *ring, int16_t *pending, bool record_clips)
     reject_until_quiet = post = clip_frames = manual = loopback = 0u;
     voice_call_active = false;
     voice_listen_sequence = voice_turn = voice_call_listen_baseline = 0u;
+    voice_write_baseline=0;
     audio_link()->audio_status = 0u;
     audio_link()->last_score = -1.0f;
     audio_link_release();
@@ -74,10 +80,19 @@ static void publish_voice_end(void)
     volatile audio_link_t *link = audio_link();
     if (voice_capture.state != VOICE_CAPTURE_FINISHED ||
         link->voice_end_listen_seq == voice_listen_sequence) return;
+    if(voice_noise_active() && voice_capture.emitted_frames &&
+       (voice_capture.end==VOICE_CAPTURE_END_SILENCE || voice_capture.end==VOICE_CAPTURE_END_LIMIT)) {
+        /* Flush the352-sample causal delay. Reserve two frames in the30s cap;
+         * never drop the beginning or the last word to conceal the delay. */
+        static const int16_t quiet[AUDIO_FRAME]={0};
+        if(!publish_voice_frame(NULL,quiet) || !publish_voice_frame(NULL,quiet))
+            voice_capture.end=VOICE_CAPTURE_END_OVERFLOW;
+    }
+    voice_noise_end();
     link->voice_end_seq = link->voice_write_seq;
     link->voice_end_turn = voice_turn;
     link->voice_end_reason = (uint32_t)voice_capture.end;
-    link->voice_samples = voice_capture.emitted_frames * AUDIO_FRAME;
+    link->voice_samples = (link->voice_write_seq-voice_write_baseline) * AUDIO_FRAME;
     audio_link_release();
     link->voice_end_listen_seq = voice_listen_sequence;
 }
@@ -89,8 +104,10 @@ static bool publish_voice_frame(void *context, const int16_t pcm[AUDIO_FRAME])
     uint32_t read = link->voice_read_seq;
     audio_link_acquire();
     if ((uint32_t)(write - read) >= AUDIO_LINK_RING_FRAMES) return false;
+    const int16_t *send=pcm;
+    if(voice_noise_frame(pcm,noise_output))send=noise_output;
     for (unsigned i = 0; i < AUDIO_FRAME; ++i)
-        link->voice_pcm[write % AUDIO_LINK_RING_FRAMES][i] = pcm[i];
+        link->voice_pcm[write % AUDIO_LINK_RING_FRAMES][i] = send[i];
     audio_link_release();
     link->voice_write_seq = write + 1u;
     return true;
@@ -120,7 +137,16 @@ static void stop_enroll(audio_enroll_phase_t phase, chime_reason_t reason, const
 void audio_app_command(char command)
 {
     volatile audio_link_t *link = audio_link();
-    if (command == 'e' && !voice_call_active && !audio_jobs.model_busy && !audio_jobs.formatting &&
+    if(command=='N' || command=='n' || command=='J') {
+        if(command!='J' && voice_call_active) {xlog("[NOISE] busy; setting unchanged.\n");return;}
+        if(command!='J')voice_noise_enable(command=='N');
+        voice_noise_status_t d;voice_noise_status(&d);
+        xlog("[NOISE] enabled=%lu ready=%lu active=%lu profiles=%lu quiet_frames=%lu rejected=%lu processed=%lu bypass=%lu max_frame_us=%lu over_budget=%lu budget_blocked=%lu allocation_failed=%lu profile_age_frames=%lu delay_samples=352.\n",
+            (unsigned long)d.enabled,(unsigned long)d.ready,(unsigned long)d.active,(unsigned long)d.profiles,
+            (unsigned long)d.quiet_frames,(unsigned long)d.rejected_frames,(unsigned long)d.processed_frames,
+            (unsigned long)d.bypass_frames,(unsigned long)d.max_frame_us,(unsigned long)d.over_budget_frames,
+            (unsigned long)d.budget_blocked,(unsigned long)d.allocation_failed,(unsigned long)d.profile_age_frames);
+    } else if (command == 'e' && !voice_call_active && !audio_jobs.model_busy && !audio_jobs.formatting &&
         !audio_jobs.clip_busy && audio_storage_ready()) {
         chime_enroll_begin(&enroll);
         mode = ENROLL; post = manual = 0;
@@ -166,6 +192,7 @@ void audio_app_service(void)
         manual = 0; loopback = 0;
         ring_buffer->used = 0u;
         voice_capture_pause(&voice_capture);
+        voice_noise_end();
         voice_call_active = call_active;
         if (call_active) voice_call_listen_baseline = link->voice_listen_seq;
         audio_link_release();
@@ -188,6 +215,8 @@ void audio_app_service(void)
         voice_listen_sequence = listen_sequence;
         voice_turn = link->voice_listen_turn;
         voice_capture_listen(&voice_capture, link->voice_rms_gate);
+        voice_write_baseline=link->voice_write_seq;
+        (void)voice_noise_begin();
         link->voice_samples = 0u;
         audio_link_release();
         link->voice_listen_ack = listen_sequence;
@@ -195,6 +224,7 @@ void audio_app_service(void)
 }
 void audio_app_no_frame(void)
 {
+    voice_noise_gap();
     volatile audio_link_t *link = audio_link();
     post = manual = 0; ring_buffer->used = 0u;
     if (detector_ready) chime_detector_reset(&detector);
@@ -297,6 +327,7 @@ static void detect_frame(const int16_t pcm[AUDIO_FRAME])
 }
 void audio_app_frame(const int16_t pcm[AUDIO_FRAME], bool gap)
 {
+    voice_noise_tick();
     volatile audio_link_t *link = audio_link();
     ++link->heartbeat;
     link->audio_status = 1u;
@@ -311,6 +342,7 @@ void audio_app_frame(const int16_t pcm[AUDIO_FRAME], bool gap)
     link->pcm_min = minimum; link->pcm_max = maximum;
     link->last_rms = sqrtf(energy / (float)AUDIO_FRAME);
     if (gap) {
+        voice_noise_gap();
         ++link->capture_errors;
         post = manual = 0; ring_buffer->used = 0u; reject_until_quiet = 50;
         if (detector_ready) chime_detector_reset(&detector);
@@ -326,7 +358,10 @@ void audio_app_frame(const int16_t pcm[AUDIO_FRAME], bool gap)
         /* PDM keeps running so DMA stays healthy; samples are discarded while
          * the AI is speaking, never retained in either pre-roll. */
         voice_capture_feed(&voice_capture, pcm, publish_voice_frame, NULL);
-        link->voice_samples = voice_capture.emitted_frames * AUDIO_FRAME;
+        if(voice_noise_active() && voice_capture.state==VOICE_CAPTURE_SPEECH &&
+           voice_capture.emitted_frames>=VOICE_CAPTURE_MAX_FRAMES-2u)
+            voice_capture_abort(&voice_capture,VOICE_CAPTURE_END_LIMIT);
+        link->voice_samples = (link->voice_write_seq-voice_write_baseline) * AUDIO_FRAME;
         publish_voice_end();
         return;
     }
@@ -344,4 +379,12 @@ void audio_app_frame(const int16_t pcm[AUDIO_FRAME], bool gap)
     if (manual) { if (--manual == 0) submit_clip(5u * AUDIO_RATE, -1.0f); return; }
     if (mode != NORMAL) { enroll_frame(pcm); return; }
     detect_frame(pcm);
+}
+
+void audio_app_noise_clock(uint32_t (*clock_us)(void)){voice_noise_clock(clock_us);}
+void audio_app_noise_background(const int16_t raw[AUDIO_FRAME],bool externally_idle) {
+    bool eligible=externally_idle && !voice_call_active && mode==NORMAL && !warmup &&
+        !reject_until_quiet && !post && !manual && !loopback && !audio_jobs.formatting &&
+        !audio_jobs.model_busy && !audio_jobs.clip_busy;
+    voice_noise_idle(raw,eligible,tune_voice_gate());
 }

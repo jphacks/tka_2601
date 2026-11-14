@@ -47,6 +47,10 @@ void audio_app_command(char command); /* e x r s l F */
 void audio_app_service(void);
 void audio_app_frame(const int16_t pcm[AUDIO_FRAME], bool gap);
 void audio_app_no_frame(void);
+/* Optional voice-only noise frontend; raw chime input is never modified.
+ * The clock measures real CPU work on ESP32; a null clock is host-test only. */
+void audio_app_noise_clock(uint32_t (*clock_us)(void));
+void audio_app_noise_background(const int16_t raw[AUDIO_FRAME],bool externally_idle);
 /* Any task: registered model state, for status output. */
 bool audio_app_model_valid(void);
 float audio_app_threshold(void);
