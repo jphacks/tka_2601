@@ -41,6 +41,7 @@ static void flush_call_diag(void) {
     if(!call_diag_pending || busy || !playback_idle())return;
     audio_link_acquire();if(audio_link()->voice_record_enabled)return;
     call_diag_pending=false; /* One storage attempt, including failure. */
+    field_timing_save();
     if(!voice_call_diag_store(&pending_call_diag))xlog("[VOICE CALL] save_failed; previous record retained if available.\n");
 }
 /* Only the voice task owns recovery timers. An uncertain shared button always

@@ -66,6 +66,10 @@ rm "$src/servo_config.h"
 "${CXX[@]}" "$src/tune.cpp" "$src/tune_test.cpp" -o "$work/tune"; run tune
 "${CXX[@]}" "$src/voice_call_diag.cpp" "$src/voice_call_diag_test.cpp" -o "$work/call_diag"; run call_diag
 
+"${CXX[@]}" -DFIELD_TIMING_HOST_TEST "$src/field_timing.cpp" "$src/field_timing_test.cpp" -o "$work/field_timing"
+"$work/field_timing" > "$work/persisted-timing.log"
+python3 tools/timing_report.py "$work/persisted-timing.log" | grep -q 'サーバー側 1300 ms、端末側 250 ms'
+
 echo "--- Python and page tests"
 python3 -m unittest tests/test_receiver.py 2>&1 | tail -n 1
 python3 -m unittest discover -s calibration_ui -p 'test_*.py' 2>&1 | tail -n 1

@@ -5,6 +5,7 @@
 #include "tune.h"
 #include "voice_stream.h"
 #include "voice_call_diag.h"
+#include "field_timing.h"
 #include "xlog.h"
 extern "C" {
 #include "audio_app.h"
@@ -38,7 +39,8 @@ void micStatus() {
 }
 void execute(const char* text) {
   if (text[0] == '@') {
-    if(voice_call_diag_command(text))return;
+    if (!strcmp(text, "@last-timing")) { field_timing_print(); return; }
+    if (voice_call_diag_command(text)) return;
     if (servo_probe_command(text)) return;
     if (!strcmp(text, "@net")) net_report_calibration();
     else if (!strncmp(text, "@tune ", 6)) tune_command(text);
