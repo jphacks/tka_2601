@@ -39,6 +39,7 @@ typedef struct {
 _Static_assert((AUDIO_LINK_RING_FRAMES & (AUDIO_LINK_RING_FRAMES - 1u)) == 0u,
                "Ring slots must divide the uint32 counter range");
 #endif
+bool audio_link_init(void);
 volatile audio_link_t *audio_link(void);
 void audio_link_acquire(void);
 void audio_link_release(void);

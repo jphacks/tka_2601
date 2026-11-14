@@ -2,6 +2,7 @@
 #include "xlog.h"
 #include <Arduino.h>
 #include <NetworkClientSecure.h>
+#include <esp_heap_caps.h>
 #include <esp_random.h>
 #include <mbedtls/x509_crt.h>
 #include <time.h>
@@ -34,6 +35,12 @@ net_stream_t *net_stream_open(const char *host, uint16_t port, const char *ca_pe
   static const char *alpn[] = {"http/1.1", nullptr};
   stream->client.setAlpnProtocols(alpn);
   if (!stream->client.connect(host, port, kConnectTimeoutMs)) {
+    // Tell a TLS rejection (mbedTLS code) apart from a heap too small for a TLS session.
+    char reason[96] = "";
+    const int code = stream->client.lastError(reason, sizeof(reason));
+    xlog("[NET] TLS connect failed host=%s mbedtls=%d (%s) heap_free=%u internal_largest=%u\n", host, code,
+      reason[0] ? reason : "none", static_cast<unsigned>(esp_get_free_heap_size()),
+      static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     delete stream;
     return nullptr;
   }

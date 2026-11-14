@@ -2,6 +2,9 @@
 #include "xlog.h"
 #include <stdatomic.h>
 #include <string.h>
+#if defined(ARDUINO_ARCH_ESP32) || defined(ESP_PLATFORM)
+#include <esp_heap_caps.h>
+#endif
 
 #define OUTPUT_TIMEOUT_MS 15000u
 #define PROGRESS_TIMEOUT_MS 5000u
@@ -10,7 +13,13 @@ typedef enum { IDLE, BUFFERING, PLAYING, DRAINING, DONE, FAILED } state_t;
 typedef struct { int16_t pcm[PLAYBACK_FRAME_SAMPLES]; uint16_t samples; } frame_t;
 
 static const playback_sink_t *sink;
-static frame_t frames[PLAYBACK_QUEUE_FRAMES];
+#if defined(ARDUINO_ARCH_ESP32) || defined(ESP_PLATFORM)
+/* CPU-side queue: hw_audio copies each frame into its own I2S write buffer. */
+static frame_t *frames;
+#else
+static frame_t host_frames[PLAYBACK_QUEUE_FRAMES];
+static frame_t *frames = host_frames;
+#endif
 static atomic_uint state, write_seq, read_seq, last_output_ms;
 static atomic_bool finished, abort_requested;
 static const char *_Atomic failure;
@@ -20,13 +29,26 @@ static uint32_t progress_ms, drain_at_ms;
 void playback_init(const playback_sink_t *value)
 {
     sink = value;
+#if defined(ARDUINO_ARCH_ESP32) || defined(ESP_PLATFORM)
+    /* Called once during setup, before speaker/call tasks can access the queue. */
+    if (!frames) frames = heap_caps_calloc(PLAYBACK_QUEUE_FRAMES, sizeof(*frames), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!frames) {
+        sink = NULL;
+        atomic_store(&failure, "playback_psram_allocation_failed");
+        atomic_store(&state, FAILED);
+        xlog("[STREAM] playback_psram_allocation_failed: bytes=%lu\n",
+             (unsigned long)(PLAYBACK_QUEUE_FRAMES * sizeof(*frames)));
+        return;
+    }
+#endif
+    atomic_store(&failure, NULL);
     atomic_store(&state, IDLE);
 }
 static bool terminal(unsigned value) { return value == IDLE || value == DONE || value == FAILED; }
 bool playback_idle(void) { return terminal(atomic_load(&state)); }
 bool playback_open(uint32_t now_ms)
 {
-    if (!playback_idle()) return false;
+    if (!frames || !sink || !playback_idle()) return false;
     atomic_store(&write_seq, 0u); atomic_store(&read_seq, 0u);
     atomic_store(&finished, false); atomic_store(&abort_requested, false);
     atomic_store(&failure, NULL);

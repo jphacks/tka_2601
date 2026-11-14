@@ -75,6 +75,10 @@ void setup() {
   servo_probe_begin();
   device_mode_init(); // Last good mode from NVS, before any task can see a chime.
   tune_begin();
+  if (!audio_link_init()) {
+    xlog("[ERROR] PSRAM audio allocation failed.\n");
+    return;
+  }
   audioCommands = xQueueCreate(4, sizeof(char));
   auto* ring = static_cast<audio_ring_t*>(heap_caps_malloc(sizeof(audio_ring_t), MALLOC_CAP_SPIRAM));
   auto* pending = static_cast<int16_t*>(heap_caps_malloc(AUDIO_CLIP_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM));
