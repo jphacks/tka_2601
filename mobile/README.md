@@ -140,12 +140,14 @@ npx eas-cli@latest submit --platform ios --profile production --latest
 
 App Store Connect のアプリの ID は `eas.json` の `submit.production.ios.ascAppId` に入っている。
 
-クラウドに設定がない機能は、次の環境変数が `1` のときだけ画面に出す。EAS の `production` には入れていないので、今のビルドでは隠れる。
+Google カレンダーの連携画面は既定で表示する。ホットペッパービューティーは既定で非表示にする。`eas.json` の `production.env` でも、それぞれ `1` と `0` に固定している。その他の機能は、次の環境変数が `1` のときだけ画面に出す。
 
 | 環境変数 | 機能 | 有効にする前に要ること |
 |---|---|---|
 | `EXPO_PUBLIC_FEATURE_ASSISTANT` | 自然言語の入力 | Edge Function「assistant」から Ollama に届く経路 |
-| `EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS` | 連携の Google カレンダーと Square | OAuth のクライアントとシークレット |
+| `EXPO_PUBLIC_FEATURE_GOOGLE_CALENDAR` | Google カレンダーの連携画面。`0` で非表示 | 接続にはサーバー側の OAuth 設定が必要 |
+| `EXPO_PUBLIC_FEATURE_HOTPEPPER` | ホットペッパービューティー。`1` で再表示 | 現在は無効 |
+| `EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS` | Square | OAuth のクライアントとシークレット |
 | `EXPO_PUBLIC_FEATURE_RECEPTION` | 受付の案内文と、受付での Google カレンダーの照合 | Edge Function「door」のシークレット（`DOOR_API_BASE_URL`、`DOOR_API_KEY`、`DOOR_ALLOWED_HOUSEHOLD_IDS`） |
 | `EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN` | Apple と Google のログイン | Supabase の Auth の設定と、削除時の Apple のトークンの失効 |
 

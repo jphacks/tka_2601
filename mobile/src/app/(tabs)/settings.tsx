@@ -117,7 +117,7 @@ export default function SettingsScreen() {
   const statusText = status
     ? `本体の適用 ${appliedLabel}${status.pending ? ' 反映待ち' : ''}、${status.communication}`
     : undefined;
-  const connections = visibleIntegrations(providers, features.externalProviders);
+  const connections = visibleIntegrations(providers, features);
 
   return (
     <Screen waves={false}>

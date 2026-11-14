@@ -61,7 +61,10 @@ const CONNECTIONS: Record<
 export default function IntegrationRoute() {
   const { provider } = useLocalSearchParams<{ provider?: string }>();
   // 知らない名前の URL（古い通知や手で開いたもの）は設定に戻す
-  return isIntegration(provider) ? <IntegrationScreen provider={provider} /> : <Redirect href="/settings" />;
+  if (!isIntegration(provider)) return <Redirect href="/settings" />;
+  if (provider === 'hotpepper' && !features.hotpepper) return <Redirect href="/settings" />;
+  if (provider === 'google_calendar' && !features.googleCalendar) return <Redirect href="/settings" />;
+  return <IntegrationScreen key={provider} provider={provider} />;
 }
 
 function IntegrationScreen({ provider }: { provider: Integration }) {

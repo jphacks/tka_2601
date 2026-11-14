@@ -27,11 +27,15 @@ test('the status shows what is in use first, then whether it is connected', () =
   assert.equal(integrationStatus(state('hotpepper'), 'hotpepper'), '使用中');
 });
 
-test('Google and Square are hidden without the feature unless one is already in use', () => {
-  assert.deepEqual(visibleIntegrations(state('monban'), false), ['hotpepper']);
-  assert.deepEqual(visibleIntegrations(null, false), ['hotpepper']);
-  assert.deepEqual(visibleIntegrations(state('square'), false), ['square', 'hotpepper']);
-  assert.deepEqual(visibleIntegrations(state('monban'), true), ['google_calendar', 'square', 'hotpepper']);
+test('Calendar is visible and Hotpepper is hidden independently of the shared OAuth flag', () => {
+  const flags = { googleCalendar: true, hotpepper: false, externalProviders: false };
+  assert.deepEqual(visibleIntegrations(state('monban'), flags), ['google_calendar']);
+  assert.deepEqual(visibleIntegrations(null, flags), ['google_calendar']);
+  assert.deepEqual(visibleIntegrations(state('hotpepper'), flags), ['google_calendar']);
+  assert.deepEqual(visibleIntegrations(state('square'), flags), ['google_calendar', 'square']);
+  assert.deepEqual(visibleIntegrations(null, { ...flags, externalProviders: true }), ['google_calendar', 'square']);
+  assert.deepEqual(visibleIntegrations(null, { ...flags, hotpepper: true }), ['google_calendar', 'hotpepper']);
+  assert.deepEqual(visibleIntegrations(null, { ...flags, googleCalendar: false }), []);
 });
 
 test('the time of a staff check is shown relative to today', async () => {
