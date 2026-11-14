@@ -21,7 +21,11 @@
     },
     "production": {
       "autoIncrement": true,
-      "environment": "production"
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_FEATURE_GOOGLE_CALENDAR": "1",
+        "EXPO_PUBLIC_FEATURE_HOTPEPPER": "0"
+      }
     }
   },
   "submit": {

@@ -75,6 +75,55 @@ export function parseModeStatus(body: Record<string, unknown>) {
   return { p_mode: mode };
 }
 
+export const CHIME_PHASES = ["idle", "noise", "listen", "analyze", "saving", "done", "failed", "cancelled"] as const;
+export const CHIME_REASONS = [
+  "too_noisy",
+  "too_short",
+  "clipped",
+  "no_recording",
+  "unstable",
+  "background_matches",
+  "busy",
+] as const;
+const MAX_CHIME_SEQ = 4294967295;
+
+// 本体が読むのは希望側（request_seq と action）だけ。小さな受信バッファで読めるよう、報告側は返さない。
+// 未ペアの本体にはアプリの依頼がないので、依頼なしと同じ形を返す。
+export function chimeEnrollmentBody(device: DeviceSettings, enrollment: unknown) {
+  const paired = device.household_id !== null;
+  const row = paired && isObject(enrollment) ? enrollment : null;
+  return {
+    contract_version: CONTRACT_VERSION,
+    paired,
+    request_seq: row ? row.request_seq : 0,
+    action: row ? row.action : null,
+  };
+}
+
+// チャイム登録の進捗の報告。本文は {handled_seq, phase, reason, registered} の4つだけを受ける。
+// reason は失敗（failed）のときだけ付けられ、ほかの項目や綴りの違いは、報告を取り違えないよう 400 にする
+export function parseChimeEnrollmentStatus(body: Record<string, unknown>) {
+  const keys = Object.keys(body);
+  const { handled_seq: seq, phase, reason, registered } = body;
+  if (keys.length !== 4 || !["handled_seq", "phase", "reason", "registered"].every((k) => keys.includes(k)) ||
+    typeof seq !== "number" || !Number.isInteger(seq) || seq < 0 || seq > MAX_CHIME_SEQ ||
+    typeof phase !== "string" || !(CHIME_PHASES as readonly string[]).includes(phase) ||
+    (reason !== null && (typeof reason !== "string" || !(CHIME_REASONS as readonly string[]).includes(reason) ||
+      phase !== "failed")) ||
+    typeof registered !== "boolean") {
+    throw new ProviderError(
+      400,
+      "handled_seq・phase・reason・registered だけを送り、phase と reason は決まった値にしてください（reason は failed のときだけ）",
+    );
+  }
+  return {
+    p_handled_seq: seq,
+    p_phase: phase,
+    p_reason: reason as string | null,
+    p_registered: registered,
+  };
+}
+
 export type PusherConfig = {
   schema_version: 1;
   enabled_pushers: ["p1"] | ["p2"] | ["p1", "p2"];

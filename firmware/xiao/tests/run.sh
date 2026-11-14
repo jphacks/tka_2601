@@ -53,8 +53,6 @@ cp tests/stubs/device_config.h "$src/"
   "$work/device_http.o" -o "$work/device_mode"; run device_mode
 "${C[@]}" $(s device_mode.c device_mode_sync.c device_mode_store_fake.c device_mode_report_test.c xlog_host.c) \
   "$work/device_http.o" -o "$work/device_mode_report"; run device_mode_report
-"${C[@]}" $(s visit_report.c visit_report_test.c xlog_host.c) \
-  "$work/device_http.o" -o "$work/visit_report"; run visit_report
 "${C[@]}" $(s audio_core.c chime_detector.c chime_enroll_protocol.c chime_enroll_protocol_test.c) -lm \
   -o "$work/chime_enroll_protocol"; run chime_enroll_protocol
 "${C[@]}" $(s chime_enroll_protocol.c chime_enroll_sync.c chime_enroll_sync_test.c xlog_host.c) \

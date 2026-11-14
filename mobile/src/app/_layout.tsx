@@ -12,6 +12,7 @@ import { WebShell } from '../components/WebShell';
 import { PrimaryButton, TextButton } from '../components/ui';
 import { AuthProvider, useAuth } from '../lib/auth';
 import { BadgeProvider } from '../lib/badges';
+import { DeviceGateProvider, useDeviceGate } from '../lib/deviceGate';
 import { logout } from '../lib/logout';
 import { usePendingInvite } from '../lib/pendingInvite';
 import { usePushNotifications } from '../lib/push';
@@ -25,10 +26,12 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <BadgeProvider>
-          <StatusBar style="dark" />
-          <RootNavigator />
-        </BadgeProvider>
+        <DeviceGateProvider>
+          <BadgeProvider>
+            <StatusBar style="dark" />
+            <RootNavigator />
+          </BadgeProvider>
+        </DeviceGateProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );
@@ -60,9 +63,13 @@ function MembershipRetry() {
 
 function RootNavigator() {
   const { ready, session, household, membershipFailed } = useAuth();
+  const gate = useDeviceGate();
   const pendingInvite = usePendingInvite();
   const signedIn = !!session;
   const member = signedIn && !!household;
+  // 本体のないお店の初回の案内。案内の途中は、本体を登録した後も終えるまで案内の画面に留める
+  const onboarding = member && gate.onboarding;
+  const app = member && !gate.onboarding;
 
   usePushNotifications(member ? session.user.id : null);
 
@@ -73,22 +80,29 @@ function RootNavigator() {
     }
   }, [ready, signedIn, membershipFailed, pendingInvite]);
 
+  const loaded = ready && (!member || gate.settled);
   useEffect(() => {
-    if (ready) SplashScreen.hideAsync();
-  }, [ready]);
+    if (loaded) SplashScreen.hideAsync();
+  }, [loaded]);
 
-  if (!ready) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
+  // 所属したお店の本体の有無を読むまで待つ（読む前に本体のないお店の画面を見せない）
+  if (!ready || (member && !gate.settled)) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 
   if (signedIn && !household && membershipFailed) return <MembershipRetry />;
 
   // 状態ごとの最初の画面。開けない画面に来たときはここへ移す（指定しないとファイル名の並びで選ばれる）
-  const home = member ? '/' : signedIn ? '/group-setup' : '/login';
+  const home = onboarding ? '/onboarding' : member ? '/' : signedIn ? '/group-setup' : '/login';
 
   // 画面は必ずどれかのガードに入れる
   return (
-    <WebShell show={member}>
+    <WebShell show={app}>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-        <Stack.Protected guard={member} redirectTo={home}>
+        <Stack.Protected guard={onboarding} redirectTo={home}>
+          <Stack.Screen name="onboarding/index" />
+          <Stack.Screen name="onboarding/code" />
+          <Stack.Screen name="onboarding/chime" />
+        </Stack.Protected>
+        <Stack.Protected guard={app} redirectTo={home}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="visits/[id]" />
           <Stack.Screen name="reservations/[id]" />
@@ -96,6 +110,7 @@ function RootNavigator() {
           <Stack.Screen name="assistant/index" />
           <Stack.Screen name="settings/shop" />
           <Stack.Screen name="settings/device-pairing" />
+          <Stack.Screen name="settings/chime" />
           <Stack.Screen name="settings/services" />
           <Stack.Screen name="settings/service" />
           <Stack.Screen name="settings/responses" />

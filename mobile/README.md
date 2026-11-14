@@ -8,6 +8,7 @@
 |---|---|
 | `src/app/` | 画面（Expo Router）。`_layout.tsx` でログイン前・グループ未所属・所属済みの画面を分ける |
 | `src/app/(tabs)/` | 下のタブ。予約（最初の画面）、来客、通知、設定 |
+| `src/app/onboarding/` | 本体のないお店の初回の案内（案内、登録コード、チャイムの登録） |
 | `src/app/reservations/` | 予約の詳細、追加と編集 |
 | `src/app/assistant/` | 自然言語の入力と確認カード |
 | `src/app/settings/` | 店舗情報、メニュー、受け答え、予約先、通知の種類、追加の指示、グループ、招待 |
@@ -34,6 +35,20 @@
 ## 自然言語の入力
 
 入力した文は Edge Function「assistant」が読み取り、案を返す。アプリは案を確認カードに出し、店の人が「追加」か「変更」を押してから既存のリポジトリで書き込む。読み取れないときや届かないときは、入力フォームへ案内する。
+
+## 本体とチャイムの登録（初回の案内）
+
+お店に入っていて本体のないユーザーには、最初に案内（`src/app/onboarding/`）が出る。流れは、案内、登録コードの入力（`claim_device`）、本体の接続待ち、静かにする、鳴らす、確認、完了である。「あとで」を押すとアプリへ進み、お店ごとに端末（AsyncStorage）へ覚えて、次の起動からは案内を出さない。本体が登録されたら、その記憶は消す。入口は設定の「本体」にも残る。本体を読めなかったとき（通信の失敗）は、本体なしとは区別して、案内へ移さない。本体があれば、チャイムが未登録でも案内は強制しない。
+
+| パス | 内容 |
+|---|---|
+| `src/lib/deviceGate.tsx` | お店の本体の有無と、案内を出すかの判断。案内を始めたら、本体を登録した後も終えるまで案内の画面に留める |
+| `src/lib/useDeviceClaim.ts` | ペアリングコードの登録。設定の画面と案内の画面が共有する。結果が分からないときは、コードを送り直さず本体の確認だけを再試行する |
+| `src/domain/chime.ts` | チャイム登録の画面の状態を決める規則（純粋な関数）。試験は `tests/chime.test.mjs` |
+| `src/lib/useChimeEnrollment.ts` | 本体の接続待ち、依頼、進捗の読み直し（1.5 秒）、取り消し。画面が見えているあいだだけ読む |
+| `src/components/ChimeEnrollmentFlow.tsx` | 接続待ちから失敗までの画面。案内（`onboarding/chime`）と設定（`settings/chime`）が共有する |
+
+チャイム登録は、アプリが `request_chime_enrollment(device_id, 'start')` で依頼を出し、本体が `device_chime_enrollment` の `handled_seq` と `phase` で進捗を返す（契約は [supabase/README.md](../supabase/README.md) の「チャイム登録」）。アプリは `handled_seq` が依頼の連番と等しいときだけ `phase` を進捗として読む。本体が依頼を 20 秒拾わない、報告が 30 秒進まない（静音の測定、解析、保存）、音を 60 秒待っても鳴らされない、のどれかで終え、本体へ取り消しを送る。登録できたかは、設定の「チャイムを登録し直す」の右に、登録済み、未登録、状態不明で出す。
 
 ## 動かす
 
@@ -81,11 +96,22 @@ Web で動かないものは、`.web.ts(x)` の別ファイルに分けてある
 | SF Symbols | Material Symbols のフォント（`components/Icon.web.tsx`） |
 | 分割ボタンと日付のカレンダー | 同じ形の描画と、ブラウザの日付の入力 |
 | 招待リンクを送る | リンクをコピーする |
+| 予約先（Google カレンダー、Square）への接続 | ポップアップではなく同じタブで同意画面へ移り、戻ってきた URL の `code` で接続を完了する（`lib/oauthSession.web.ts`）。本番の Web のオリジンを Supabase のシークレット `APP_WEB_ORIGINS` に入れる。`localhost` は設定なしで使える |
 | Apple と Google のログイン | `EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN` を 1 にしない。Web 用の戻り先を用意していない |
 
 ### Vercel に出す
 
 Vercel のプロジェクトの Root Directory を `mobile` にする。ビルドは `vercel.json` に書いてある。環境変数に `EXPO_PUBLIC_SUPABASE_URL` と `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を入れる（ビルド時に埋め込まれる）。
+
+本番は `monban-web`（https://monban-web.vercel.app ）。GitHub からの自動デプロイはつながっていないので、main を更新したら、プロジェクトの権限を持つ人が Vercel のダッシュボードの Redeploy か、`mobile` で `npx vercel --prod` を実行して出す。
+
+予約先（Google カレンダー、Square）への接続は、同意のあと Web 版のオリジンへ戻ってくる。戻ってよいオリジンは Supabase のシークレット `APP_WEB_ORIGINS` で決まる（[supabase/functions/.env.example](../supabase/functions/.env.example)）。今は `https://monban-web.vercel.app` だけを許している。独自ドメインなど別の URL で出すときは、そのオリジンを足してから出す。プレビューの URL からは接続できない。
+
+```bash
+npx supabase secrets set APP_WEB_ORIGINS=https://monban-web.vercel.app,https://<別のオリジン> --project-ref <ref>
+```
+
+出したあとは、設定 → 連携 → Google カレンダーで「Google でログイン」を押す。同じタブで Google の同意画面に移り、許可すると戻ってきて「接続済み」になれば通っている。
 
 ## EAS のビルド
 
@@ -125,12 +151,14 @@ npx eas-cli@latest submit --platform ios --profile production --latest
 
 App Store Connect のアプリの ID は `eas.json` の `submit.production.ios.ascAppId` に入っている。
 
-クラウドに設定がない機能は、次の環境変数が `1` のときだけ画面に出す。EAS の `production` には入れていないので、今のビルドでは隠れる。
+Google カレンダーの連携画面は既定で表示する。ホットペッパービューティーは既定で非表示にする。`eas.json` の `production.env` でも、それぞれ `1` と `0` に固定している。その他の機能は、次の環境変数が `1` のときだけ画面に出す。
 
 | 環境変数 | 機能 | 有効にする前に要ること |
 |---|---|---|
 | `EXPO_PUBLIC_FEATURE_ASSISTANT` | 自然言語の入力 | Edge Function「assistant」から Ollama に届く経路 |
-| `EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS` | 連携の Google カレンダーと Square | OAuth のクライアントとシークレット |
+| `EXPO_PUBLIC_FEATURE_GOOGLE_CALENDAR` | Google カレンダーの連携画面。`0` で非表示 | 接続にはサーバー側の OAuth 設定が必要 |
+| `EXPO_PUBLIC_FEATURE_HOTPEPPER` | ホットペッパービューティー。`1` で再表示 | 現在は無効 |
+| `EXPO_PUBLIC_FEATURE_EXTERNAL_PROVIDERS` | Square | OAuth のクライアントとシークレット |
 | `EXPO_PUBLIC_FEATURE_RECEPTION` | 受付の案内文と、受付での Google カレンダーの照合 | Edge Function「door」のシークレット（`DOOR_API_BASE_URL`、`DOOR_API_KEY`、`DOOR_ALLOWED_HOUSEHOLD_IDS`） |
 | `EXPO_PUBLIC_FEATURE_SOCIAL_LOGIN` | Apple と Google のログイン | Supabase の Auth の設定と、削除時の Apple のトークンの失効 |
 
@@ -162,7 +190,7 @@ App Store Connect のアプリの ID は `eas.json` の `submit.production.ios.a
 ## 決まっていないこと
 
 - 招待リンクのスキーム（`tka2601`）と Android のパッケージ名（`com.jphacks.tka2601`）を MONBAN に合わせるか
-- 本体をグループに結び付ける画面（Supabase の `claim_device(code)` にペアリングコードを渡す）。デザインにもアプリにもまだない
+- 本体の Wi-Fi の設定をアプリから行う画面（BLE と Wi-Fi の設定。Issue #64）。今の初回の案内は、本体がクラウドに通信できる前提で、接続を待つだけである
 
 ## 試験
 

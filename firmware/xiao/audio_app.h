@@ -9,6 +9,7 @@ extern "C" {
  * task and cleared by the storage task once the work is finished. */
 typedef struct {
     volatile bool formatting, model_busy, clip_busy, clip_saving;
+    volatile bool model_save_failed;
     audio_model_t model_to_save;
     int16_t *pending_pcm;
     volatile uint32_t pending_samples;
@@ -24,7 +25,8 @@ audio_model_t *audio_app_model(void);
 /* Chime registration, for a future app request as well as the console's e/x.
  * Start and cancel queue the command for the audio task (false: queue full).
  * Status is readable from any task. SAVING turns into DONE once the storage
- * task has written the model; the model is already active while it saves. */
+ * task has verified the model; failed persistence returns FAILED/NO_PCM.
+ * The model is already active in RAM while it saves. */
 typedef enum {
     AUDIO_ENROLL_IDLE,
     AUDIO_ENROLL_NOISE,     /* 2 s of background */

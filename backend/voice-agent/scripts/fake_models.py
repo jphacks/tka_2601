@@ -19,7 +19,7 @@ import time
 
 from aiohttp import web
 
-from door_backend.config import settings
+from monban_backend.config import settings
 
 DEFAULT_TRANSCRIPTS = ["ヤマト運輸です。お荷物のお届けです。", "わかりました。失礼します。"]
 
@@ -48,6 +48,7 @@ def build_app(transcripts: list[str]) -> web.Application:
         return web.json_response(
             {
                 "data": [
+                    {"id": settings.llm_model},
                     {"id": settings.asr_model},
                     {"id": settings.tts_model, "speech": {"voices": [{"name": settings.tts_voice}]}},
                 ]

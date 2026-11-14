@@ -9,12 +9,17 @@ export function isIntegration(value: unknown): value is Integration {
   return typeof value === 'string' && (INTEGRATIONS as readonly string[]).includes(value);
 }
 
-// OAuth のシークレットがないときは、Google と Square を出さない。すでに使っているものは外せるように残す
-export function visibleIntegrations(state: ProviderState | null, externalProviders: boolean): Integration[] {
-  return INTEGRATIONS.filter(
-    (integration) =>
-      externalProviders || integration === 'hotpepper' || (state !== null && state.provider === integration),
-  );
+// Google とホットペッパーは独立したフラグで表示を決める。
+// Square は使用中なら、フラグがオフでも解除できるように残す。
+export function visibleIntegrations(
+  state: ProviderState | null,
+  flags: { googleCalendar: boolean; hotpepper: boolean; externalProviders: boolean },
+): Integration[] {
+  return INTEGRATIONS.filter((integration) => {
+    if (integration === 'google_calendar') return flags.googleCalendar;
+    if (integration === 'hotpepper') return flags.hotpepper;
+    return flags.externalProviders || state?.provider === integration;
+  });
 }
 
 export function isConnected(state: ProviderState, integration: Integration): boolean {
@@ -37,3 +42,15 @@ export function integrationRoute(integration: Integration) {
 
 // 予約先との接続エラーの通知（calendar_sync_failed）は Google カレンダーの同期の失敗
 export const INTEGRATION_ERROR_ROUTE = integrationRoute('google_calendar');
+
+// 連携先の同意から戻った URL の問い合わせの読み方。resultParam は google か square。
+// pending と code がそろえば、ログインした本人のセッションで完了する
+export type OAuthOutcome = { kind: 'pending'; code: string } | { kind: 'error' } | { kind: 'none' };
+
+export function oauthOutcome(query: Record<string, unknown> | null | undefined, resultParam: string): OAuthOutcome {
+  const outcome = query?.[resultParam];
+  if (outcome === 'error') return { kind: 'error' };
+  const code = query?.code;
+  if (outcome === 'pending' && typeof code === 'string' && code !== '') return { kind: 'pending', code };
+  return { kind: 'none' };
+}

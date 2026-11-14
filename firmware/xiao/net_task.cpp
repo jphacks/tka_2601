@@ -5,7 +5,6 @@
 #include "pusher_sync.h"
 #include "device_mode.h"
 #include "chime_enroll_sync.h"
-#include "visit_report.h"
 #include "xlog.h"
 #include <Arduino.h>
 #include <WiFi.h>
@@ -98,7 +97,6 @@ void net_task(void*) {
       }
       apiProbeRequested = false;
     }
-    visit_report_step(net_voice_ready());
     pusher_sync_step(net_voice_ready());
     device_mode_sync_step(net_voice_ready());
     chime_enroll_sync_step(net_voice_ready());

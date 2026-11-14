@@ -1,14 +1,13 @@
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NavBar, Screen } from '../../components/Screen';
 import { Card, GroupHeader, InfoRow, PrimaryButton, TextButton, TextField } from '../../components/ui';
-import type { Device } from '../../domain/device';
-import { normalizePairingCode, pairingFailureMessage, pairingResultUnknown } from '../../domain/devicePairing';
+import { normalizePairingCode } from '../../domain/devicePairing';
 import { useHousehold } from '../../lib/auth';
-import { repositories } from '../../lib/container';
+import { useDeviceGate } from '../../lib/deviceGate';
+import { useDeviceClaim } from '../../lib/useDeviceClaim';
 import { colors } from '../../theme';
 
 export default function DevicePairingScreen() {
@@ -19,72 +18,12 @@ export default function DevicePairingScreen() {
 function DevicePairingForm() {
   const household = useHousehold();
   const insets = useSafeAreaInsets();
-  const [device, setDevice] = useState<Device | null>(null);
-  const [code, setCode] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // RPC後に読込が失敗しても、消費済みコードを再送せず結果の取得だけを再試行する。
-  const [claimedId, setClaimedId] = useState<string | null>(null);
-  const [claimPending, setClaimPending] = useState(false);
-  const generation = useRef(0);
-  const busy = useRef(false);
-  const mounted = useRef(false);
-
-  const load = useCallback(async (expectedId?: string) => {
-    const request = ++generation.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const current = await repositories.devices.get(household.id);
-      if (request !== generation.current) return;
-      if (expectedId && current?.id !== expectedId) {
-        setError('登録結果を読み込めませんでした。本体をもう一度確認してください。');
-      } else {
-        setDevice(current);
-        setClaimPending(false);
-      }
-    } catch {
-      if (request === generation.current) setError('本体情報を読み込めませんでした。接続を確認して再試行してください。');
-    } finally {
-      if (request === generation.current) setLoading(false);
-    }
-  }, [household.id]);
-
-  useEffect(() => {
-    mounted.current = true;
-    const request = ++generation.current;
-    repositories.devices.get(household.id)
-      .then((current) => { if (request === generation.current) setDevice(current); })
-      .catch(() => {
-        if (request === generation.current) setError('本体情報を読み込めませんでした。接続を確認して再試行してください。');
-      })
-      .finally(() => { if (request === generation.current) setLoading(false); });
-    return () => { mounted.current = false; generation.current += 1; };
-  }, [household.id]);
-
-  async function claim() {
-    if (busy.current || device || claimedId || claimPending || loading || !normalizePairingCode(code)) return;
-    busy.current = true;
-    setSaving(true);
-    setError(null);
-    const request = generation.current;
-    try {
-      const id = await repositories.devices.claim(code);
-      if (request !== generation.current) return;
-      setClaimedId(id);
-      setCode('');
-      await load(id);
-    } catch (reason) {
-      if (request === generation.current) {
-        setError(pairingFailureMessage(reason));
-        setClaimPending(pairingResultUnknown(reason));
-      }
-    } finally {
-      busy.current = false;
-      if (mounted.current) setSaving(false);
-    }
-  }
+  const { refresh } = useDeviceGate();
+  // 本体が登録されたら、アプリ全体の本体の有無も読み直す
+  const { device, code, setCode, loading, saving, error, claimedId, claimPending, claim, reload: load } = useDeviceClaim(
+    household.id,
+    () => void refresh(),
+  );
 
   return (
     <Screen waves={false}>

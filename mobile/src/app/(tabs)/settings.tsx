@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '../../components/Icon';
 import { Screen } from '../../components/Screen';
 import { Card, GroupHeader, LargeTitle, LinkRow, RadioRow, RowSwitch, Separator, SettingIcon } from '../../components/ui';
+import { type ChimeEnrollmentState, chimeRegistrationLabel } from '../../domain/chime';
 import type { Device, DevicePatch } from '../../domain/device';
 import type { ProviderState } from '../../domain/reservation';
 import type { ShopProfile } from '../../domain/shop';
@@ -38,6 +39,8 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const [device, setDevice] = useState<Device | null | undefined>(undefined);
   const [deviceFailed, setDeviceFailed] = useState(false);
+  // チャイムの登録の状態。読むまでは undefined、読めなかったら 'unknown'
+  const [chime, setChime] = useState<ChimeEnrollmentState | null | 'unknown' | undefined>(undefined);
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [providers, setProviders] = useState<ProviderState | null>(null);
   const [serviceCount, setServiceCount] = useState<number | null>(null);
@@ -49,9 +52,18 @@ export default function SettingsScreen() {
       let active = true;
       setDevice(undefined);
       setDeviceFailed(false);
+      setChime(undefined);
       repositories.devices
         .get(household.id)
-        .then((current) => { if (active) setDevice(current); })
+        .then((current) => {
+          if (!active) return;
+          setDevice(current);
+          if (!current) return;
+          repositories.chimeEnrollment
+            .get(current.id)
+            .then((state) => { if (active) setChime(state); })
+            .catch(() => { if (active) setChime('unknown'); });
+        })
         .catch((e) => {
           if (!active) return;
           setDeviceFailed(true);
@@ -105,7 +117,7 @@ export default function SettingsScreen() {
   const statusText = status
     ? `本体の適用 ${appliedLabel}${status.pending ? ' 反映待ち' : ''}、${status.communication}`
     : undefined;
-  const connections = visibleIntegrations(providers, features.externalProviders);
+  const connections = visibleIntegrations(providers, features);
 
   return (
     <Screen waves={false}>
@@ -119,6 +131,17 @@ export default function SettingsScreen() {
             value={device?.name ?? undefined}
             onPress={() => router.push('/settings/device-pairing')}
           />
+          {device ? (
+            <>
+              <Separator />
+              <LinkRow
+                label="チャイムを登録し直す"
+                value={chime === undefined ? undefined : chimeRegistrationLabel(chime)}
+                onPress={() => router.push('/settings/chime')}
+              />
+            </>
+          ) : null}
+          <Separator />
           <LinkRow label="プッシャー設定" icon={SYMBOLS.service} onPress={() => router.push('/settings/pusher-settings')} />
         </Card>
 

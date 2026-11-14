@@ -1,6 +1,7 @@
 // 画面が使う操作の入口。実装は infrastructure にあり、lib/container.ts で組み立てる。
 // ボイスエージェントの仕様が変わっても、画面ではなく実装と変換の層を直して吸収する
 import type { AssistantProposal } from '../domain/assistant';
+import type { ChimeAction, ChimeEnrollmentState } from '../domain/chime';
 import type { PageCursor } from '../domain/collections';
 import type { Device, DevicePatch } from '../domain/device';
 import type { Household, InvitePreview, Member } from '../domain/group';
@@ -55,6 +56,13 @@ export interface DeviceRepository {
   get(householdId: string): Promise<Device | null>;
   claim(code: string): Promise<string>;
   update(id: string, patch: DevicePatch): Promise<void>;
+}
+
+export interface ChimeEnrollmentRepository {
+  // 本体への依頼。新しい request_seq を返す
+  request(deviceId: string, action: ChimeAction): Promise<number>;
+  // 本体の報告を含む行。まだ依頼も報告もなければ null
+  get(deviceId: string): Promise<ChimeEnrollmentState | null>;
 }
 
 export interface PusherSettingsRepository {
@@ -127,6 +135,7 @@ export type Repositories = {
   providers: ReservationProviderRepository;
   visits: VisitRepository;
   devices: DeviceRepository;
+  chimeEnrollment: ChimeEnrollmentRepository;
   pusherSettings: PusherSettingsRepository;
   shop: ShopRepository;
   notifications: NotificationRepository;

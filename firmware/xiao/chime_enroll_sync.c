@@ -68,6 +68,8 @@ static bool can_start(void) {
 }
 static void handle_request(const chime_enroll_request_t *request) {
     audio_enroll_phase_t phase=audio_app_enroll_status().phase;
+    /* A full audio queue must not consume a cancellation. Retry on the next poll. */
+    if(request->action==CHIME_ENROLL_ACTION_CANCEL && !audio_app_enroll_cancel()) return;
     handled_seq=request->request_seq;
     override_on=false; waiting=WAIT_NONE;
     if(request->action==CHIME_ENROLL_ACTION_START) {
@@ -79,7 +81,7 @@ static void handle_request(const chime_enroll_request_t *request) {
             xlog("[ENROLL] seq=%lu start refused: busy\n",(unsigned long)handled_seq);
         }
     } else if(request->action==CHIME_ENROLL_ACTION_CANCEL) {
-        if(audio_app_enroll_cancel()) { waiting=WAIT_CANCEL; wait_snapshot=phase; wait_deadline=net_now_ms()+CANCEL_WAIT_MS; }
+        waiting=WAIT_CANCEL; wait_snapshot=phase; wait_deadline=net_now_ms()+CANCEL_WAIT_MS;
         xlog("[ENROLL] seq=%lu cancel requested queued=%u\n",(unsigned long)handled_seq,waiting==WAIT_CANCEL);
     }
 }
@@ -119,6 +121,9 @@ static void poll(void) {
     if(response && status==200u) parsed=chime_enroll_parse((const uint8_t *)response->body,response->body_length,&request);
     free(response);
     poll_at=net_now_ms();
+    /* A call can start while HTTPS is in flight. Do not consume its request or
+     * queue an audio command after that transition; fetch again once idle. */
+    if(voice_stream_busy()) { poll_force=true; return; }
     if(parsed==CHIME_ENROLL_PARSE_INVALID) {
         poll_failure=device_http_retry_interval(poll_failure);
         xlog("[ENROLL] fetch=failed status=%u\n",status);

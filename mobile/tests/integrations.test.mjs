@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { integrationStatus, isIntegration, visibleIntegrations } from '../src/lib/integrations.ts';
+import { integrationStatus, isIntegration, oauthOutcome, visibleIntegrations } from '../src/lib/integrations.ts';
 
 function state(provider, { google = false, square = false } = {}) {
   return {
@@ -27,11 +27,15 @@ test('the status shows what is in use first, then whether it is connected', () =
   assert.equal(integrationStatus(state('hotpepper'), 'hotpepper'), '使用中');
 });
 
-test('Google and Square are hidden without the feature unless one is already in use', () => {
-  assert.deepEqual(visibleIntegrations(state('monban'), false), ['hotpepper']);
-  assert.deepEqual(visibleIntegrations(null, false), ['hotpepper']);
-  assert.deepEqual(visibleIntegrations(state('square'), false), ['square', 'hotpepper']);
-  assert.deepEqual(visibleIntegrations(state('monban'), true), ['google_calendar', 'square', 'hotpepper']);
+test('Calendar is visible and Hotpepper is hidden independently of the shared OAuth flag', () => {
+  const flags = { googleCalendar: true, hotpepper: false, externalProviders: false };
+  assert.deepEqual(visibleIntegrations(state('monban'), flags), ['google_calendar']);
+  assert.deepEqual(visibleIntegrations(null, flags), ['google_calendar']);
+  assert.deepEqual(visibleIntegrations(state('hotpepper'), flags), ['google_calendar']);
+  assert.deepEqual(visibleIntegrations(state('square'), flags), ['google_calendar', 'square']);
+  assert.deepEqual(visibleIntegrations(null, { ...flags, externalProviders: true }), ['google_calendar', 'square']);
+  assert.deepEqual(visibleIntegrations(null, { ...flags, hotpepper: true }), ['google_calendar', 'hotpepper']);
+  assert.deepEqual(visibleIntegrations(null, { ...flags, googleCalendar: false }), []);
 });
 
 test('the time of a staff check is shown relative to today', async () => {
@@ -41,4 +45,23 @@ test('the time of a staff check is shown relative to today', async () => {
   assert.equal(relativeDateTime(new Date(2026, 10, 3, 17, 3).toISOString(), now), '昨日 17:03');
   assert.equal(relativeDateTime(new Date(2026, 9, 30, 9, 5).toISOString(), now), '10月30日 9:05');
   assert.equal(relativeDateTime('not a date', now), 'not a date');
+});
+
+test('the query after the consent screen completes only with pending and a code', () => {
+  assert.deepEqual(oauthOutcome({ google: 'pending', code: 'abc' }, 'google'), { kind: 'pending', code: 'abc' });
+  assert.deepEqual(oauthOutcome({ square: 'pending', code: 'abc' }, 'square'), { kind: 'pending', code: 'abc' });
+  assert.deepEqual(oauthOutcome({ google: 'error' }, 'google'), { kind: 'error' });
+  // 取り消し、別の連携の結果、code がない、配列（同じ名前が2つ）は何もしない
+  for (const query of [
+    { google: 'cancelled' },
+    { square: 'pending', code: 'abc' },
+    { google: 'pending' },
+    { google: 'pending', code: '' },
+    { google: 'pending', code: ['a', 'b'] },
+    {},
+    null,
+    undefined,
+  ]) {
+    assert.deepEqual(oauthOutcome(query, 'google'), { kind: 'none' }, JSON.stringify(query));
+  }
 });

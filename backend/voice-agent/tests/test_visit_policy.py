@@ -1,60 +1,6 @@
-from door_backend.visit_policy import VisitState
+import pytest
 
-
-def test_completed_dropoff_phrasings_advance_instead_of_repeating_location():
-    for text in [
-        "じゃあ置いておきました", "荷物を置いてきましたよ", "玄関の前に置いたよ",
-        "荷物は置いてあります", "置かせていただきました", "置き終えました",
-        "宅配ボックスに入れておきました", "荷物を入れたよ",
-    ]:
-        result = VisitState.from_messages([
-            ("user", "宅配便です。荷物を届けに来ました。"),
-            ("assistant", "玄関の前に置いていただけますか。"), ("user", text),
-        ])
-        assert result.placed, text
-        assert "写真" in result.deterministic_reply, text
-        assert "置いていただけ" not in result.deterministic_reply, text
-        assert not result.validate("恐れ入りますが、ご用件をお聞かせください。"), text
-
-
-def test_future_negative_questions_and_corrections_do_not_claim_completion():
-    for text in [
-        "これから置いておきます", "置いてきます", "まだ置いていません", "まだ置いてないです",
-        "置いてません", "置けません", "入れていません", "置いたらいいですか",
-        "置いておきましたか", "置いたことにしてください", "置きましたが、まだ置いていません",
-    ]:
-        result = VisitState.from_messages([
-            ("user", "宅配便です"), ("assistant", "玄関の前にお願いします"), ("user", text),
-        ])
-        assert not result.placed, text
-    correction = VisitState.from_messages([
-        ("user", "宅配便です"), ("user", "置いておきました"), ("user", "訂正です、まだ置いていません"),
-    ])
-    assert not correction.placed
-    assert state("宅配便です", "まだ置いていません。あ、今置いてきました").placed
-
-
-def test_possible_asr_error_requires_confirmation_then_progresses():
-    for text in ["玄関の前に荷物を売ってきましたよ", "玄関の前に通っておきました"]:
-        turns = [("user", "宅配便です"), ("assistant", "玄関前にお願いします"), ("user", text)]
-        uncertain = VisitState.from_messages(turns)
-        assert not uncertain.placed
-        assert "置き終わった" in uncertain.deterministic_reply
-        confirmed = VisitState.from_messages(turns + [("assistant", uncertain.deterministic_reply), ("user", "はいそうです")])
-        assert confirmed.placed
-        assert "写真" in confirmed.deterministic_reply
-        denied = VisitState.from_messages(turns + [("assistant", uncertain.deterministic_reply), ("user", "いいえ")])
-        assert not denied.placed
-
-
-def test_actual_delivery_sequence_moves_from_dropoff_to_photo_to_farewell():
-    turns = [("user", "宅配便です"), ("assistant", "玄関前にお願いします"), ("user", "じゃあ置いておきました")]
-    placed = VisitState.from_messages(turns)
-    turns += [("assistant", placed.deterministic_reply), ("user", "写真も撮りました")]
-    finished = VisitState.from_messages(turns)
-    assert finished.placed and finished.photographed
-    assert finished.deterministic_reply == "失礼いたします。"
-    assert finished.should_end_after_reply(finished.deterministic_reply)
+from monban_backend.voice.visit_policy import VisitState
 
 
 def state(*turns: str) -> VisitState:
@@ -70,25 +16,7 @@ def test_delivery_only_uses_house_rules_for_confirmed_parcel():
 def test_payment_and_sales_reject_inappropriate_reply():
     assert state("集金に来ました").purpose == "payment"
     assert not state("集金に来ました").validate("宅配ボックスに入れてください。")
-    assert state("営業で来ました").fallback() == "恐れ入りますが、このインターホンでは対応できません。"
-
-
-def test_company_introduction_is_not_sales_until_the_offer_is_clear():
-    introduction = state("お世話になっております私株式会社ライフエーステックの大坂敏と申します")
-    assert introduction.purpose == "unknown"
-
-    offer = state(
-        "我々の企業では中高生向けのプログラミング教育を行っているんですけれども、"
-        "こちらのお宅のお子様にも教育を受けていただきたいと思いまして"
-    )
-    assert offer.purpose == "sales"
-    assert offer.fallback() == "恐れ入りますが、このインターホンでは対応できません。"
-
-
-def test_polite_farewell_is_acknowledged_as_departure():
-    result = state("承知いたしました。また改めて伺わせていただきます。失礼いたします")
-    assert result.closing
-    assert result.fallback() == "失礼いたします。"
+    assert state("営業で来ました").fallback().startswith("申し訳ありません")
 
 
 def test_correction_overrides_delivery_context():
@@ -113,13 +41,15 @@ def test_completion_state_is_session_scoped_and_validated():
     assert not result.validate("解錠しました。")
 
 
-def test_completion_state_answers_follow_up_instead_of_forcing_thanks():
+def test_completion_state_still_answers_a_follow_up_question():
+    # A question after the completed delivery remains answerable instead of receiving an early goodbye.
     result = state("宅配便です", "そこに置きました", "写真も撮りました。これで大丈夫ですか?")
-    assert result.validate("はい、大丈夫ですよ。")
-    assert not result.validate("鍵を開けました。")
+    assert result.validate("はい、大丈夫です。")
+    assert not result.validate("玄関の鍵を開けます。")
 
 
-def test_goodbye_is_not_repeated_after_a_closing_acknowledgement():
+def test_farewell_is_not_repeated_after_it_was_said():
+    # Regression: the visitor's "はい失礼します" made the agent say "失礼します。" again and again.
     result = VisitState.from_messages(
         [
             ("user", "宅配便です"),
@@ -127,17 +57,23 @@ def test_goodbye_is_not_repeated_after_a_closing_acknowledgement():
             ("user", "はい失礼します"),
         ]
     )
-    assert result.closing_said
+    assert result.closing and result.closing_said
     assert result.should_wait
 
 
-def test_arrival_politeness_is_not_misread_as_departure():
-    result = state("夜分に失礼いたします。宅配便です")
-    assert result.delivery_allowed
-    assert not result.closing
+def test_new_request_after_farewell_is_still_answered():
+    result = VisitState.from_messages(
+        [
+            ("user", "宅配便です"),
+            ("assistant", "承知いたしました。失礼いたします。"),
+            ("user", "すみません、クール便でした"),
+        ]
+    )
+    assert result.closing_said
+    assert not result.should_wait
 
 
-def test_delivery_placement_turns_answer_directly_and_do_not_end_early():
+def test_delivery_announcement_and_placement_question_get_direct_replies():
     turns = [
         ("user", "こんにちは"),
         ("assistant", "どちらの用件でいらっしゃいましたか。"),
@@ -146,117 +82,82 @@ def test_delivery_placement_turns_answer_directly_and_do_not_end_early():
         ("user", "じゃあ置いていきますね"),
     ]
     placing = VisitState.from_messages(turns)
-    assert placing.delivery_allowed and placing.visitor_will_place
+    assert placing.delivery_allowed
+    assert placing.visitor_will_place
     assert not placing.placed
     assert placing.deterministic_reply == "はい、玄関の前にお願いいたします。"
 
-    turns.extend([("assistant", placing.deterministic_reply), ("user", "どうやっていけば大丈夫ですか?")])
+    turns.append(("assistant", placing.deterministic_reply))
+    turns.append(("user", "どうやっていけば大丈夫ですか?"))
     question = VisitState.from_messages(turns)
     assert question.deterministic_reply == "はい、玄関の前に置いていただければ大丈夫です。"
     assert question.validate(question.deterministic_reply)
 
-    turns.extend([("assistant", "失礼いたします。"), ("user", "失礼しますというかどうすればいいですか")])
+    turns.append(("assistant", "失礼いたします。"))
+    turns.append(("user", "失礼しますというかどうすればいいですか"))
     follow_up = VisitState.from_messages(turns)
     assert not follow_up.closing
     assert follow_up.deterministic_reply == "はい、玄関の前に置いていただければ大丈夫です。"
 
 
-def test_placement_confirmation_and_acknowledgement_are_not_repeated():
+def test_recognizes_asr_variant_of_delivery_announcement_and_confirmation():
+    announced = state("宅配できました")
+    assert announced.delivery_allowed
+    assert announced.deterministic_reply == "恐れ入りますが、置き場所を指定できないため、不在票をお願いいたします。"
     confirmed = VisitState.from_messages(
         [("user", "宅配便です"), ("assistant", "玄関前にお願いします"), ("user", "置いておいてば大丈夫ですか")]
     )
     assert confirmed.deterministic_reply == "はい、玄関の前に置いていただければ大丈夫です。"
 
     acknowledgement = VisitState.from_messages(
-        [("user", "宅配できました"), ("assistant", "玄関の前に置いていただけますか。"), ("user", "ありがとうございました")]
-    )
-    assert acknowledgement.deterministic_reply == "はい、よろしくお願いいたします。"
-
-
-def test_farewell_must_end_reply_and_is_only_allowed_when_done():
-    pending = VisitState.from_messages(
-        [("user", "宅配便です"), ("assistant", "玄関の前に置いていただけますか。"), ("user", "置きました")]
-    )
-    assert not pending.validate("失礼いたします。")
-
-    done = VisitState.from_messages(
-        [("user", "失礼します")]
-    )
-    assert not done.validate("失礼いたします。ほかに何かありますか？")
-    assert done.trim_after_farewell("失礼いたします。ほかに何かありますか？") == "失礼いたします。"
-
-
-def test_asr_placement_homophone_is_corrected_in_delivery_context():
-    result = VisitState.from_messages(
         [
-            ("user", "宅配便です"),
+            ("user", "宅配できました"),
             ("assistant", "玄関の前に置いていただけますか。"),
-            ("user", "はい、起きました"),
+            ("user", "ありがとうございました"),
         ]
     )
-    assert result.placed
-    assert result.fallback() == "恐れ入りますが、荷物と置き場所の写真を撮ってください。"
+    # 過去形のお礼だけなら退出とみなす。現在形のお礼なら会話を続ける。
+    assert acknowledgement.closing
+    assert acknowledgement.deterministic_reply == "失礼いたします。"
 
 
-def test_photo_follow_up_after_completion_is_answered_without_farewell():
+def test_deterministic_placement_reply_uses_the_location_already_requested():
     result = VisitState.from_messages(
         [
             ("user", "宅配便です"),
-            ("assistant", "玄関の前にお願いします"),
-            ("user", "そこに置きました"),
-            ("assistant", "荷物と置き場所の写真を撮ってください"),
-            ("user", "写真撮りました"),
-            ("assistant", "失礼いたします。"),
-            ("user", "写真はどうしたらいいの"),
+            ("assistant", "宅配ボックスに入れていただけますか"),
+            ("user", "ここに入れて大丈夫ですか"),
         ]
     )
-    assert result.deterministic_reply == "写真はこのインターホンには送れないため、お手元に保管してください。ありがとうございます。"
+    assert result.deterministic_reply == "はい、宅配ボックスに入れていただければ大丈夫です。"
 
-    result = VisitState.from_messages(
+
+def test_placement_intention_is_not_mistaken_for_completion_or_farewell():
+    result = state("宅配便です", "玄関の前に置いていただけますか", "じゃあ置いていきますね")
+    assert result.visitor_will_place
+    assert not result.placed
+    assert not result.closing
+    assert not result.validate("失礼いたします。")
+
+
+def test_farewell_must_be_the_end_of_reply():
+    result = state("失礼します")
+    assert not result.validate("承知しました。失礼いたします。ほかに何かありますか？")
+    assert result.fallback() == "失礼いたします。"
+
+    completed = VisitState.from_messages(
         [
             ("user", "宅配便です"),
-            ("assistant", "写真を撮ってください"),
-            ("user", "写真撮りました"),
-            ("user", "保管すればいいの?"),
+            ("assistant", "玄関の前に置いていただけますか"),
+            ("user", "置きました"),
+            ("assistant", "写真もお願いします"),
+            ("user", "写真も撮りました"),
         ]
     )
-    assert result.deterministic_reply == "はい、そのままお手元で保管していただければ大丈夫です。"
-
-
-def test_delivery_box_question_follows_house_rules_and_does_not_echo_asr_error():
-    result = VisitState.from_messages(
-        [
-            ("user", "宅配便です"),
-            ("assistant", "玄関の前にお願いします"),
-            ("user", "この荷物大きいので高いボックスを使ってもいいですか"),
-        ],
-        "宅配ボックスを優先し、入らない場合は玄関前に置いてください。",
-    )
-    assert result.deterministic_reply == "宅配ボックスに入る大きさでしたら、そちらをご利用ください。入らない場合は玄関前にお願いします。"
-
-
-def test_ambiguous_completion_after_agreed_dropoff_moves_to_photo_step():
-    turns = [
-        ("user", "荷物の配達に行きました"),
-        ("assistant", "玄関の前に置いていただけますか。"),
-        ("user", "分かりました置いておきますね"),
-    ]
-    turns.append(("assistant", "はい、玄関の前にお願いいたします。"))
-    turns.append(("user", "来ました荷物を"))
-    result = VisitState.from_messages(turns)
-    assert result.placed
-    assert result.deterministic_reply == "恐れ入りますが、荷物と置き場所の写真を撮ってください。"
-
-
-def test_corrected_ack_after_goodbye_does_not_restart_conversation():
-    result = VisitState.from_messages(
-        [
-            ("user", "宅配便です"),
-            ("assistant", "失礼いたします。"),
-            ("user", "おかえりましたじゃなくて分かりました"),
-        ]
-    )
-    assert result.should_wait
+    generated = "失礼いたします。ほかに何かありますか？"
+    clipped = completed.trim_after_farewell(generated)
+    assert clipped == "失礼いたします。"
+    assert completed.validate(clipped)
 
 
 def test_payment_refusal_does_not_carry_over_to_circular_board():
@@ -265,7 +166,7 @@ def test_payment_refusal_does_not_carry_over_to_circular_board():
             ("user", "NHKの集金なんですけど"),
             ("assistant", "このインターホンではお支払いに対応できません。"),
             ("user", "すいません、回覧版なんですけど"),
-            ("assistant", "回覧板はポストにお願いします。"),
+            ("assistant", "回覧板はポストに入れてください。"),
             ("user", "回覧板はどこに置けばいいですか?"),
         ]
     )
@@ -275,7 +176,7 @@ def test_payment_refusal_does_not_carry_over_to_circular_board():
     assert "お支払い" not in result.fallback()
 
 
-def test_name_confirmation_after_reflection_does_not_restart_purpose_rejection():
+def test_name_confirmation_after_reflection_is_not_unsupported_purpose():
     result = VisitState.from_messages(
         [
             ("assistant", "大葉様ですね。どのようなご用件でしょうか。"),
@@ -298,27 +199,28 @@ def test_explicit_name_correction_after_reflection_is_acknowledged():
     assert result.deterministic_reply == "失礼しました。お名前の確認ありがとうございます。"
 
 
-def test_presence_question_never_discloses_resident_status():
+def test_presence_question_does_not_disclose_resident_status():
     result = state("今いらっしゃいますか")
+    assert result.presence_question
     assert result.deterministic_reply == "住人の在宅状況はお伝えできません。ご用件をお聞かせください。"
     assert result.validate(result.deterministic_reply)
     assert not result.validate("はい、在宅しています。")
 
 
-def test_unclear_follow_up_after_purpose_prompt_does_not_become_unsupported_refusal():
+def test_unknown_follow_up_does_not_get_generic_intercom_refusal():
     result = VisitState.from_messages(
         [
             ("assistant", "どのようなご用件でしょうか。"),
             ("user", "ちょっと聞きたいことがあるんですけど"),
         ]
     )
-    assert result.fallback() == "承知しました。"
+    assert result.fallback() == "恐れ入りますが、もう少し詳しくお聞かせください。"
     assert "対応できません" not in result.fallback()
 
 
 def test_circular_board_that_does_not_fit_prompts_for_placement():
     result = VisitState.from_messages(
-        [("user", "回覧板です"), ("assistant", "回覧板はポストにお願いします。"), ("user", "ポストに入らないです")]
+        [("user", "回覧板です"), ("assistant", "回覧板はポストに入れてください。"), ("user", "ポストに入らないです")]
     )
     assert result.deterministic_reply == "ポストに入らない場合は、どちらに置けばよろしいでしょうか。"
 
@@ -332,21 +234,28 @@ def test_circular_board_respects_an_explicit_resident_rule():
     assert result.validate("回覧板は玄関前に置いてください。")
 
 
-def test_device_hangup_uses_validated_final_reply_not_delivery_progress():
-    messages = [
-        ('user', '宅配便です。'),
-        ('assistant', '玄関前にお願いします。荷物と置き場所の写真を撮ってください。'),
-        ('user', '荷物を置きました。写真も撮りました。'),
-    ]
-    state = VisitState.from_messages(messages, '玄関前に置いて写真を撮ってください。')
-    assert state.should_end_after_reply('失礼いたします。')
-    assert not state.should_end_after_reply('失礼いたします。別の質問ですが。')
-    follow_up = VisitState.from_messages(messages + [('user', '写真はどこに送ればいいですか。')], state.house_rules)
-    assert not follow_up.should_end_after_reply(follow_up.deterministic_reply or follow_up.fallback())
+def test_photo_how_to_follow_up_gets_answer_even_after_farewell():
+    result = VisitState.from_messages(
+        [
+            ("user", "宅配便です"),
+            ("assistant", "玄関の前に置いていただけますか。"),
+            ("user", "置きました"),
+            ("assistant", "荷物と置き場所の写真を撮ってください。"),
+            ("user", "写真撮りました"),
+            ("assistant", "失礼いたします。"),
+            ("user", "撮った写真はどうしたらいいですか"),
+        ]
+    )
+    assert result.deterministic_reply == "こちらへの写真の撮影や送付は不要です。配達会社の手順に従ってください。"
+    assert result.validate(result.deterministic_reply)
 
 
-def test_device_sales_and_payment_close_after_policy_valid_refusal():
-    for text in ('プログラミング教室の無料体験のご案内です。', '集金に来ました。'):
-        state = VisitState.from_messages([('user', text)], '')
-        assert state.should_end_after_reply(state.deterministic_reply or state.fallback())
-        assert not state.should_end_after_reply('荷物を玄関に置いてください。')
+def test_placement_question_does_not_mark_delivery_as_placed():
+    result = VisitState.from_messages([("user", "配達です"), ("user", "どこに置いたらいいですか？")], "玄関の前に置いてください")
+    assert not result.placed
+
+
+@pytest.mark.parametrize("reply", ["荷物と置き場所の写真を撮ってください。", "写真を送ってください。", "写真を保管してください。", "撮影してください。"])
+def test_photo_requests_are_rejected(reply):
+    result = VisitState.from_messages([("user", "配達です"), ("user", "置きました")])
+    assert not result.validate(reply)

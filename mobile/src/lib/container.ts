@@ -1,6 +1,7 @@
 // どの実装を使うかを決める唯一の場所。画面と hooks はここからリポジトリを受け取る
 import { supabaseAccountRepository } from '../infrastructure/supabase/accountRepository';
 import { supabaseAssistantRepository } from '../infrastructure/supabase/assistantRepository';
+import { supabaseChimeEnrollmentRepository } from '../infrastructure/supabase/chimeEnrollmentRepository';
 import { supabaseDeviceRepository } from '../infrastructure/supabase/deviceRepository';
 import { supabaseGroupRepository } from '../infrastructure/supabase/groupRepository';
 import { supabaseNotificationRepository } from '../infrastructure/supabase/notificationRepository';
@@ -18,6 +19,7 @@ export const repositories: Repositories = {
   providers: supabaseProviderRepository,
   visits: supabaseVisitRepository,
   devices: supabaseDeviceRepository,
+  chimeEnrollment: supabaseChimeEnrollmentRepository,
   pusherSettings: supabasePusherSettingsRepository,
   shop: supabaseShopRepository,
   notifications: supabaseNotificationRepository,

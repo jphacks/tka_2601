@@ -42,7 +42,7 @@ static route_t get_route, put_route;
 static char put_bodies[512][160];
 static uint32_t put_times[512];
 static unsigned put_count;
-static bool voice_busy;
+static bool voice_busy, call_during_get;
 static uint32_t fake_now;
 struct net_stream { char request[1024]; size_t length; char response[600]; size_t size, offset; bool built; };
 bool voice_stream_busy(void) { return voice_busy; }
@@ -67,6 +67,7 @@ static void build(net_stream_t *stream)
     else if(!strncmp(stream->request,"PUT /functions/v1/device/chime-enrollment-status ",strlen("PUT /functions/v1/device/chime-enrollment-status "))) route=&put_route;
     check(route!=NULL);
     ++route->hits;
+    if(route==&get_route && call_during_get) { voice_busy=true; call_during_get=false; }
     check(strstr(stream->request,"Authorization: Bearer test-device-key\r\n") && strstr(stream->request,"apikey: test-publishable-key\r\n"));
     if(route==&put_route) {
         const char *body=strstr(stream->request,"\r\n\r\n")+4;
@@ -259,7 +260,10 @@ static void a_cancel_is_reported_as_cancelled(void)
     /* If the queue is full the cancel cannot be posted; the real phase is reported. */
     fake_queue_full=true; set_phase(AUDIO_ENROLL_LISTEN,CHIME_REASON_NONE); run_for(1000,200);
     get_is(true,6,"cancel"); run_for(6000,200);
-    check(last_put_is("{\"handled_seq\":6,\"phase\":\"listen\",\"reason\":null,\"registered\":true}"));
+    check(count_puts_with("\"handled_seq\":6,")==0);
+    fake_queue_full=false; run_for(5000,200);
+    check(fake_status.phase==AUDIO_ENROLL_CANCELLED);
+    check(last_put_is("{\"handled_seq\":6,\"phase\":\"cancelled\",\"reason\":null,\"registered\":true}"));
 }
 static void a_start_the_device_cannot_run_is_busy_and_handled(void)
 {
@@ -384,6 +388,20 @@ static void a_call_in_progress_sends_nothing(void)
     for(unsigned i=0;i<100;++i) { fake_now+=200; chime_enroll_sync_step(false); }
     check(get_route.hits+put_route.hits==hits);
 }
+static void a_call_started_during_fetch_defers_the_request(void)
+{
+    boot(); get_is(true,0,NULL); run_for(1000,200);
+    get_is(true,1,"start"); call_during_get=true;
+    unsigned before=put_count;
+    run_for(4000,200);
+    check(voice_busy && start_calls==0 && put_count==before);
+    /* Resume immediately after the call and fetch again; seq 1 was not consumed. */
+    voice_busy=false;
+    run_for(1000,200);
+    check(start_calls==1 && fake_status.phase==AUDIO_ENROLL_NOISE);
+    check(last_put_is("{\"handled_seq\":1,\"phase\":\"noise\",\"reason\":null,\"registered\":false}"));
+    run_for(6000,200); check(start_calls==1);
+}
 static void enrollment_does_not_depend_on_the_device_mode(void)
 {
     /* The sync step has no mode input: a start is accepted whatever mode the app chose (stop included). */
@@ -422,6 +440,7 @@ int main(void)
     SCENARIO(a_409_with_a_lower_cloud_seq_follows_the_cloud);
     SCENARIO(failed_reports_retry_with_backoff_and_a_new_phase_goes_out_at_once);
     SCENARIO(a_call_in_progress_sends_nothing);
+    SCENARIO(a_call_started_during_fetch_defers_the_request);
     SCENARIO(enrollment_does_not_depend_on_the_device_mode);
     printf("chime enroll sync: %u scenarios passed\n",scenarios);
     return 0;
