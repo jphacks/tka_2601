@@ -5,6 +5,7 @@
 #include "net_state.h"
 #include "playback.h"
 #include "servo_control.h"
+#include "timing.h"
 #include "tune.h"
 #include "voice_settings.h"
 #include "voice_transport.h"
@@ -21,7 +22,7 @@ typedef struct {
     voice_transport_t server;
     uint32_t session, turn, input_count, output_count, output_ack, listen_generation;
     uint32_t next_turn, input_report_count;
-    bool output_ended, end_after_playback, may_have_answered, playback_reported;
+    bool output_ended, end_after_playback, may_have_answered, playback_reported, playback_start_marked;
     const char *io_failure;
     call_state_t state;
     uint32_t began, phase, last_server, last_ping, playback_done;
@@ -131,7 +132,8 @@ static bool server_packet(const voice_packet_t *p)
             audio_link()->voice_record_enabled=0; audio_link_release();
         }
         call.output_count=call.output_ack=0;
-        call.output_ended=call.end_after_playback=call.playback_reported=false;
+        call.output_ended=call.end_after_playback=call.playback_reported=call.playback_start_marked=false;
+        timing_mark("reply_start",call.turn,net_now_ms());
         if (!playback_open(net_now_ms())) { call.io_failure="speaker_busy"; return false; }
         phase(PLAYING); xlog("[VOICE] Response %lu: recording paused, playing on speaker.\n",(unsigned long)call.turn);
         return true;
@@ -153,6 +155,7 @@ static bool server_packet(const voice_packet_t *p)
     case VOICE_CALL_END:
         if (call.state!=WAIT_LISTEN && call.state!=WAIT_REPLY) return false;
         if (!servo_end_press()) { call.io_failure="end_button_failed"; return false; }
+        timing_mark("end_press_requested",call.turn,net_now_ms());
         phase(ENDING); return true;
     default: return false;
     }
@@ -161,6 +164,11 @@ static bool server_packet(const voice_packet_t *p)
 static bool playback_progress(void)
 {
     if (call.state!=PLAYING) return true;
+    uint32_t started=playback_started_ms();
+    if (started && !call.playback_start_marked) {
+        call.playback_start_marked=true;
+        timing_mark("playback_start",call.turn,started);
+    }
     const char *error=playback_error();
     if (error) { call.io_failure=error; return false; }
     uint32_t credit=playback_credit();
@@ -180,6 +188,7 @@ static bool playback_progress(void)
         call.playback_done=net_now_ms();
         if (!relay(&h)) return false;
         xlog("[VOICE] Playback complete: turn %lu.\n",(unsigned long)call.turn);
+        timing_mark("playback_done",call.turn,call.playback_done);
         phase(WAIT_LISTEN);
     }
     return true;
@@ -294,6 +303,7 @@ static bool begin_listen(void)
     audio_link_release(); call.listen_generation=++s->voice_listen_seq; audio_link_release();
     phase(LISTENING);
     xlog("[VOICE] Listening: turn %lu; max 30s / silence 1.2s.\n",(unsigned long)call.turn);
+    timing_mark("listen_start",call.turn,net_now_ms());
     return true;
 }
 static bool capture_step(void)
@@ -357,6 +367,7 @@ static bool capture_step(void)
             if(!voice_transport_legacy(&call.server))call_diag.input_end_sent=1;
             s->voice_record_enabled=0; audio_link_release();
             phase(WAIT_REPLY);
+            timing_mark("speech_end",call.turn,net_now_ms());
             xlog("[VOICE] Input complete: %lu ms; recording paused.\n",(unsigned long)(call.input_count*20));
         }
     }
@@ -390,6 +401,7 @@ static bool connect_server(const char **reason)
     *reason="server_ready_failed";
     if (!control(VOICE_HELLO,0,0) || !await_ready()) return false;
     xlog("[VOICE] Server ready: /api/relay protocol %u.\n",voice_transport_legacy(&call.server)?1u:2u);
+    timing_mark("relay_ready",0,net_now_ms());
     return true;
 }
 static void enter_recovery(bool end_pending)
@@ -406,6 +418,7 @@ static bool run_call(uint32_t session)
     call_diag_greeting_seen=false;
     bool success=false, release=false, opened=false, button_attempted=false;
     const char *reason="capture_pause_failed";
+    timing_mark("call_start",0,net_now_ms());
     xlog("[VOICE] Preparing streaming call.\n");
     if (!pause_capture(true)) goto cleanup;
     /* Without valid settings no call can follow: leave the intercom alone instead of answering and hanging up. */
@@ -431,6 +444,7 @@ static bool run_call(uint32_t session)
     call.may_have_answered=button_attempted=true;
     reason="call_button_failed";
     if (!servo_call_press()) goto cleanup;
+    timing_mark("call_press_requested",0,net_now_ms());
     xlog("[VOICE] Waiting for one call-button press and release; voice agent not started.\n");
     if (!await_call_started() || stop_requested) {
         if (call.io_failure) reason=call.io_failure;
@@ -491,6 +505,7 @@ cleanup:
     call_diag.reason=voice_call_diag_reason(reason);call_diag.phase=(uint32_t)call.state;
     call_diag.turn=call.turn;call_diag.ended_ms=net_now_ms();
     pending_call_diag=call_diag;call_diag_pending=true;
+    timing_mark("call_end",call.turn,net_now_ms());
     xlog("[VOICE] Call ending: reason=%s state=%u turn=%lu input_ms=%lu.\n",
         reason,(unsigned)call.state,(unsigned long)call.turn,(unsigned long)(call.input_count*20u));
     audio_link()->voice_record_enabled=0; audio_link_release();

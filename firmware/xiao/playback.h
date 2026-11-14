@@ -30,6 +30,8 @@ bool playback_full(void);
 uint32_t playback_credit(void);
 /* Queue, speaker writes and DMA drain are all complete. */
 bool playback_done(void);
+/* When the speaker started for the current response (ms clock), 0 until it has. */
+uint32_t playback_started_ms(void);
 /* Static reason once playback has failed, otherwise NULL. */
 const char *playback_error(void);
 /* Discard everything. playback_idle turns true once the speaker task let go. */
