@@ -89,6 +89,23 @@ class ClosureRegressions(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertFalse(state(text).closing)
 
+    def test_promise_to_return_later_closes_like_main(self):
+        # These closed on main; "あとで" must not be read as "あと" (another request).
+        for text in [
+            "あとでまた来ます", "あとで伺います", "失礼します。また来ます", "失礼しますまた来ます",
+            "また来ます", "改めて伺います", "後でまた来ます", "ありがとうございました。また来ます",
+            "じゃあまた来ますね", "失礼しますね",
+        ]:
+            with self.subTest(text=text):
+                result = state(text)
+                self.assertTrue(result.closing)
+                self.assertEqual(result.deterministic_reply, "失礼いたします。")
+
+    def test_after_and_desune_still_mark_a_follow_up(self):
+        for text in ["ありがとうございました。あとですね、サインをお願いします。", "あと、伝票にサインをお願いします。"]:
+            with self.subTest(text=text):
+                self.assertFalse(state(text).closing)
+
     def test_explicit_parcel_completion_recovers_unknown_purpose(self):
         for text in ["荷物を置きました", "お荷物は玄関の前に置いておきました", "荷物を置いてきました"]:
             with self.subTest(text=text):

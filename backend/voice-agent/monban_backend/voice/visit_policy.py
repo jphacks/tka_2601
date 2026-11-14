@@ -80,15 +80,22 @@ _DELIVERY_LOCATION_BLOCKED = re.compile(
 
 # Match an actual final turn, not a quoted farewell or a polite introduction.
 # Present-tense thanks alone are an acknowledgement while the visit continues.
+# A promise to come back later ("また来ます", "あとで伺います") is a departure too,
+# including when it follows a goodbye in the same turn ("失礼します。また来ます").
+_LEAVE = (
+    r"(?:失礼(?:いた)?します|さようなら|さよなら|帰ります|おいとまします|ありがとうございました|"
+    r"(?:また|改めて|後で|あとで).*?(?:来ます|伺います|きます))(?:ね|よ)?"
+)
 _DEPARTURE_TURN = re.compile(
     r"(?:(?:はい|ええ|うん|では|それでは|じゃあ|どうも|承知しました|承知いたしました|"
     r"わかりました|分かりました|かしこまりました|ありがとうございます|ありがとう))*"
-    r"(?:失礼(?:いた)?します|さようなら|さよなら|帰ります|おいとまします|ありがとうございました)"
-    r"(?:(?:ありがとうございました|ありがとうございます|ありがとう|どうも|失礼(?:いた)?します))*"
+    + _LEAVE
+    + r"(?:" + _LEAVE + r"|ありがとうございます|ありがとう|どうも)*"
 )
 _FOLLOW_UP = re.compile(
     r"(?:どう(?!も)|どこ|何|なに|ですか|でしょうか|違う|ちがう|教えて|質問|確認したい)|"
-    r"(?:あと|それと|それから|もう一つ|ついでに|まだ).+|"
+    # "あと" introduces another request, but "あとで" (later) does not; "あとですね" still does.
+    r"(?:あと(?!で(?!す))|それと|それから|もう一つ|ついでに|まだ).+|"
     r"(?:サイン|署名|受領印|支払|印鑑).{0,16}(?:必要|お願|ください|いただ|もら|して)"
 )
 _PLACED = re.compile(
@@ -115,11 +122,7 @@ def _visitor_is_leaving(text: str) -> bool:
     # ASR may supply punctuation between a completed task and the final goodbye.
     clauses = [part for part in re.split(r"[。.!！\n]+", text) if part.strip()]
     final_clause = _compact(clauses[-1]) if clauses else value
-    return bool(
-        _DEPARTURE_TURN.fullmatch(value)
-        or _DEPARTURE_TURN.fullmatch(final_clause)
-        or re.fullmatch(r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)", value)
-    )
+    return bool(_DEPARTURE_TURN.fullmatch(value) or _DEPARTURE_TURN.fullmatch(final_clause))
 
 
 def _placement_result(text: str) -> bool | None:
