@@ -1,4 +1,4 @@
-"""On-demand Modal TTS endpoint backed by speech.cpp and Irodori v4.1 Small-MF."""
+"""Always-warm Modal TTS endpoint backed by speech.cpp and Irodori v4.1 Small-MF."""
 from __future__ import annotations
 
 import hmac
@@ -40,12 +40,13 @@ def _authorized(request: Request) -> None:
 
 @app.function(
     image=IMAGE,
-    gpu=["L4", "A10", "T4"],
+    gpu=["L4", "A10"],
     cpu=4,
     memory=16384,
     volumes={"/models": VOLUME},
     secrets=[modal.Secret.from_name("monban-inference")],
-    min_containers=0,
+    # Always one warm container: a cold start or a T4 added seconds to the first reply (#82).
+    min_containers=1,
     scaledown_window=60,
     timeout=900,
 )

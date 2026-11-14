@@ -1,4 +1,4 @@
-"""On-demand Japanese ASR endpoint for Kotoba-Whisper v2.1."""
+"""Always-warm Japanese ASR endpoint for Kotoba-Whisper v2.1."""
 from __future__ import annotations
 
 import asyncio
@@ -74,12 +74,13 @@ def _infer(audio: np.ndarray, language: str):
 
 @app.function(
     image=IMAGE,
-    gpu=["L4", "A10", "T4"],
+    gpu=["L4", "A10"],
     cpu=4,
     memory=16384,
     volumes={"/models": VOLUME},
     secrets=[modal.Secret.from_name("monban-inference")],
-    min_containers=0,
+    # Always one warm container: a cold start or a T4 added seconds to the first reply (#82).
+    min_containers=1,
     scaledown_window=60,
     timeout=900,
 )
