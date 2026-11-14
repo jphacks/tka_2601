@@ -98,11 +98,31 @@ pub async fn warm_models(settings: &Settings) -> bool {
             return false;
         }
     };
+    let clients = WarmClients { asr: http.clone(), llm: http.clone(), tts: http };
+    warm_models_with(settings, &clients).await
+}
+
+/// The HTTP clients the call itself uses. Warming through them also leaves their TLS
+/// connections open, so the visitor's first request skips the handshake (two round trips
+/// to Modal's us-east, about 0.5 s from Japan).
+#[derive(Clone)]
+pub struct WarmClients {
+    pub asr: reqwest::Client,
+    pub llm: reqwest::Client,
+    pub tts: reqwest::Client,
+}
+
+/// [`warm_models`] through the given clients.
+pub async fn warm_models_with(settings: &Settings, clients: &WarmClients) -> bool {
+    if !settings.warmup_enabled {
+        return true;
+    }
+    let limit = Duration::from_secs_f64(settings.warmup_timeout_seconds);
     let started = Instant::now();
     let (asr, llm, tts) = tokio::join!(
-        warm_asr(&http, settings, limit),
-        warm_llm(&http, settings, limit),
-        warm_tts(&http, settings, limit),
+        warm_asr(&clients.asr, settings, limit),
+        warm_llm(&clients.llm, settings, limit),
+        warm_tts(&clients.tts, settings, limit),
     );
     let mut ok = true;
     for (name, result) in [("asr", asr), ("llm", llm), ("tts", tts)] {
@@ -161,6 +181,8 @@ pub const CALL_WARMUP_FRESH: Duration = Duration::from_secs(30);
 #[derive(Default)]
 pub struct CallWarmup {
     state: Mutex<CallWarmupState>,
+    /// The call's own clients; without them a separate client is used.
+    clients: Option<WarmClients>,
 }
 
 #[derive(Default)]
@@ -170,6 +192,11 @@ struct CallWarmupState {
 }
 
 impl CallWarmup {
+    /// Warm through the clients the calls use, so their connections stay open.
+    pub fn with_clients(clients: WarmClients) -> Self {
+        Self { state: Mutex::default(), clients: Some(clients) }
+    }
+
     /// Start a warm-up unless one is running or one started successfully within `fresh`.
     /// Returns whether one was started. Never blocks the call.
     pub fn wake(self: &Arc<Self>, settings: Arc<Settings>, fresh: Duration) -> bool {
@@ -188,7 +215,10 @@ impl CallWarmup {
         state.task = Some(runtime.spawn(async move {
             let started = Instant::now();
             tracing::info!("call_warmup_started");
-            let ok = warm_models(&settings).await;
+            let ok = match &this.clients {
+                Some(clients) => warm_models_with(&settings, clients).await,
+                None => warm_models(&settings).await,
+            };
             if ok {
                 let mut state = this.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 state.last_ok = Some(started);

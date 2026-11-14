@@ -67,6 +67,11 @@ pub struct SpeechCppTts {
 }
 
 impl SpeechCppTts {
+    /// The HTTP client (a clone shares its connection pool), for the call-start warm-up.
+    pub fn http(&self) -> reqwest::Client {
+        self.http.clone()
+    }
+
     pub fn new(settings: Arc<Settings>) -> Self {
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)

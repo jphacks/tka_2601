@@ -95,12 +95,17 @@ impl SpeechBackend for SpeechCppBackend {
 pub fn live_models(settings: Arc<Settings>, http: reqwest::Client) -> super::runtime::Models {
     let tts = SpeechCppTts::new(settings.clone());
     tts.schedule_greeting_prewarm();
+    let llm = LlmClient::new(settings.clone());
+    let stt = SttClient::new(settings.clone());
+    let call_warmup = Arc::new(super::clients::warmup::CallWarmup::with_clients(
+        super::clients::warmup::WarmClients { asr: stt.http(), llm: llm.http(), tts: tts.http() },
+    ));
     super::runtime::Models {
         device_api: crate::persistence::device_api::DeviceApi::new(http, &settings),
-        chat: Arc::new(LlmChatModel(LlmClient::new(settings.clone()))),
+        chat: Arc::new(LlmChatModel(llm)),
         speech: Arc::new(SpeechCppBackend { tts }),
-        recognizer: Arc::new(SttRecognizer(SttClient::new(settings.clone()))),
-        call_warmup: Arc::default(),
+        recognizer: Arc::new(SttRecognizer(stt)),
+        call_warmup,
         settings,
     }
 }

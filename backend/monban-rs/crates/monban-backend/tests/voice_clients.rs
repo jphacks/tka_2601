@@ -1054,6 +1054,30 @@ async fn call_warmup_runs_one_at_a_time_and_skips_after_a_recent_success() {
     assert!(!Arc::new(warmup::CallWarmup::default()).wake(disabled, Duration::ZERO));
 }
 
+#[tokio::test]
+async fn call_warmup_uses_the_given_clients() {
+    let server = fake(handler(|_, recorded| match recorded.path.as_str() {
+        "/v1/audio/speech" => response(200, "audio/pcm", vec![0u8; 64]),
+        _ => response(200, "application/json", "{}"),
+    }))
+    .await;
+    let settings = settings_for(&server.base, &[("DOOR_WARMUP", "1")]);
+    let http = reqwest::Client::new();
+    let clients = warmup::WarmClients { asr: http.clone(), llm: http.clone(), tts: http };
+    assert!(warmup::warm_models_with(&settings, &clients).await);
+    let mut paths: Vec<String> = server.requests().into_iter().map(|r| r.path).collect();
+    paths.sort();
+    assert_eq!(paths, ["/v1/audio/speech", "/v1/audio/transcriptions", "/v1/chat/completions"]);
+    let wake = Arc::new(warmup::CallWarmup::with_clients(clients));
+    assert!(wake.wake(settings, Duration::ZERO));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.requests().len() < 6 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(server.requests().len(), 6);
+    wake.shutdown().await;
+}
+
 #[path = "support/relay_latency.rs"]
 mod relay_latency;
 
