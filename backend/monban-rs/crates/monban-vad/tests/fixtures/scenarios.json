@@ -1,0 +1,20 @@
+{
+ "s01_single": {},
+ "s02_two_utterances": {},
+ "s03_short_gap": {},
+ "s04_low_noise": {},
+ "s05_noise_only": {},
+ "s06_silence_only": {},
+ "s07_cut_mid_speech": {},
+ "s08_quiet": {},
+ "s09_short_bursts": {},
+ "s10_max_buffered": {
+  "options": {
+   "max_buffered_speech": 1.0
+  }
+ },
+ "s11_flush": {
+  "flush_after_samples": 32000
+ },
+ "s12_snr_low": {}
+}

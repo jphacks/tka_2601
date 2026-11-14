@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/monban-policy", "crates/monban-backend"]
+members = ["crates/monban-policy", "crates/monban-backend", "crates/monban-vad"]
 
 [workspace.package]
 version = "2.0.0"
@@ -23,6 +23,9 @@ futures = "0.3"
 hex = "0.4"
 http-body-util = "0.1"
 jsonwebtoken = "9"
+# ONNX Runtime 1.31 (the version the Python voice agent runs), statically linked from the
+# prebuilt binaries ort downloads at build time; rustls so the build needs no OpenSSL.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
 serde = { version = "1", features = ["derive"] }
