@@ -4,6 +4,15 @@ import type { Mode } from '../domain/visit';
 // 最後の通信からこの時間を過ぎたら、本体との通信が途切れたとみなす
 export const STALE_AFTER_MS = 15 * 60_000;
 
+// 反映待ちの間に本体情報を取り直す回数の上限。約3分で諦め、画面を開き直せばまた始める
+export const PENDING_REFRESH_LIMIT = 20;
+
+// 反映待ちの間に本体情報を取り直す間隔。本体は15秒ごとにモードを取りに来て、
+// 適用したらすぐ報告する。最初の1分は5秒ごと、その後は15秒ごとに取り直す
+export function pendingRefreshDelay(attempt: number): number {
+  return attempt < 12 ? 5_000 : 15_000;
+}
+
 export type DeviceStatusRow = {
   // 本体が報告した適用中のモード。報告がなければ null（画面では 未報告 と出す）
   applied: Mode | null;

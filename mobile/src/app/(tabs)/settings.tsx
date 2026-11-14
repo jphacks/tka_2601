@@ -1,6 +1,6 @@
 import { router, useFocusEffect } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { Fragment, useCallback, useState } from 'react';
+import { Fragment, useCallback, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -16,7 +16,7 @@ import { useHousehold } from '../../lib/auth';
 import { deleteAccount } from '../../lib/authActions';
 import { confirmAction } from '../../lib/confirm';
 import { repositories } from '../../lib/container';
-import { deviceStatusRow } from '../../lib/deviceStatus';
+import { deviceStatusRow, PENDING_REFRESH_LIMIT, pendingRefreshDelay } from '../../lib/deviceStatus';
 import { errorMessage } from '../../lib/errors';
 import { features } from '../../lib/features';
 import { integrationRoute, integrationStatus, type Integration, visibleIntegrations } from '../../lib/integrations';
@@ -46,6 +46,10 @@ export default function SettingsScreen() {
   const [serviceCount, setServiceCount] = useState<number | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // 保存中の本体設定の数。0 より大きい間は、反映待ちの取り直しを止める
+  const [saving, setSaving] = useState(0);
+  // 本体設定を変えた回数。取り直しの結果が変更より古いときに捨てるために使う
+  const edits = useRef(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -93,12 +97,17 @@ export default function SettingsScreen() {
   async function change(patch: DevicePatch) {
     if (!device) return;
     const previous = device;
+    // 保存の途中や後に、古い本体情報で画面を上書きしないよう、取り直しの世代を進める
+    edits.current += 1;
+    setSaving((count) => count + 1);
     setDevice({ ...device, ...patch });
     try {
       await repositories.devices.update(device.id, patch);
     } catch (e) {
       setDevice(previous);
       Alert.alert('変更できませんでした', errorMessage(e) ?? '');
+    } finally {
+      setSaving((count) => count - 1);
     }
   }
 
@@ -113,6 +122,36 @@ export default function SettingsScreen() {
   }
 
   const status = device ? deviceStatusRow(device, new Date()) : null;
+  const pending = status?.pending ?? false;
+
+  // 反映待ちの間だけ、本体が適用を報告したかを取り直す。保存中は待ち、反映したら止める
+  useFocusEffect(
+    useCallback(() => {
+      if (!pending || saving > 0) return;
+      let active = true;
+      let attempt = 0;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const generation = edits.current;
+      const schedule = () => {
+        timer = setTimeout(async () => {
+          try {
+            const current = await repositories.devices.get(household.id);
+            if (active && current && generation === edits.current) setDevice(current);
+          } catch {
+            // 取り直しの失敗は表示しない。次の回でまた試す
+          }
+          attempt += 1;
+          if (active && attempt < PENDING_REFRESH_LIMIT) schedule();
+        }, pendingRefreshDelay(attempt));
+      };
+      schedule();
+      return () => {
+        active = false;
+        if (timer) clearTimeout(timer);
+      };
+    }, [pending, saving, household.id]),
+  );
+
   const appliedLabel = status ? (status.applied ? MODE_LABELS[status.applied] : '未報告') : '';
   const statusText = status
     ? `本体の適用 ${appliedLabel}${status.pending ? ' 反映待ち' : ''}、${status.communication}`

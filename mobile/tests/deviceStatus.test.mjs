@@ -53,3 +53,14 @@ test('片方だけ欠けるときは、あるほうを出して欠けたほう�
 test('読めない時刻は届いていないものとして扱う', () => {
   assert.equal(deviceStatusRow({ mode: 'normal', applied_mode: null, last_heartbeat_at: 'x' }, NOW), null);
 });
+
+test('反映待ちの取り直しは、最初の1分は5秒ごと、その後は15秒ごとで、約3分で止める', async () => {
+  const { PENDING_REFRESH_LIMIT, pendingRefreshDelay } = await import('../src/lib/deviceStatus.ts');
+  assert.equal(pendingRefreshDelay(0), 5_000);
+  assert.equal(pendingRefreshDelay(11), 5_000);
+  assert.equal(pendingRefreshDelay(12), 15_000);
+  let total = 0;
+  for (let attempt = 0; attempt < PENDING_REFRESH_LIMIT; attempt += 1) total += pendingRefreshDelay(attempt);
+  // 本体は15秒ごとにモードを取りに来るので、何度か取り逃しても間に合う長さにする
+  assert.ok(total >= 120_000 && total <= 240_000, `total=${total}`);
+});
