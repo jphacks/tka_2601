@@ -1,0 +1,15 @@
+[package]
+name = "monban-policy"
+description = "Pure conversation rules for the Monban reception (ported from monban_backend.reception / voice.visit_policy)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+fancy-regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-normalization.workspace = true
