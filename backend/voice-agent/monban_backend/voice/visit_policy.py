@@ -23,7 +23,7 @@ def _is_filler(text: str) -> bool:
 # farewell, replying to these again would repeat the goodbye (spec 5.6 rule 8 says it once).
 _CLOSE_ACK = re.compile(
     r"^(?:はい|ええ|うん|そう|そうですね|そうですか|わかりました|分かりました|かしこまりました|"
-    r"大丈夫です|大丈夫|ありがとうございます|ありがとう|どうも|お願いします|失礼します|失礼いたします|"
+    r"大丈夫です|大丈夫|ありがとうございます|ありがとうございました|ありがとう|どうも|お願いします|失礼します|失礼いたします|"
     r"じゃあ|では|それでは)+$"
 )
 _FAREWELL = re.compile(r"(?:失礼(?:いた)?します|さようなら|お気をつけて(?:お帰りください)?)")
@@ -77,6 +77,68 @@ _DELIVERY_LOCATION_BLOCKED = re.compile(
     r"(?:宅配ボックス|ボックス|箱).{0,12}(?:いっぱい|満杯|空きがない|入らない|故障|使えない|壊れ)|"
     r"(?:いっぱい|満杯|空きがない|入らない|故障|使えない|壊れ).{0,12}(?:宅配ボックス|ボックス|箱)"
 )
+
+# Match an actual final turn, not a quoted farewell or a polite introduction.
+# Present-tense thanks alone are an acknowledgement while the visit continues.
+_DEPARTURE_TURN = re.compile(
+    r"(?:(?:はい|ええ|うん|では|それでは|じゃあ|どうも|承知しました|承知いたしました|"
+    r"わかりました|分かりました|かしこまりました|ありがとうございます|ありがとう))*"
+    r"(?:失礼(?:いた)?します|さようなら|さよなら|帰ります|おいとまします|ありがとうございました)"
+    r"(?:(?:ありがとうございました|ありがとうございます|ありがとう|どうも|失礼(?:いた)?します))*"
+)
+_FOLLOW_UP = re.compile(
+    r"(?:どう(?!も)|どこ|何|なに|ですか|でしょうか|違う|ちがう|教えて|質問|確認したい)|"
+    # 「あとで」 is a time (「あとでまた来ます」), not 「あと、…」 introducing another request.
+    r"(?:あと(?!で)|それと|それから|もう一つ|ついでに|まだ).+|"
+    r"(?:サイン|署名|受領印|支払|印鑑).{0,16}(?:必要|お願|ください|いただ|もら|して)"
+)
+_PLACED = re.compile(
+    r"置(?:きました|き終わりました|き終えました|いた|いておきました|いてきました|"
+    r"いてあります|かせていただきました)|"
+    r"入れ(?:ました|た|ておきました|てきました|てあります)|設置(?:しました|済み)"
+)
+_NOT_PLACED = re.compile(
+    r"(?:置(?:いておき|いてあり|いて|け|か|き)|入れ(?:て|られ)?|設置(?:して|できて)?)"
+    r"(?:は|も)?(?:いませんでした|おりませんでした|いなかった|いません|おりません|いない|ません|なかった|ない)|"
+    r"(?:置いた|入れた|設置した)(?:わけ|こと|覚え|つもり|の)(?:では|じゃ|は|が|も)?(?:ありません|ない|なかった)"
+)
+_REVISIT = re.compile(r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)")
+_REPORTED_LANGUAGE = re.compile(r"引用|復唱|読み上げ|(?:と|って)(?:言|伝え|聞|書|話)")
+
+
+def _has_follow_up(text: str) -> bool:
+    return bool(re.search(r"[?？]", text) or _FOLLOW_UP.search(_compact(text)) or _REPORTED_LANGUAGE.search(text))
+
+
+def _visitor_is_leaving(text: str) -> bool:
+    if _has_follow_up(text):
+        return False
+    value = _compact(text)
+    # ASR may supply punctuation between a completed task and the final goodbye.
+    clauses = [part for part in re.split(r"[。.!！\n]+", text) if part.strip()]
+    final_clause = _compact(clauses[-1]) if clauses else value
+    return bool(
+        _DEPARTURE_TURN.fullmatch(value)
+        or _DEPARTURE_TURN.fullmatch(final_clause)
+        or _REVISIT.fullmatch(value)
+        or _REVISIT.fullmatch(final_clause)
+    )
+
+
+def _placement_result(text: str) -> bool | None:
+    # A quoted/reporting expression is not the visitor reporting their own action.
+    if _REPORTED_LANGUAGE.search(text):
+        return None
+    unquoted = re.sub(r'「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"', "", text)
+    value = _compact(unquoted)
+    negatives = list(_NOT_PLACED.finditer(value))
+    last_negative = negatives[-1].end() if negatives else -1
+    completed = [match for match in _PLACED.finditer(value) if not re.match(
+        r"(?:か|っけ|ら|り|場合|こと|わけ|覚え|つもり|のでは|のじゃ|とは|と言|って|という|と書)", value[match.end():]
+    )]
+    if completed and completed[-1].start() >= last_negative:
+        return True
+    return False if negatives else None
 
 
 def _positive_purpose(text: str) -> str:
@@ -185,10 +247,7 @@ class VisitState:
             answered_photo_question = state.pending_question == "photo"
             if state.pending_question:
                 state.pending_question = None
-            asks_follow_up = bool(re.search(r"(?:というか|どう|どこ|何|なに|ですか|でしょうか|大丈夫)", value))
-            state.closing = not asks_follow_up and bool(
-                re.search(r"(?:また|改めて|後で|あとで).*(?:来ます|伺います|きます)|失礼します|さようなら|帰ります", value)
-            )
+            state.closing = _visitor_is_leaving(text)
             denied = bool(_DELIVERY_DENIED.search(value))
             if denied:
                 state.no_parcel = True
@@ -197,6 +256,14 @@ class VisitState:
                     state.placed = state.photographed = state.visitor_will_place = False
 
             topic = _purpose_from_text(value)
+            placement_result = _placement_result(text)
+            if (
+                topic == "unknown" and state.purpose == "unknown" and not denied
+                and placement_result is True and re.search(r"お?荷物|宅配|配達|配送", value)
+            ):
+                # An earlier introduction may have been mistranscribed. An explicit
+                # parcel completion is sufficient evidence of the delivery topic.
+                topic = "delivery"
             previous_asked_about_name_and_purpose = bool(
                 re.search(r"[一-龯々ぁ-んァ-ヶー]{1,8}(?:さん|様)", previous_assistant)
                 and re.search(r"用件.*(?:伺|聞|教)|どのような.*用", previous_assistant)
@@ -248,8 +315,8 @@ class VisitState:
                     state.requested_delivery_location = "玄関の前"
                 if _WILL_PLACE.search(value):
                     state.visitor_will_place = True
-                if re.search(r"(?:置きました|置いて(?:おき)?ました|置いた(?!ら|り|場合)|入れました|入れて(?:おき)?ました|入れた(?!ら|り|場合)|設置しました)", value):
-                    state.placed = True
+                if placement_result is not None:
+                    state.placed = placement_result
                 if re.search(r"写真.*(?:撮りました|撮った|撮影しました|撮影済み)", value) or (
                     answered_photo_question
                     and re.search(r"(?:撮りました|撮った|撮影しました|撮影済み|終わりました)", value)
@@ -330,6 +397,8 @@ class VisitState:
         """Return a short, unambiguous reply when the conversation state is clear."""
         value = _compact(self.latest_user_text)
         location = self.requested_delivery_location
+        if self.closing:
+            return "失礼いたします。"
         if self.repetition_complaint:
             if self.purpose == "circular_board" and self.circular_board_placed:
                 return "申し訳ありません。回覧板はポストに入れてくださったのですね。同じお願いを繰り返して失礼しました。"
@@ -365,7 +434,7 @@ class VisitState:
         if not self.delivery_allowed:
             return None
         if self.placed:
-            if not re.search(r"(?:どう|どこ|何|なに|ですか|でしょうか|大丈夫|違う|ちがう|教えて)", value):
+            if not _has_follow_up(self.latest_user_text):
                 return "失礼いたします。"
             return None
         if not location:
@@ -412,8 +481,10 @@ class VisitState:
             if self.has_circular_board_rule:
                 return "承知しました。"
             return "回覧板はポストに入れてください。入らない場合はお知らせください。"
-        if self.placed:
+        if self.placed and not _has_follow_up(self.latest_user_text):
             return "失礼いたします。"
+        if self.placed and _has_follow_up(self.latest_user_text):
+            return "恐れ入りますが、追加で必要な対応をお聞かせください。"
         if self.name_confirmation:
             return "失礼しました。お名前の確認ありがとうございます。"
         if self.presence_question:
@@ -442,6 +513,8 @@ class VisitState:
         if farewell and reply[farewell.end():].strip(" 。.!！\t\r\n"):
             return False
         if farewell and not (self.closing or self.placed):
+            return False
+        if farewell and not self.closing and _has_follow_up(self.latest_user_text):
             return False
         if re.search(r"(?:写真.{0,20}(?:撮って|撮影して|撮影を|送って|送信して|送付して|保管して|保存して)|(?:撮影|送付|保管|保存).{0,8}(?:してください|お願いします|お願いいたします))", reply):
             return False
